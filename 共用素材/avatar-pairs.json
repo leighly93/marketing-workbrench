@@ -1,0 +1,17 @@
+{
+  "_note": "雙人 Avatar IV 切換鏡頭模式用的 A/B 配對表。雙人 path 隨機抽一個 pair；單人 path 仍用 run.js AVATAR_IDS。新增配對直接在 pairs 陣列加一筆即可，不必動 run.js。命名規則：A = 主講者、B = 對戲搭檔的 talking_photo_id。2026-06-08 起 A 與 B 皆不進 AVATAR_IDS 單人池，只走雙人 path。",
+  "pairs": [
+    {
+      "A": "85e20f2bd2ad47b4893a939144ff4626",
+      "B": "86c47df4eb3a4fdd867af3c75dc02076"
+    },
+    {
+      "A": "ee70c6af43134fd68c547b6f04de17c3",
+      "B": "ab32d7721caa41b29d4b8d6da67df001"
+    },
+    {
+      "A": "ca62aa653e314cdfa94ae74d01157c2f",
+      "B": "7a958466f26b44d7be96c7bc01ca4dab"
+    }
+  ]
+}

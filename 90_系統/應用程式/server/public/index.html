@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>大眾短影音出片工具</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header>
+  <h1>大眾短影音出片工具</h1>
+  <nav>
+    <button data-v="new" class="on">建立工作</button>
+    <button data-v="list">工作列表</button>
+    <button data-v="say" id="navSay">跟我說</button>
+    <button data-v="fix" id="navFix" hidden>修正紀錄</button>
+  </nav>
+  <span class="spacer"></span>
+  <span class="pill" id="disk" hidden title="工作紀錄佔用空間；歷史資料持續保留"></span>
+  <span class="pill" id="status">連線中…</span>
+</header>
+
+<main>
+  <!-- ── 建立工作 ── -->
+  <section id="v-new">
+    <div class="card">
+      <h2>1・選版型</h2>
+      <div class="tpl" id="tpl"></div>
+      <div class="brands" id="brands" style="display:none"></div>
+    </div>
+
+    <div class="card">
+      <h2>2・基本資料</h2>
+      <label>你是誰</label>
+      <input type="text" id="owner" placeholder="王小明">
+
+      <label>影片標題</label>
+      <div id="titleLines"></div>
+      <div class="hint" id="twhere"></div>
+
+      <label>腳本（直接貼上）</label>
+      <textarea id="body" placeholder="台股今天大漲逾900點，跌深股全面反彈。但投資人真正想知道的是：這波反彈，接下來哪些族群還有空間？
+
+今天最猛的是跌深股補漲。南亞科、華邦電漲逾9%、友達群創雙漲停。
+
+開啟籌碼K線，進「多方－噴發向上」，看今天量價同步爆發的標的。"></textarea>
+    </div>
+
+    <div class="card">
+      <h2>3・截圖</h2>
+      <div class="slots" id="slots"></div>
+      <input type="file" id="picker" accept="image/*" hidden>
+      <!-- 手動標記頁「＋ 上傳更多截圖」用（multiple：建立頁那個是一格一張，這裡是一次補好幾張） -->
+      <input type="file" id="morePicker" accept="image/*" multiple hidden>
+    </div>
+
+    <!-- 發音替換：本來鎖在「進階」裡（#advBox 只有管理者看得到），同事根本不知道有這功能，
+         遇到唸錯只能忍（2026-08-19 使用者要求開放）。這裡只影響「這一支」，改壞了也只壞一支。 -->
+    <div class="card">
+      <h2>4・唸法（選填）</h2>
+      <div class="note">
+        AI 唸錯字的時候用這裡救。<b>要填「怎麼寫它才唸得對」，不是注音</b> ——
+        破音字換成同音字（收斂→收練、櫃買→貴買），股票代號直接寫成唸法（2330→二三三零）。<br>
+        <b>字幕不受影響</b>，還是顯示你原本寫的字。<br>
+        如果是常常出現的詞（例如公司名），到「<b>跟我說</b>」那頁回報一下，我會加進共用詞庫，以後就不用每次填。
+      </div>
+      <label>一行一條，格式：原文→唸法</label>
+      <textarea id="voice" style="min-height:90px" placeholder="收斂→收練&#10;櫃買→貴買&#10;台積電2330→台積電二三三零"></textarea>
+    </div>
+
+    <div class="card">
+      <h2>5・出片</h2>
+      <div class="note" id="mustAnnotate">出片前一定要先手動圈選截圖要顯示的範圍，確認後才會出片。</div>
+      <label class="chk" id="wrapWithAd"><input type="checkbox" id="withAd">
+        <span>另外出一支投廣套框版<small>焦點股日報限定。預設只出客製版。</small></span></label>
+
+      <!-- 「用現成的講者影片」本來鎖在「進階」裡（#advBox 只有管理者看得到），
+           2026-08-21 使用者要求開放給所有人 —— 這是唯一「不花點數」的出片路徑，
+           同事想試版面／配圖／字幕時應該用它，而不是每試一次就燒掉一支影片的點數。
+           開放之後 advBox 就沒有任何內容了，整個 <details> 與 details.adv 樣式一起移除。 -->
+      <label class="chk"><input type="checkbox" id="skipGenerate">
+        <span>用現成的講者影片<small>不呼叫 HeyGen、<b>不扣點數</b>。想試版面、配圖、字幕的時候用這個 —— 拿一支之前的講者影片重跑就好。</small></span></label>
+      <div id="heygenSlot" style="display:none;margin:8px 0 6px">
+        <div class="vdrop" id="vdrop">
+          <b>選擇或拖曳講者影片</b>
+          <span id="heygenName">支援 .mp4（會被存成 heygen.mp4）</span>
+        </div>
+        <input type="file" id="heygenPicker" accept="video/*,.mp4" hidden>
+        <div class="tip">⚠️ <b>腳本要跟這支影片對得上</b> —— 字幕是從影片的聲音轉出來的。
+          想換版面、換截圖、改配圖，就把腳本原封不動貼回來；腳本改了就得重新生一支影片，
+          不然字幕會跟旁白對不起來。<br>
+          影片的速度不用管 —— 已經加速過的檔案系統認得出來，不會再加速一次。</div>
+      </div>
+
+      <!-- 警語貼著按鈕放（放卡片最上面會被略過），#submit 另外再攔一次 confirm -->
+      <div class="warn" id="costWarn" style="margin-top:18px">
+        <b>⚠️ 按下「開始出片」就會扣點數。</b><br>
+        按下去會馬上呼叫 HeyGen 生成講者影片，<b>點數當下就扣掉，之後取消或重出都退不回來</b>。<br>
+        送出前請再檢查一次：腳本有沒有錯字、標題對不對、截圖是不是最新的。
+      </div>
+
+      <div style="margin-top:16px"><button class="go" id="submit">開始出片</button></div>
+    </div>
+  </section>
+
+  <!-- ── 工作列表 ── -->
+  <section id="v-list" hidden>
+    <div class="card"><h2>工作列表</h2><div id="jobs"></div></div>
+  </section>
+
+  <!-- ── 工作詳情 ── -->
+  <section id="v-job" hidden></section>
+
+  <!-- ── 跟我說（回報唸錯的詞 ＋ 自由留言）── -->
+  <!-- 存 90_系統/資料/messages.jsonl（append-only、進版控）。⚠️ 不要改存在 job.json 裡 ——
+       corrections 就是那樣做的，同事按「刪除工作」時連同紀錄一起消失（19 支只剩 2 支）。 -->
+  <section id="v-say" hidden>
+    <!-- 你是誰：跟「建立工作」那頁的 #owner 兩邊同步（2026-08-21 使用者要求：
+         只想回報一個唸錯的詞，不該還得先跑去「建立工作」那頁填名字）。
+         值會記進 localStorage，換頁、重新整理都不用再打一次。 -->
+    <div class="card">
+      <label>你是誰</label>
+      <input type="text" id="sayOwner" placeholder="王小明">
+      <div class="note">填一次就好，這台電腦的瀏覽器會記住 —— 「建立工作」那頁也會自動帶上同一個名字。</div>
+    </div>
+
+    <div class="card">
+      <h2>這個詞唸錯了</h2>
+      <div class="note">
+        影片裡哪個字唸錯了？寫給我，我會加進共用詞庫，之後每支影片都自動用對的唸法。<br>
+        <b>「建議怎麼寫」請填同音字或數字唸法</b>（例：收斂→<b>收練</b>、櫃買→<b>貴買</b>、2330→<b>二三三零</b>），不要填注音 —— AI 不一定吃得懂注音。<br>
+        <b>聲調不對也算</b> —— 例如「跌」唸成一聲（正確是ㄉㄧㄝˊ）、「期貨」的期唸成一聲，都寫進來。
+      </div>
+      <div class="sayrow">
+        <div>
+          <label>唸錯的詞</label>
+          <input type="text" id="sayWord" placeholder="收斂">
+        </div>
+        <div>
+          <label>建議怎麼寫</label>
+          <input type="text" id="saySuggest" placeholder="收練">
+        </div>
+      </div>
+      <label>為什麼（選填）</label>
+      <input type="text" id="sayWhy" placeholder="破音字／這是公司名，固定唸法">
+      <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
+        <button class="go" id="sayWordSend">送出</button>
+        <span class="hint" id="sayWordMsg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>其他想跟我說的</h2>
+      <div class="note">
+        <b>前台哪裡怪怪的也寫這裡</b> —— 畫面看不懂、按了沒反應、希望多一個什麼功能、流程哪裡卡卡的，都可以。<br>
+        我會看到你是誰、什麼時候寫的，如果你是從某一支工作點進來的，也會一起帶上，我才查得到是哪一支。
+      </div>
+      <textarea id="sayNote" style="min-height:120px" placeholder="例：配圖計畫那頁的縮圖太小，看不出框到哪裡&#10;例：出片完成後希望可以直接下載，不用再點一層"></textarea>
+      <div style="margin-top:14px;display:flex;gap:10px;align-items:center">
+        <button class="go" id="sayNoteSend">送出</button>
+        <span class="hint" id="sayNoteMsg"></span>
+      </div>
+    </div>
+
+    <!-- 以下只有管理者（本機）看得到：收件匣 ＋ 共用詞庫管理 -->
+    <div class="card" id="sayInboxCard" hidden>
+      <h2>收件匣</h2>
+      <div class="note">同事回報的詞按「收錄」就會進共用詞庫，之後每支影片自動套用。處理過的按「已讀」收起來。</div>
+      <div id="sayInbox"></div>
+    </div>
+
+    <div class="card" id="sayDictCard" hidden>
+      <h2>共用發音詞庫</h2>
+      <div class="note">
+        每支影片送出前會自動套用（同事自己在「唸法」填的優先，重複的以他填的為準）。<br>
+        ⚠️ 這是<b>字串取代</b>，不是「詞」取代 —— 單字（例如「玉」）會打中所有含那個字的詞，所以不給加；兩個字會先問一下。<br>
+        共用詞庫會供後續製作使用。停用不是刪除，之後想恢復按一下就好。
+      </div>
+      <div class="sayrow">
+        <div><label>原文</label><input type="text" id="dictFrom" placeholder="采鈺"></div>
+        <div><label>怎麼寫才唸得對</label><input type="text" id="dictTo" placeholder="彩玉"></div>
+      </div>
+      <label>為什麼（選填，之後才知道這條能不能刪）</label>
+      <input type="text" id="dictWhy" placeholder="公司名，固定唸法">
+      <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
+        <button class="go" id="dictAdd">加進詞庫</button>
+        <span class="hint" id="dictMsg"></span>
+      </div>
+      <div id="dictList" style="margin-top:20px"></div>
+    </div>
+  </section>
+
+  <!-- ── 修正紀錄 ── -->
+  <section id="v-fix" hidden>
+    <div class="card">
+      <h2>修正紀錄</h2>
+      <div class="note">
+        這頁記錄「AI 原本怎麼配，人改成什麼」。<br>
+        某一類修正一直出現 → 規則庫還缺那塊，值得回頭修。<br>
+        某一類連續兩三週都沒人改 → 那部分可以放心不用看了，離「不用檢查」又近一步。
+      </div>
+      <div id="fix"></div>
+    </div>
+  </section>
+</main>
+
+<div class="reload" id="reload">
+  <span>🔄 <b>網頁檔案已經更新</b> —— 你這個分頁載入的還是舊版，畫面上看到的不是最新的。</span>
+  <button onclick="location.reload(true)">重新整理</button>
+</div>
+
+<div class="stale" id="stale">
+  程式碼已經更新，但伺服器還在跑舊版 —— 網頁上看到的還是舊設定。<br>
+  <!-- 第二句分兩版：同事看到的是「該做什麼」，Leighly 看到的是「怎麼重開」。
+       同事看到那兩行終端機指令只會愣住 —— 他們既沒有那台 Mac，也不知道那在幹嘛
+       （2026-08-26 使用者要求）。按鈕不擋，只講清楚，避免有人被莫名其妙鎖住。 -->
+  <span id="staleOther">這頁還是可以正常看，資料都是對的。只是先別按「開始出片」，出來的會是舊設定 —— 等伺服器重開之後再出片就好。</span>
+  <span id="staleAdmin" hidden>重開才會生效：<code>launchctl kickstart -k gui/$(id -u)/com.cmoney.marketing-video-studio</code>
+  　或終端機 Ctrl+C 後 <code>npm run studio</code></span>
+</div>
+
+<div class="ed" id="ed">
+  <div class="ed-in">
+    <div class="ed-left">
+      <div class="ed-strip" id="edStrip"></div>
+      <div class="ed-img" id="edImg"></div>
+    </div>
+    <div class="ed-side">
+      <h3 id="edTitle">標注</h3>
+
+      <label>現在要畫哪一種</label>
+      <div class="modes" id="edModes">
+        <div data-m="region">顯示區域</div>
+        <div data-m="cell">黃框</div>
+      </div>
+      <div class="rects">
+        <div><i class="sw region"></i>顯示區域<span id="edRegionState">沒有</span>
+          <button class="ghost tiny" id="edClearRegion">刪掉</button></div>
+        <div><i class="sw cell"></i>黃框<span id="edCellState">沒有</span>
+          <button class="ghost tiny" id="edClearCell">刪掉</button></div>
+      </div>
+      <div class="tip">在左圖拖曳就會畫出「現在要畫的那一種」。<br>
+        兩種可以只有一種、也可以都有；都沒有就是整張顯示。</div>
+
+      <label class="chk" id="edPanRow" style="margin-top:14px"><input type="checkbox" id="edPan">
+        <span>往下滑動<small>慢慢往下帶過內容，適合重點在圖片下方。</small>
+        <small id="edPanNote" style="color:#c98a00"></small></span></label>
+
+      <div id="edRangeWrap">
+        <label>出現在哪一段（點頭、再點尾）</label>
+        <div class="range" id="edRange"></div>
+        <div class="tip" id="edRangeText"></div>
+      </div>
+
+      <div class="ed-act">
+        <button class="ghost" id="edCancel">取消</button>
+        <button class="go" id="edOK">完成</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="lb" id="lb"><img id="lbimg" alt=""></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

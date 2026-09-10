@@ -1,0 +1,21 @@
+name: Verify workbench
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: 90_系統/應用程式/package-lock.json
+      - run: npm run setup
+      - run: npm run init
+      - run: npm run verify
+      - run: npm run check:release

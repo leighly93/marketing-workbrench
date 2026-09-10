@@ -1,0 +1,58 @@
+{
+  "_meta": {
+    "brand": "籌碼K線",
+    "base": "https://www.cmoney.tw/app/landing_page/chipk",
+    "source": "ChipK Dynamic Link Doc（Google Sheets，分頁：籌K-Deeplink / 籌K-跳轉文件）https://docs.google.com/spreadsheets/d/1VTB3d9jIt54tCU0rTM0EBz_312OKElpmujS7cfNXK20/",
+    "updated": "2026-08-06",
+    "note": "indexPages=大盤內頁（page=indexContent&subpage=N）；stockTemplates=個股頁（page=stock&subpage=N&stockid={stockId}，用前把 {stockId} 換成股票代號）。網址格式：base + ?page=...&subpage=N（&stockid=...）&noReloadApp=1。每條 deeplink 上線前都要在真 app 驗證跳轉正確。",
+    "urlScheme": null,
+    "urlSchemeStatus": "尚未取得（2026-08-06）——iOS simulator 不吃 universal link AASA，必須用 custom URL scheme（比照起漲K線 CMoney.SuperTrendK:// 的做法）。ChipK Dynamic Link Doc 內查無 scheme 記載，需另外問 RD／App 端工程師拿『籌碼K線APP 的 custom URL scheme』，拿到後補進本欄位，scripts/shot.js 才能對籌碼K線APP 跑全自動截圖。"
+  },
+  "indexPages": {
+    "大盤指數-即時": "https://www.cmoney.tw/app/landing_page/chipk?page=indexContent&subpage=0&noReloadApp=1",
+    "大盤指數-討論": "https://www.cmoney.tw/app/landing_page/chipk?page=indexContent&subpage=1&noReloadApp=1",
+    "大盤指數-K線": "https://www.cmoney.tw/app/landing_page/chipk?page=indexContent&subpage=2&noReloadApp=1",
+    "大盤指數-籌碼日報": "https://www.cmoney.tw/app/landing_page/chipk?page=indexContent&subpage=3&noReloadApp=1",
+    "大盤指數-外資": "https://www.cmoney.tw/app/landing_page/chipk?page=indexContent&subpage=4&noReloadApp=1",
+    "大盤指數-主力": "https://www.cmoney.tw/app/landing_page/chipk?page=indexContent&subpage=5&noReloadApp=1",
+    "大盤指數-官股": "https://www.cmoney.tw/app/landing_page/chipk?page=indexContent&subpage=6&noReloadApp=1",
+    "大盤指數-資券": "https://www.cmoney.tw/app/landing_page/chipk?page=indexContent&subpage=7&noReloadApp=1",
+    "大盤指數-漲跌家數": "https://www.cmoney.tw/app/landing_page/chipk?page=indexContent&subpage=8&noReloadApp=1",
+    "大盤指數-貢獻排行": "https://www.cmoney.tw/app/landing_page/chipk?page=indexContent&subpage=9&noReloadApp=1",
+    "大盤指數-未平倉量": "https://www.cmoney.tw/app/landing_page/chipk?page=indexContent&subpage=10&noReloadApp=1"
+  },
+  "stockTemplates": {
+    "個股-即時": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=0&stockid={stockId}",
+    "個股-討論": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=1&stockid={stockId}",
+    "個股-K線": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=2&stockid={stockId}",
+    "個股-籌碼日報": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=3&stockid={stockId}",
+    "個股-法人": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=4&stockid={stockId}",
+    "個股-主力": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=5&stockid={stockId}",
+    "個股-開盤": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=6&stockid={stockId}",
+    "個股-籌碼分布": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=7&stockid={stockId}",
+    "個股-資券": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=8&stockid={stockId}",
+    "個股-大戶": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=9&stockid={stockId}",
+    "個股-營收": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=10&stockid={stockId}",
+    "個股-獲利": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=11&stockid={stockId}",
+    "個股-除息": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=12&stockid={stockId}",
+    "個股-行事曆": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=13&stockid={stockId}",
+    "個股-個股資訊": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=14&stockid={stockId}",
+    "個股-法人目標": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=15&stockid={stockId}",
+    "個股-基金持股": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=16&stockid={stockId}",
+    "個股-財報": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=17&stockid={stockId}",
+    "個股-勝率分析": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=18&stockid={stockId}",
+    "個股-成分": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=19&stockid={stockId}",
+    "個股-折溢價": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=20&stockid={stockId}",
+    "個股-研究報告": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=21&stockid={stockId}",
+    "個股-股東名單": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=22&stockid={stockId}",
+    "個股-多空": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=23&stockid={stockId}",
+    "個股-筆記": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=24&stockid={stockId}",
+    "個股-屬性": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=25&stockid={stockId}",
+    "個股-健檢": "https://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=26&stockid={stockId}"
+  },
+  "knownIssues": {
+    "urlScheme": "custom URL scheme 尚未取得，iOS simulator 全自動截圖（scripts/shot.js --open）目前無法對籌碼K線APP 使用，需先問 RD",
+    "大盤指數-外資": "ChipK Dynamic Link Doc 註記：iOS 9.66 版起與『加權指數貢獻』併為同一頁；subpage=4 在 iOS 10.31.0 之後會改成『增強版法人頁』，不同版本內容可能不同，用前建議在真機/模擬器上實際跳一次確認畫面",
+    "個股-即時/個股-K線等舊制對照": "起漲K線 deeplinks.json 用的是舊制 linkType 參數，籌碼K線APP 這份是新制 page/subpage 參數，兩份 schema 不同屬預期（各自品牌 App 的 route 系統不同），parse-script.js／shot.js 讀取時不要假設共用結構"
+  }
+}
