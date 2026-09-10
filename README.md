@@ -40,9 +40,9 @@ flowchart LR
     productionInput["Input"]
     subgraph automatedProduction["自動化影片產出"]
         direction LR
-        ocrImages["OCR 配圖<br/>辨識截圖文字、股名與區域<br/>結合稿件與人工標記安排重點畫面"]
-        subtitleProcessing["字幕處理<br/>從講者聲音取得字幕時間軸<br/>依稿件與替換規則校正字幕文字"]
-        templateComposition["模板與影片合成<br/>套用版型，整合講者、配圖、字幕與音樂<br/>以 Remotion 渲染直式或橫式 MP4"]
+        ocrImages["<b>OCR 配圖</b><br/>辨識截圖文字、股名與區域<br/>結合稿件與人工標記安排重點畫面"]
+        subtitleProcessing["<b>字幕處理</b><br/>從講者聲音取得字幕時間軸<br/>依稿件與替換規則校正字幕文字"]
+        templateComposition["<b>模板與影片合成</b><br/>套用版型，整合講者、配圖、字幕與音樂<br/>以 Remotion 渲染直式或橫式 MP4"]
         ocrImages --> subtitleProcessing --> templateComposition
     end
     productionInput --> ocrImages
