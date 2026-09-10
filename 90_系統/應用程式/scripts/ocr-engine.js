@@ -90,6 +90,20 @@ const tesseract = {
     }
   },
 
+  /** 三大法人編號定位；保留單字模式與 1234 白名單，不把 CLI 細節交給呼叫端。 */
+  ocrDigits(imagePath) {
+    const base = path.join(os.tmpdir(), 'ocr_digits_' + process.pid + '_' + Date.now());
+    try {
+      execFileSync('tesseract', [imagePath, base, '--psm', '10', '-c', 'tessedit_char_whitelist=1234', 'tsv'], { stdio: 'ignore' });
+      let tsv = '';
+      try { tsv = fs.readFileSync(base + '.tsv', 'utf8'); } catch (_) {}
+      return tsv.split('\n').slice(1).filter((line) => line.split('\t').length >= 12).map((line) => {
+        const c = line.split('\t');
+        return { t: (c[11] || '').replace(/\s+/g, ''), y: parseInt(c[7], 10), h: parseInt(c[9], 10) };
+      });
+    } finally { try { fs.unlinkSync(base + '.tsv'); } catch (_) {} }
+  },
+
   /**
    * opts.lang     預設 chi_tra
    * opts.minConf  預設 30（analyze-app-images／app-locator 原本的門檻）；
@@ -161,6 +175,8 @@ const VISION_LANGS = { chi_tra: 'zh-Hant,en-US', eng: 'en-US', chi_sim: 'zh-Hans
 let visionReady = false;
 const vision = {
   name: 'vision',
+
+  ocrDigits(imagePath) { return this.ocrPage(imagePath, { minConf: null }).words; },
 
   ensure() {
     if (visionReady) return;
@@ -256,6 +272,7 @@ if (!active) {
 module.exports = {
   engine: active.name,
   ensure: () => active.ensure(),
+  ocrDigits: (img) => active.ocrDigits(img),
   ocrPage: (img, opts) => active.ocrPage(img, opts),
   ocrCrop: (img, box, scale, extraArgs) => active.ocrCrop(img, box, scale, extraArgs),
   /** 除錯用：直接拿某個引擎（例如 A/B 對照時兩個都要） */

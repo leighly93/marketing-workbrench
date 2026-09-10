@@ -26,7 +26,8 @@ function inspect(root) {
     const result = spawnSync(command, args, { stdio: 'ignore', timeout: 15000 });
     add(`出片工具 ${command}`, result.status === 0, 'production');
   }
-  const engine = config.OCR_ENGINE || 'tesseract';
+  add('字幕引擎設定有效', (config.TRANSCRIPTION_ENGINE || 'whisper') === 'whisper', 'production');
+  const engine = (config.OCR_ENGINE || 'tesseract').toLowerCase();
   add('OCR 引擎設定有效', ['tesseract', 'vision'].includes(engine), 'production');
   if (engine === 'vision') add('Apple Vision 與 Swift 編譯器', process.platform === 'darwin' && spawnSync('swiftc', ['--version'], { stdio: 'ignore', timeout: 15000 }).status === 0, 'production');
   else {

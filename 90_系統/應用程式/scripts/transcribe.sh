@@ -4,7 +4,7 @@
 # 用法：./scripts/transcribe.sh
 # 前置需求（Mac）：
 #   brew install ffmpeg
-#   pip install -U openai-whisper
+#   版本與環境規格見 90_系統/維護說明/環境與Adapter.md
 
 set -euo pipefail
 
@@ -28,7 +28,7 @@ fi
 missing=()
 command -v ffmpeg  >/dev/null 2>&1 || missing+=("ffmpeg (brew install ffmpeg)")
 command -v ffprobe >/dev/null 2>&1 || missing+=("ffprobe (brew install ffmpeg)")
-command -v whisper >/dev/null 2>&1 || missing+=("whisper (brew install pipx && pipx install openai-whisper && pipx ensurepath)")
+node "$ROOT/scripts/transcription-engine.js" --check || missing+=("字幕 Adapter（見環境與Adapter.md）")
 
 if [ ${#missing[@]} -gt 0 ]; then
   echo "❌ 缺少以下工具，請先安裝："
@@ -67,14 +67,7 @@ echo "▶ 2/4 用 ffmpeg 從影片抽出音檔..."
 ffmpeg -y -i "$INPUT" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_AUDIO" -loglevel error
 
 echo "▶ 3/4 跑 Whisper 轉字幕（中文，small 模型）..."
-# 想要更精準：把 small 換成 medium 或 large（慢很多）
-whisper "$TMP_AUDIO" \
-  --language zh \
-  --model small \
-  --word_timestamps True \
-  --output_format json \
-  --output_dir "$TMP_DIR" \
-  --verbose False
+node "$ROOT/scripts/transcription-engine.js" "$TMP_AUDIO" "$TMP_DIR"
 
 echo "▶ 4/4 整理輸出到 src/subtitles.json..."
 # Whisper 輸出檔名跟輸入相同：heygen.json

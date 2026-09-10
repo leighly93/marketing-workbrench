@@ -143,25 +143,7 @@ function recoverMissingDigit(n) {
     // 在裁切圖上找到那個編號的字框，換算回原圖座標當錨點。
     // tesseract：原本的 --psm 10（單字模式）＋白名單 1234，一字不改；
     // vision：沒有這兩個參數，直接整張裁切圖 ocrPage 再挑 t === n 的框。
-    let hits = [];
-    if (OCR.engine === 'tesseract') {
-      const tsvBase = path.join(os.tmpdir(), 'inst_dig_tsv_' + process.pid + '_' + n);
-      execFileSync(
-        'tesseract',
-        [crop, tsvBase, '--psm', '10', '-c', 'tessedit_char_whitelist=1234', 'tsv'],
-        { stdio: 'ignore' }
-      );
-      let tsvOut = '';
-      try { tsvOut = fs.readFileSync(tsvBase + '.tsv', 'utf-8'); } catch (_) {}
-      try { fs.unlinkSync(tsvBase + '.tsv'); } catch (_) {}
-      for (const ln of tsvOut.split('\n').slice(1)) {
-        const c = ln.split('\t');
-        if (c.length < 12) continue;
-        hits.push({ t: (c[11] || '').replace(/\s+/g, ''), y: parseInt(c[7], 10), h: parseInt(c[9], 10) });
-      }
-    } else {
-      hits = OCR.ocrPage(crop, { minConf: null }).words;
-    }
+    const hits = OCR.ocrDigits(crop);
     for (const hw of hits) {
       if (hw.t !== String(n)) continue;
       // 裁切時放大了 8 倍，換算回原圖

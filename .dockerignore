@@ -1,0 +1,64 @@
+# 與 Git 的私人資料排除規則一致；正式建置仍使用 git archive。
+.git
+# 安裝與編譯產物
+node_modules/
+build/
+.remotion/
+*.tsbuildinfo
+*.log
+.DS_Store
+.fuse_hidden*
+.vscode/
+.idea/
+*.swp
+*.bak-*
+
+# 私有設定、憑證與本機程序狀態
+.env
+.env.*
+!.env.example
+.google-creds.json
+*.pem
+*.key
+.run.lock
+.cmd-queue
+.cmd-status
+.cache/
+.dual-tmp/
+.verify-dual-tmp/
+
+# 工作歷史保留本機；Git 只收用途說明
+/工作紀錄/*
+!/工作紀錄/README.md
+/99_封存/*
+!/99_封存/README.md
+/90_系統/資料/*
+!/90_系統/資料/README.md
+/90_系統/暫存/
+/90_系統/製作備份/
+/90_系統/研究參考/
+/90_系統/整合參考/
+/出片工具介紹.pptx
+
+# 執行素材僅收沒有其他來源的字型；網頁 server/public 必須收錄
+/90_系統/應用程式/public/*
+!/90_系統/應用程式/public/NotoSansTC-VF.ttf
+/90_系統/應用程式/src/subtitles.json
+/90_系統/應用程式/src/subtitles.original.json
+/90_系統/應用程式/src/video-meta.json
+*.generated.json
+/90_系統/應用程式/scripts/ocr-vision
+/90_系統/應用程式/scripts/ocr-vision.tmp-*
+/90_系統/應用程式/scripts/_vision-trial/ocr-vision
+/90_系統/應用程式/scripts/_vision-trial/out/
+
+# 舊路徑的殘留亦不收錄
+/jobs/
+/backups/
+/out/
+/成品/
+/_to_delete/
+/_frames*/
+/_git-backup*/
+/_bgm-original-wav/
+/_bgm-preview/

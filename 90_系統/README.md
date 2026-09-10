@@ -19,3 +19,5 @@
 歷史 JSONL 與頁型資料中的 `docs/page-samples/...` 原文保留。讀取引用時使用 `resolveDataReference(root, reference)`；新寫入資料使用 `dataPath(root, ...)` 與相對根目錄的新路徑。這不需要建立舊目錄或符號連結。
 
 環境與驗證入口在 `環境/`；按 [啟動與驗證](維護說明/啟動與驗證.md) 完成 setup、init、doctor、verify。執行資料、封存與研究／整合歷史留在本機，公開副本不含這些歷史內容。
+
+引擎介面、版本觀測與容器重建範圍見 [環境與 Adapter](維護說明/環境與Adapter.md)。
