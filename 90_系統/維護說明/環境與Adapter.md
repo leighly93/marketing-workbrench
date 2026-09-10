@@ -1,6 +1,6 @@
 # 環境重建與 Adapter 契約
 
-目標是讓新 Agent 拿到程式後能建立一致的開發環境、驗證修改，並知道原生出片還差哪些條件。開發容器與原生出片分開驗收；容器不代表私人資料備份，也不保證跨硬體輸出逐位元一致。
+目標是讓新 Agent 拿到程式後能建立一致的開發環境、驗證修改，並知道原生出片還差哪些條件。服務與出片只面向 macOS；Linux 容器只作 CI 程式驗證。開發容器與原生出片分開驗收；容器不代表私人資料備份，也不保證跨硬體輸出逐位元一致。
 
 ## Agent 入口
 
@@ -21,30 +21,28 @@ docker run --rm --network none workbench-verify
 
 這固定的是開發環境配方與套件版本；上游映像／套件仍須可取得。需要離線長期保存時，另保存完成映像及其 digest。基底安全更新須透過獨立提交更新 digest 並重跑驗證，不能把固定版本當作永不更新。
 
-## 原生出片的觀測基準
+## macOS 本機環境
 
-[native-observed.json](../環境/native-observed.json) 記錄整理電腦的 OS、架構、Node、FFmpeg／ffprobe、Tesseract、Swift、Whisper 所用 Python／套件及 small 模型 SHA-256。沒有使用者路徑、主機名稱或憑證。
+`.nvmrc` 與 `.node-version` 都是 24.15.0，與容器相同；本機先 `nvm install`、`nvm use`。doctor 檢查精確版本，測試防止三處漂移。nvm 本身需預先安裝。
+
+字幕工具用 [whisper-cpp.json](../環境/whisper-cpp.json) 固定原始碼提交、原始碼 SHA-256、模型下載 revision 與 SHA-256；模型為 `ggml-base-q5_1.bin`。安裝只寫入本專案 `.cache/whisper-cpp/`：
 
 ```bash
-python3 90_系統/環境/native-environment.py --check
+npm run setup:whisper
 npm run doctor -- --production
 ```
 
-第一個命令比對觀測值，有差異回傳非零；不會為了吻合舊機器而自動降版或安裝。第二個命令檢查目前選用工具是否可用。兩者都不驗證真實推論品質。
+需要 Python 3.12+ 與 Xcode Command Line Tools。安裝腳本建立獨立 venv 安裝固定 CMake 版本，驗證下載雜湊後編譯 CPU 引擎（關閉 Metal／Core ML／CUDA），不修改全機 Python，不安裝 Python Whisper 或 PyTorch。安裝需要網路，辨識不需要。CMake 的平台套件未鎖 wheel 雜湊，Xcode／SDK 仍依本機條件；這不是所有原生函式庫逐位元固定的環境映像。
 
-[Whisper 套件清單](../環境/whisper-macos-observed.txt) 固定此電腦已安裝的套件版本，是 **macOS 觀測清單，非跨平台解析或含雜湊的完整 lockfile**。需要嘗試原生重建時，使用相同 Python 版本的獨立 venv，再以 `python -m pip install -r 90_系統/環境/whisper-macos-observed.txt` 安裝，不能修改全機 Python。這條乾淨機安裝路徑尚未驗收；PyTorch／Numba 的 wheel 受 Python、OS、CPU 架構影響，不應直接拿到 Linux 安裝。
+預設使用專案內的 whisper-cli 與模型。可用 `WHISPER_CPP_BIN`、`WHISPER_CPP_MODEL` 指定其他位置，但需自行核對版本；模型相對路徑以 repository 根解析。`TRANSCRIPTION_ENGINE` 預設 `whisper-cpp`，舊 `.env` 若明確設為 `whisper`，必須改為 `whisper-cpp`，不會靜默沿用舊引擎。
 
-| 出片依賴 | 目前紀錄／契約 | 尚未固定或驗收的部分 |
-| --- | --- | --- |
-| Node／npm 套件 | `.node-version`、package-lock、容器基底 digest | 基底與套件的離線鏡像保存 |
-| FFmpeg／ffprobe | 原生 CLI 版本觀測值 | 系統動態函式庫與乾淨機安裝配方 |
-| Whisper | Python 與套件版本、small 模型指紋、zh、逐字時間 | wheel 雜湊鎖定、離線模型保存、實際轉錄回歸 |
-| Tesseract | CLI 版本；doctor 檢查 chi_tra 存在 | 語言資料檔指紋及不同平台 OCR 結果比較 |
-| Apple Vision | macOS／Swift 觀測值與版本化 Swift 原始碼 | 綁定 OS 框架，不能包入 Linux Docker；需原生驗收 |
-| Remotion／字型 | npm lockfile 與 Git 內字型 | 瀏覽器下載與真實渲染驗收 |
-| 外部 API | 設定範本與呼叫程式 | 服務版本／帳號能力不受 Docker 控制 |
+[native-observed.json](../環境/native-observed.json) 記錄這台 macOS、架構、Node、FFmpeg／ffprobe、Tesseract、Swift、whisper-cli 與模型指紋；不記錄憑證或使用者路徑。比對工具只讀取專案預設安裝位置：
 
-Whisper small 模型不隨 Git 提供。觀測程式只檢查預設 `~/.cache/whisper/small.pt`，不下載模型；自訂快取需另外記錄。正式還原應先比对指紋，再以獨立測試資料執行轉錄。私人工作與詞庫仍須按 [工作與影片位置](工作與影片位置.md) 另行還原。
+```bash
+python3 90_系統/環境/native-environment.py --check
+```
+
+差異回傳非零，不自動降版。FFmpeg、OCR 語言資料、Swift／SDK、Remotion 瀏覽器與外部 API 仍需各自驗收；Node 一致不代表所有作業系統行為一致。原生完整乾淨機還原與正式成品回歸尚未驗收。私人資料另按 [工作與影片位置](工作與影片位置.md) 還原。
 
 ## OCR Adapter
 
@@ -59,16 +57,18 @@ Whisper small 模型不隨 Git 提供。觀測程式只檢查預設 `~/.cache/wh
 
 ## 字幕 Adapter
 
-入口：[transcription-engine.js](../應用程式/scripts/transcription-engine.js)。`TRANSCRIPTION_ENGINE=whisper`；目前只有這個供應者，沒有假裝實作其他服務。shell 負責抽音、影片時長及保存，Adapter 負責工具呼叫與輸出契約。
+入口：[transcription-engine.js](../應用程式/scripts/transcription-engine.js)，執行 `whisper-cli`。固定 Base Q5_1、`--no-gpu`、`--threads 4`、`--processors 1`、`--language zh`，使用 `--output-json-full` 取得 token 時間。
 
-- `ensure()`：檢查 CLI 可用，不下載模型。
-- `transcribe(audio, outputDir)`：回傳含 `segments` 的 JSON；段落有 `text/start/end/words`，逐字有 `word/start/end`，時間以秒表示。
-- 保留原本 small、zh、word_timestamps 與裝置預設，保存原始 JSON；缺少逐字資料、非法時間或工具失敗即報錯，不更新正式字幕備份。
-- 未知供應者直接失敗，不靜默回退。新增供應者須在 Adapter 正規化為相同契約，字幕校正與模板不接觸服務專用回應。
+- `ensure()`：檢查 CLI 與模型存在，不下載。
+- `transcribe(audio, outputDir)`：把 whisper.cpp 的毫秒 `transcription/tokens` 轉成既有秒制 `segments/words`，剔除引擎控制 token。
+- 中文的 `words` 實際為引擎 token 粒度，不宣稱等同語言學分詞；字幕校正沿用既有介面。
+- 每次轉錄使用獨立暫存目錄。工具失敗、缺少時間或格式錯誤不覆寫上次輸出；驗證後才保存正規化 JSON。
+- shell 仍負責抽音、影片時長與正式字幕備份。引擎換成 Base Q5_1 會影響辨識與時間結果，不能視為 small 模型的等價輸出。
 
-[引擎介面測試](../測試/引擎介面.test.js) 使用合成輸出驗證參數、資料契約與失敗傳遞，不呼叫實際 OCR 或 Whisper。若改模型／裝置／文字規則，須另做有代表性的獨立樣本回歸。
+[引擎介面測試](../測試/引擎介面.test.js) 驗證 CPU／執行緒參數、時間轉換、控制 token、失敗保護及 Node 版本一致性。一般 verify 不執行模型；本機推論以獨立合成音訊驗證，不重跑正式工作。
 
 ## 參考
 
 - [Docker：固定基底 digest 與建置實務](https://docs.docker.com/build/building/best-practices/)
 - [Claude Code：匯入共用指令](https://code.claude.com/docs/en/memory)
+- [whisper.cpp CLI 原始碼與輸出契約](https://github.com/ggml-org/whisper.cpp/blob/371b5a7561823ab2bb32142d2751e35e7534727b/examples/cli/cli.cpp)

@@ -3,7 +3,6 @@ import hashlib
 import json
 import platform
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 
@@ -23,28 +22,17 @@ def inventory():
                        ('swiftc', ['--version'])]:
         value = output([name, *args])
         tools[name] = value.splitlines()[0] if value else None
-    whisper = shutil.which('whisper')
-    interpreter = None
-    if whisper:
-        # pipx/venv console scripts contain an absolute interpreter; never print it.
-        first = Path(whisper).read_text().splitlines()[0]
-        if first.startswith('#!') and Path(first[2:]).is_file():
-            interpreter = first[2:]
-    packages = None
-    python_version = None
-    if interpreter:
-        value = output([interpreter, '-c', 'import json,importlib.metadata as m; print(json.dumps({d.metadata["Name"]:d.version for d in m.distributions()}))'])
-        packages = json.loads(value) if value else None
-        python_version = output([interpreter, '-c', 'import platform; print(platform.python_version())'])
-    model = Path.home() / '.cache/whisper/small.pt'
+    root = Path(__file__).resolve().parents[2]
+    binary = root / '.cache/whisper-cpp/source/build/bin/whisper-cli'
+    tools['whisper-cli'] = output([str(binary), '--version'])
+    model = root / '.cache/whisper-cpp/ggml-base-q5_1.bin'
     model_hash = None
     if model.is_file():
         with model.open('rb') as stream:
             model_hash = hashlib.file_digest(stream, 'sha256').hexdigest()
     return {'platform': platform.system(), 'architecture': platform.machine(),
             'macOS': platform.mac_ver()[0], 'tools': tools,
-            'whisperPython': python_version, 'whisperPackages': packages,
-            'smallModelSHA256': model_hash}
+            'baseQ51ModelSHA256': model_hash}
 
 
 if __name__ == '__main__':

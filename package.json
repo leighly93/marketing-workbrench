@@ -48,7 +48,8 @@
     "init": "node \"90_系統/環境/init.js\"",
     "doctor": "node \"90_系統/環境/doctor.js\"",
     "verify": "node \"90_系統/環境/verify.js\"",
-    "check:release": "node \"90_系統/環境/release-check.js\""
+    "check:release": "node \"90_系統/環境/release-check.js\"",
+    "setup:whisper": "python3 \"90_系統/環境/setup-whisper.py\""
   },
   "engines": {
     "node": ">=24 <25"

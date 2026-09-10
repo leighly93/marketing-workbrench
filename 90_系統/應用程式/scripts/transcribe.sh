@@ -66,11 +66,11 @@ echo "   → 已寫入 src/video-meta.json"
 echo "▶ 2/4 用 ffmpeg 從影片抽出音檔..."
 ffmpeg -y -i "$INPUT" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_AUDIO" -loglevel error
 
-echo "▶ 3/4 跑 Whisper 轉字幕（中文，small 模型）..."
+echo "▶ 3/4 跑 whisper.cpp 轉字幕（中文，Base Q5_1，CPU／4 執行緒）..."
 node "$ROOT/scripts/transcription-engine.js" "$TMP_AUDIO" "$TMP_DIR"
 
 echo "▶ 4/4 整理輸出到 src/subtitles.json..."
-# Whisper 輸出檔名跟輸入相同：heygen.json
+# Adapter 正規化的輸出檔名跟輸入相同：heygen.json
 cp "$TMP_DIR/heygen.json" "$OUTPUT_JSON"
 # 同步覆寫 raw 備份，讓 correct-subtitles 出包時可還原到本次新的 Whisper 輸出
 # （否則舊版備份會卡住，重 transcribe 也救不回來）

@@ -29,6 +29,8 @@
 
 ## 開發邊界
 
+- 正式服務與出片環境為 macOS；Linux 容器只驗證程式，不新增 Linux 部署需求。先 `nvm use`（`.nvmrc`），Node 必須與 `.node-version`／容器一致。
+
 - AGENTS.md 是共用規則來源，CLAUDE.md 只匯入；技術細節放任務文件，避免複製規則。
 - 改動前先定位呼叫端、Adapter、設定及測試。OCR 經 `ocr-engine.js`，字幕轉錄經 `transcription-engine.js`；業務邏輯不得新增供應者 CLI 呼叫。
 - 新增或升級引擎，要明確列出輸入輸出、能力限制、失敗行為、版本與模型。不能靜默切換供應者或重建使用者記憶。

@@ -10,7 +10,9 @@ const { generated } = require('./init');
 function inspect(root) {
   const checks = [];
   const add = (name, ok, level = 'required') => checks.push({ name, ok: !!ok, level });
-  add('Node.js 24', Number(process.versions.node.split('.')[0]) === 24);
+  const nodeVersion = fs.readFileSync(path.join(root, '.node-version'), 'utf8').trim();
+  add('Node.js ' + nodeVersion, process.versions.node === nodeVersion);
+  add('.nvmrc 與 .node-version 一致', fs.existsSync(path.join(root, '.nvmrc')) && fs.readFileSync(path.join(root, '.nvmrc'), 'utf8').trim() === nodeVersion);
   const requireApp = createRequire(applicationPath(root, 'package.json'));
   for (const name of ['typescript', '@remotion/bundler', 'dotenv']) {
     try { requireApp.resolve(name); add(`套件 ${name}`, true); } catch (_) { add(`套件 ${name}（npm run setup）`, false); }
@@ -20,13 +22,17 @@ function inspect(root) {
   try { config = { ...requireApp('dotenv').parse(fs.readFileSync(path.join(root, '.env'))), ...process.env }; } catch (_) {}
   // 不印設定值或憑證，只回報是否存在。
   add('.env 設定檔', fs.existsSync(path.join(root, '.env')));
-  for (const command of ['ffmpeg', 'ffprobe', 'whisper', 'python3']) {
-    const args = command === 'whisper' ? ['--help'] : ['-version'];
+  for (const command of ['ffmpeg', 'ffprobe', 'python3']) {
+    const args = ['-version'];
     if (command === 'python3') args[0] = '--version';
     const result = spawnSync(command, args, { stdio: 'ignore', timeout: 15000 });
     add(`出片工具 ${command}`, result.status === 0, 'production');
   }
-  add('字幕引擎設定有效', (config.TRANSCRIPTION_ENGINE || 'whisper') === 'whisper', 'production');
+  add('字幕引擎設定有效', (config.TRANSCRIPTION_ENGINE || 'whisper-cpp') === 'whisper-cpp', 'production');
+  const { cppConfig } = require('../應用程式/scripts/transcription-engine');
+  const cpp = cppConfig(config, root);
+  add('whisper-cli', spawnSync(cpp.binary, ['--help'], { stdio: 'ignore', timeout: 15000 }).status === 0, 'production');
+  add('Base Q5_1 模型', fs.existsSync(cpp.model), 'production');
   const engine = (config.OCR_ENGINE || 'tesseract').toLowerCase();
   add('OCR 引擎設定有效', ['tesseract', 'vision'].includes(engine), 'production');
   if (engine === 'vision') add('Apple Vision 與 Swift 編譯器', process.platform === 'darwin' && spawnSync('swiftc', ['--version'], { stdio: 'ignore', timeout: 15000 }).status === 0, 'production');

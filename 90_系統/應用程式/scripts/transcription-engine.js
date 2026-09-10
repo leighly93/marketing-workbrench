@@ -17,25 +17,56 @@ function validate(result) {
   return result;
 }
 
-function createEngine(name = 'whisper', execute = execFileSync) {
-  const providers = {
-    whisper: {
-      ensure() { execute('whisper', ['--help'], { stdio: 'ignore' }); },
-      transcribe(audio, outputDir) {
-        // 保留原產線的 small / zh / word_timestamps 及 CLI 預設裝置行為。
-        execute('whisper', [audio, '--language', 'zh', '--model', 'small', '--word_timestamps', 'True', '--output_format', 'json', '--output_dir', outputDir, '--verbose', 'False'], { stdio: 'inherit' });
-        return validate(JSON.parse(fs.readFileSync(path.join(outputDir, path.parse(audio).name + '.json'), 'utf8')));
-      },
+function cppConfig(env = process.env, root = path.resolve(__dirname, '../../..')) {
+  return {
+    binary: env.WHISPER_CPP_BIN || path.join(root, '.cache/whisper-cpp/source/build/bin/whisper-cli'),
+    model: path.resolve(root, env.WHISPER_CPP_MODEL || '.cache/whisper-cpp/ggml-base-q5_1.bin'),
+  };
+}
+
+function normalizeCpp(raw) {
+  if (!Array.isArray(raw?.transcription)) throw new Error('whisper.cpp 缺少 transcription');
+  const segments = raw.transcription.map((segment, id) => {
+    if (!Array.isArray(segment.tokens)) throw new Error('whisper.cpp 缺少 token 時間，需 --output-json-full');
+    const words = segment.tokens.filter((token) => typeof token.text === 'string' && !/^\[_.*_\]$/.test(token.text) && token.text.trim()).map((token) => ({
+      word: token.text, start: token.offsets?.from / 1000, end: token.offsets?.to / 1000,
+      probability: token.p,
+    }));
+    if (segment.text?.trim() && !words.length) throw new Error('非空字幕缺少 token 時間');
+    return { id, text: segment.text, start: segment.offsets?.from / 1000, end: segment.offsets?.to / 1000, words };
+  });
+  return validate({ language: raw.result?.language || 'zh', text: segments.map((s) => s.text).join(''), segments });
+}
+
+function createEngine(name = 'whisper-cpp', execute = execFileSync, config = cppConfig()) {
+  if (name !== 'whisper-cpp') throw new Error(`不支援的字幕引擎：${name}；可用：whisper-cpp`);
+  return {
+    ensure() {
+      execute(config.binary, ['--help'], { stdio: 'ignore' });
+      if (!fs.existsSync(config.model)) throw new Error('缺少 ggml-base-q5_1.bin；請執行 npm run setup:whisper');
+    },
+    transcribe(audio, outputDir) {
+      this.ensure();
+      fs.mkdirSync(outputDir, { recursive: true });
+      // 每次使用獨立目錄，CLI 失敗或漏寫輸出時不能讀到上次結果。
+      const scratch = fs.mkdtempSync(path.join(outputDir, '.whisper-cpp-'));
+      try {
+        const prefix = path.join(scratch, 'transcription');
+        execute(config.binary, ['--model', config.model, '--file', audio, '--language', 'zh', '--threads', '4', '--processors', '1', '--no-gpu', '--output-json-full', '--output-file', prefix], { stdio: 'inherit' });
+        const result = normalizeCpp(JSON.parse(fs.readFileSync(prefix + '.json', 'utf8')));
+        const temp = path.join(scratch, 'normalized.json');
+        fs.writeFileSync(temp, JSON.stringify(result, null, 2));
+        fs.renameSync(temp, path.join(outputDir, path.parse(audio).name + '.json'));
+        return result;
+      } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
     },
   };
-  if (!Object.hasOwn(providers, name)) throw new Error(`不支援的字幕引擎：${name}；可用：whisper`);
-  return providers[name];
 }
 
 if (require.main === module) {
   try {
     require('dotenv').config({ path: path.resolve(__dirname, '../../../.env'), quiet: true });
-    const engine = createEngine(process.env.TRANSCRIPTION_ENGINE || 'whisper');
+    const engine = createEngine(process.env.TRANSCRIPTION_ENGINE || 'whisper-cpp');
     if (process.argv[2] === '--check') engine.ensure();
     else {
       const [audio, outputDir] = process.argv.slice(2);
@@ -44,4 +75,4 @@ if (require.main === module) {
     }
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
-module.exports = { createEngine, validate };
+module.exports = { createEngine, validate, normalizeCpp, cppConfig };

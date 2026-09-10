@@ -7,30 +7,51 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { createEngine, validate } = require('../應用程式/scripts/transcription-engine');
 
-test('字幕 Adapter 保留 CLI 參數、秒制逐字資料與供應者原始檔案', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcription-contract-'));
+const { normalizeCpp } = require('../應用程式/scripts/transcription-engine');
+const rawCpp = { result: { language: 'zh' }, transcription: [{ text: '測試', offsets: { from: 100, to: 1100 }, tokens: [
+  { text: '[_BEG_]', id: 50364 },
+  { text: '測試', offsets: { from: 100, to: 1100 }, p: 0.9 },
+  { text: '[_EOT_]', id: 50257 },
+] }] };
+
+test('whisper.cpp 使用 CPU／4 threads／中文，毫秒轉秒並濾除特殊 token', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cpp-contract-'));
   try {
-    const result = { segments: [{ start: 0, end: 1, text: '測試', words: [{ start: 0, end: 1, word: '測試' }] }] };
-    const raw = JSON.stringify(result);
+    const model = path.join(dir, 'ggml-base-q5_1.bin');
+    fs.writeFileSync(model, 'synthetic-model');
     const calls = [];
-    const engine = createEngine('whisper', (command, args) => {
-      calls.push([command, args]);
-      if (args[0] !== '--help') fs.writeFileSync(path.join(dir, 'input.json'), raw);
-    });
-    engine.ensure();
-    assert.deepEqual(engine.transcribe('/synthetic/input.wav', dir), result);
-    assert.deepEqual(calls[1], ['whisper', ['/synthetic/input.wav', '--language', 'zh', '--model', 'small', '--word_timestamps', 'True', '--output_format', 'json', '--output_dir', dir, '--verbose', 'False']]);
-    assert.equal(fs.readFileSync(path.join(dir, 'input.json'), 'utf8'), raw);
+    const engine = createEngine('whisper-cpp', (cmd, args) => {
+      calls.push([cmd, args]);
+      if (args.includes('--output-file')) fs.writeFileSync(args[args.indexOf('--output-file') + 1] + '.json', JSON.stringify(rawCpp));
+    }, { binary: 'whisper-cli', model });
+    const result = engine.transcribe('/synthetic/input.wav', dir);
+    assert.equal(result.segments[0].words.length, 1);
+    assert.equal(result.segments[0].words[0].start, 0.1);
+    assert.equal(result.segments[0].words[0].end, 1.1);
+    assert.equal(result.segments[0].words[0].word, '測試');
+    assert.deepEqual(calls[1][1].slice(0, 11), ['--model', model, '--file', '/synthetic/input.wav', '--language', 'zh', '--threads', '4', '--processors', '1', '--no-gpu']);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'input.json'))), result);
+    fs.writeFileSync(path.join(dir, 'input.json'), 'old-output');
+    const failed = createEngine('whisper-cpp', () => {}, { binary: 'whisper-cli', model });
+    assert.throws(() => failed.transcribe('/synthetic/input.wav', dir), /ENOENT/);
+    assert.equal(fs.readFileSync(path.join(dir, 'input.json'), 'utf8'), 'old-output');
+    assert.equal(fs.readdirSync(dir).some((name) => name.startsWith('.whisper-cpp-')), false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('字幕 Adapter 拒絕未知供應者、不完整輸出與非法時間，傳遞工具失敗', () => {
-  assert.throws(() => createEngine('other'), /不支援/);
+test('字幕 Adapter 不回退舊引擎，缺時間或無效時間即失敗', () => {
+  assert.throws(() => createEngine('whisper'), /不支援/);
   assert.throws(() => validate({}), /segments/);
-  assert.throws(() => validate({ segments: [{ text: 'x' }] }), /逐字/);
+  assert.throws(() => normalizeCpp({ transcription: [{ text: 'x', tokens: [] }] }), /缺少/);
+  assert.throws(() => normalizeCpp({ transcription: [{ text: 'x', offsets: { from: 0, to: 100 }, tokens: [{ text: 'x' }] }] }), /時間/);
   assert.throws(() => validate({ segments: [{ text: 'x', start: 2, end: 1, words: [] }] }), /時間/);
-  const engine = createEngine('whisper', () => { throw new Error('tool failed'); });
-  assert.throws(() => engine.transcribe('/unused.wav', '/unused'), /tool failed/);
+});
+
+test('本機與容器 Node 版本一致', () => {
+  const root = path.resolve(__dirname, '../..');
+  const version = fs.readFileSync(path.join(root, '.node-version'), 'utf8').trim();
+  assert.equal(fs.readFileSync(path.join(root, '.nvmrc'), 'utf8').trim(), version);
+  assert.ok(fs.readFileSync(path.join(root, '90_系統/環境/Dockerfile'), 'utf8').includes('FROM node:' + version + '-'));
 });
 
 test('OCR 編號 Adapter 封裝 Tesseract 白名單並保留 Vision 路徑', () => {
