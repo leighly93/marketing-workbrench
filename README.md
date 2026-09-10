@@ -33,7 +33,20 @@ flowchart LR
 
 **系統準備講者，人決定畫面重點。** HeyGen 負責依稿件產生講者影片；人工標記則把稿件內容與截圖中的區域連起來，指定哪些內容需要顯示、框選或滑動。人可以在配圖計畫中調整畫面，再確認出片。
 
-兩邊匯合後，自動化區塊接續處理以下內容：
+兩邊匯合後，進入自動化影片產出。以下用 Input／Output 省略前後流程，展開區塊內的三項處理：
+
+```mermaid
+flowchart LR
+    productionInput["Input"]
+    subgraph automatedProduction["自動化影片產出"]
+        direction LR
+        ocrImages["OCR 配圖"] --> subtitleProcessing["字幕處理"] --> templateComposition["模板與影片合成"]
+    end
+    productionInput --> ocrImages
+    templateComposition --> productionOutput["Output"]
+```
+
+這是處理內容的簡化概覽；箭頭不代表所有準備工作都必須依序執行。各項處理的技術與分工如下：
 
 | 流程圖中的處理 | 在這個工具裡做什麼 | 與前後步驟的關係 |
 | --- | --- | --- |
