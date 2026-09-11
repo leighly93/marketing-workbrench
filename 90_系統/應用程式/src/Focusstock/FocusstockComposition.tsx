@@ -133,7 +133,21 @@ export const FocusstockComposition: React.FC = () => {
           const { from, durationInFrames } = frameSpan(run.startSec, run.endSec);
           return (
             <Sequence key={`run-${idx}`} from={from} durationInFrames={durationInFrames}>
-              <ShotFocusImage run={run} width={VIDEO_WIDTH} height={VIDEO_HEIGHT} fps={VIDEO_FPS} />
+              {/* safeTop/safeBottom：顯示區域與黃框的安全框。2026-09-11 使用者定案
+                  「四個版型全都一起改，上方 BAR 範圍一樣」→ 跟大盤小報／盤中焦點同值。
+                  ⚠️ 實測各版型 header 其實不等高（焦點股 y267、三大法人 y278、
+                     盤中焦點 y291、大盤小報 y303），310 是取最高的那個再留一點，
+                     四條線共用同一個數字。字幕條從 y1440 起（Subtitles.tsx）。
+                  ⚠️ 投廣套框版（FocusstockAdComposition）沒有跟著給 —— 它套的是
+                     籌碼K線外框、上方實心到 y226，跟這裡不是同一組數字。 */}
+              <ShotFocusImage
+                run={run}
+                width={VIDEO_WIDTH}
+                height={VIDEO_HEIGHT}
+                fps={VIDEO_FPS}
+                safeTop={310}
+                safeBottom={1430}
+              />
             </Sequence>
           );
         })}

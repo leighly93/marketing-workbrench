@@ -7,9 +7,18 @@ import { AbsoluteFill, Img, interpolate, staticFile, useCurrentFrame } from 'rem
  * 行為（2026-08-12 使用者逐項定案）：
  *   - 連續使用同一張圖的片段合併成一個 run → **圖片全程不下畫面，只有黃框平滑移動**
  *   - 有明確數字 → 框那個數字；只有欄位概念 → 框整欄（列數可由旁白的「連N日」決定）
- *   - 壓暗以**顯示區域（region）**為準；沒有 region 時才以黃框為準（框多大亮多大）
  *   - 圖片沒蓋到的地方壓深灰黑，不露出講者
  *   - wholePage（例：清單頁的 CTA）→ 整張顯示、不框不壓暗
+ *
+ * ⚠️ 2026-09-11 使用者定案改寫了**顯示區域（region）**的語意：
+ *   「我拉出的顯示區域，就是要出現在畫面的顯示範圍內（上方 BAR 下方），
+ *     所以拿到的圖不論直式橫式，都會依照我圈選的範圍出現在顯示範圍內。」
+ *   → region 從「亮帶」變成**裁切框**：等比縮放後置中放進安全框（safeTop~safeBottom
+ *     ×扣掉 margin 的可用寬），圈多大就看到多大，左右也跟著壓暗（以前只壓上下）。
+ *   → 圈的範圍比安全框大就**縮小塞進去**（使用者：「我就是在圈選差不多範圍了」），
+ *     不再像以前那樣維持原尺寸、任由上下被 BAR 與字幕切掉。
+ *   → 縮放因此變成**逐格**的（同一張圖不同段可以圈不同範圍），不再是整個 run 一個常數。
+ *   沒有 region、只有黃框的段落**行為完全不變**（維持滿寬 + 上下亮帶）。
  *
  * 座標來源是 OCR（scripts/analyze-app-images.js）＋規則庫（scripts/app-locators.json），
  * 全部相對於圖片本身，不寫死螢幕座標，所以換手機／解析度都適用。
@@ -39,12 +48,6 @@ export type ShotCellSpec = {
   cellManual?: boolean;
   isColumn?: boolean;
   wholePage?: boolean;
-  /** true = 從標題開始往下滑過內容（找不到具體目標時的呈現） */
-  pan?: boolean;
-  /** 滑動終點（圖片座標 y）；沒有就滑完可滑範圍 */
-  panToY?: number;
-  /** 截圖標題在圖上的 y；滑動起點會讓它落在畫面 PAN_START_FRAC 高度處 */
-  titleY?: number;
 };
 
 export type ShotRun = {
@@ -197,8 +200,16 @@ export const ShotFocusImage: React.FC<{
     );
   }
 
+  // 滿寬縮放：沒有 region 的段落沿用這個（＝改寫前的行為）。
   const sc = imgW / run.imageWidth;
   const T = SHOT_FOCUS.transitionSec;
+
+  // 安全框：region 要被塞進這一塊。水平用已經扣過 margin 的可用寬，
+  // 垂直用呼叫端給的 safeTop~safeBottom（沒給的版型＝整個畫布高，行為等同以前）。
+  const boxX = imgX;
+  const boxW = imgW;
+  const boxY = safeTop != null && safeBottom != null && safeBottom > safeTop ? safeTop : 0;
+  const boxH = safeTop != null && safeBottom != null && safeBottom > safeTop ? safeBottom - safeTop : height;
 
   // 定位以 region 為準（沒指定 region 才用黃框的位置 —— 也就是以前的行為）。
   // 黃框的幾何只在「這一格有 cell」時才有意義；沒有 cell 的格子 hasBox=false，
@@ -208,10 +219,44 @@ export const ShotFocusImage: React.FC<{
   //   region（顯示區域）＝只想看這一塊：不畫框、其餘「壓全黑」＝等於把畫面裁到這塊。
   // 兩者都會把圖捲到 focusY，差別在「畫不畫框」與「壓多黑」。
   let lastGeom: { left: number; top: number; width: number; height: number } | null = null;
-  let lastBand: { bandTop: number; bandBot: number } | null = null;
+  let lastBand: { bandTop: number; bandBot: number; bandLeft: number; bandRight: number } | null = null;
   const targets = withCell.map((c) => {
-    const anchor = (c.region || c.cell) as ShotBox;
-    const anchorY = c.isColumn && !c.region
+    // ── 有 region：圈的那塊等比縮放後置中放進安全框（2026-09-11 使用者定案）──
+    // 縮放、水平位移、亮區四個邊全部由 region 決定，不走下面那套 focusY／夾取邏輯 ——
+    // 位置是「算出來剛好在框裡」，不是「先擺再修」，所以那些夾取在這條路上是多餘的。
+    if (c.region) {
+      const s2 = Math.min(boxW / c.region.w, boxH / c.region.h);
+      const rw2 = c.region.w * s2;
+      const rh2 = c.region.h * s2;
+      const bandLeft = boxX + (boxW - rw2) / 2;
+      const bandTop = boxY + (boxH - rh2) / 2;
+      const imgLeft = bandLeft - c.region.x * s2;
+      const imgTop = bandTop - c.region.y * s2;
+      const pad = SHOT_FOCUS.pad;
+      const geomR = c.cell
+        ? {
+            left: imgLeft + c.cell.x * s2 - pad,
+            top: imgTop + c.cell.y * s2 - pad,
+            width: c.cell.w * s2 + pad * 2,
+            height: c.cell.h * s2 + pad * 2,
+          }
+        : lastGeom || { left: imgLeft, top: bandTop, width: 0, height: 0 };
+      if (c.cell) lastGeom = geomR;
+      const bandR = { bandTop, bandBot: bandTop + rh2, bandLeft, bandRight: bandLeft + rw2 };
+      lastBand = bandR;
+      return {
+        t: c.startSec - run.startSec,
+        imgLeft,
+        imgTop,
+        imgWidth: run.imageWidth! * s2,
+        hasBox: c.cell ? 1 : 0,
+        dimA: SHOT_FOCUS.regionDim,
+        ...geomR,
+        ...bandR,
+      };
+    }
+    const anchor = c.cell as ShotBox;
+    const anchorY = c.isColumn
       ? anchor.y * sc + SHOT_FOCUS.columnTopOffset
       : (anchor.y + anchor.h / 2) * sc;
     let yoff = focusY - anchorY;
@@ -224,35 +269,15 @@ export const ShotFocusImage: React.FC<{
     // 壞掉的是橫式：畫布只有 1080 高，以 region 定位時黃框會被推到 y972~1091，
     // 整個掉出畫面又壓在字幕上（使用者：「橫式九秒的重點沒有出現在畫面中」）。
     // ⚠️ 一定要在算 geom／band 之前夾，三者共用同一個 yoff 才會一起移動。
-    // ── 顯示區域（region）自己也要避開上方橫幅 bar ──
-    // 2026-09-01 使用者回報：盤中焦點「要顯示大範圍的圖片，會從頭頂開始這樣看不清楚，
-    // 應該要在橫幅 bar 下方才對」。大範圍 region 以中心對齊 focusY 時上緣會落到 y≈0，
-    // 剛好被常駐 header bar（不透明到 y301）蓋掉。
-    // 2026-09-03 再報一次（0903 南亞科）：人工標記是「黃框＋顯示區域」兩者都有，原本這段只在
-    // 「沒有黃框」時才跑 → 黃框夾進安全區了、顯示區域上緣照樣被 bar 蓋掉。改成**只要有 region 就夾**，
-    // 而且在黃框那段之前跑；黃框那段接著只准再往下修、不准把 region 上緣重新推回 bar 底下。
-    // 同樣「只在真的超出時最小介入」；region 比安全區還高就**上緣優先**（寧可下緣溢出，
-    // 也要先看得到頁面標題）。
-    if (c.region && safeTop != null && safeBottom != null && safeBottom > safeTop) {
-      const rTop = c.region.y * sc + yoff;
-      const rBot = (c.region.y + c.region.h) * sc + yoff;
-      let shift = 0;
-      if (rBot > safeBottom) shift = safeBottom - rBot;      // 太低 → 圖上移
-      if (rTop + shift < safeTop) shift = safeTop - rTop;    // 太高、或比安全區還高 → 上緣優先
-      if (shift !== 0) yoff += shift;
-    }
+    // ⚠️ 這裡開始是**沒有 region**的段落（只有黃框）。2026-09-11 之前另外有一段
+    //    「顯示區域也要避開上方橫幅 bar」的夾取（0901 盤中焦點、0903 南亞科兩次回報），
+    //    現在 region 是直接算進安全框的，那段夾取已經是多餘的二次修正，整段移除。
     if (c.cell && safeTop != null && safeBottom != null && safeBottom > safeTop) {
       const boxH = c.cell.h * sc + padY * 2;
       const boxTop = c.cell.y * sc - padY + yoff;
       let shift = 0;
       if (boxTop + boxH > safeBottom) shift = safeBottom - (boxTop + boxH);  // 太低 → 圖上移
       if (boxTop + shift < safeTop) shift = safeTop - boxTop;  // 太高、或框比安全區還高 → 上緣優先
-      // 有 region 時，上面已經把 region 上緣壓到 safeTop：黃框要再把圖往上推，最多只能推到
-      // region 上緣貼齊 safeTop 為止（上緣優先），不然顯示區域又會鑽回 bar 底下。
-      if (c.region && shift < 0) {
-        const rTop = c.region.y * sc + yoff;
-        shift = Math.max(shift, Math.min(0, safeTop - rTop));
-      }
       // ⚠️ 沒超出（shift === 0）就**一個字都不要動** —— 連下面那個保險也不要跑。
       //    不然本來就好好的段落會被順帶移動，就不是「只在超出時最小介入」了
       //    （實測：直式 shot3 會被保險往下推 444px，但它的黃框本來就在安全區內）。
@@ -278,24 +303,25 @@ export const ShotFocusImage: React.FC<{
         }
       : lastGeom || { left: imgX, top: focusY, width: 0, height: 0 };
     if (c.cell) lastGeom = geom;
-    // 壓暗帶（亮的那一條）：**region 優先**，有 region 就是 region 的範圍（緊貼）；
-    // 沒有 region 才退回黃框範圍＋margin。
-    // ⚠️ 2026-08-26 使用者定案：兩者都有時，「看得到多少」由藍虛線的顯示區域決定，
-    //    黃框只負責「圈住哪個數字」。原本寫成 c.cell 優先 → 圈了一大塊 region 也只亮
-    //    黃框上下 70px 那一條（實測 0826 大盤 shot1：region 1246px 高，實際只亮 239px），
-    //    畫面看起來像「黃框在哪就放大哪」，等於 region 白圈。
+    // 亮帶＝黃框範圍＋margin，上下壓暗。左右滿寬（bandLeft/bandRight 撐滿可用區）——
+    // 這兩個欄位是 2026-09-11 為 region 的四邊裁切加的，在這條路上等於沒作用。
     const M = SHOT_FOCUS.margin;
-    const band = c.region
-      ? { bandTop: c.region.y * sc + yoff, bandBot: (c.region.y + c.region.h) * sc + yoff }
-      : c.cell
-      ? { bandTop: c.cell.y * sc + yoff - M, bandBot: (c.cell.y + c.cell.h) * sc + yoff + M }
-      : lastBand || { bandTop: 0, bandBot: height };
+    const band = c.cell
+      ? { bandTop: c.cell.y * sc + yoff - M, bandBot: (c.cell.y + c.cell.h) * sc + yoff + M,
+          bandLeft: rx, bandRight: rx + rw }
+      : lastBand || { bandTop: 0, bandBot: height, bandLeft: rx, bandRight: rx + rw };
     lastBand = band;
     // 壓多黑：顯示區域壓全黑（裁掉其餘）；只有黃框時壓半透明（保留脈絡）。
     // 同樣 region 優先 —— 使用者圈了顯示區域就是「其餘不要露」。
-    const dimA = c.region ? SHOT_FOCUS.regionDim : (c.cell ? SHOT_FOCUS.dim : 0);
+    const dimA = c.cell ? SHOT_FOCUS.dim : 0;
     return {
-      t: c.startSec - run.startSec, yoff, hasBox: c.cell ? 1 : 0, dimA,
+      t: c.startSec - run.startSec,
+      // 沒有 region 的段落：圖一律滿寬、貼左，只有垂直位移會變（＝改寫前的行為）。
+      imgLeft: imgX,
+      imgTop: yoff,
+      imgWidth: imgW,
+      hasBox: c.cell ? 1 : 0,
+      dimA,
       ...geom, ...band,
     };
   });
@@ -314,7 +340,11 @@ export const ShotFocusImage: React.FC<{
     return fr;
   };
   const frames = buildFrames();
-  type SeriesKey = 'yoff' | 'left' | 'top' | 'width' | 'height' | 'hasBox' | 'dimA' | 'bandTop' | 'bandBot';
+  type SeriesKey =
+    | 'imgLeft' | 'imgTop' | 'imgWidth'
+    | 'left' | 'top' | 'width' | 'height'
+    | 'hasBox' | 'dimA'
+    | 'bandTop' | 'bandBot' | 'bandLeft' | 'bandRight';
   const seriesOf = (key: SeriesKey) => {
     const vals: number[] = [];
     targets.forEach((tg, i) => {
@@ -336,76 +366,25 @@ export const ShotFocusImage: React.FC<{
       : vals[0];
   };
 
-  // ── pan 模式：從標題開始慢慢往下滑過內容 ──
-  // 只有一格、且標記為 pan 時啟用。與其定格在標題，不如把整頁帶過去。
-  // 速度自動算：這一段有多久，就在這段時間內滑完「可滑範圍」，並限制不超過舒適速度。
-  const onlyCell = withCell.length === 1 ? withCell[0] : null;
-  const isPan = !!(onlyCell && onlyCell.pan);
-  let yoff = at('yoff');
-  let box = { left: at('left'), top: at('top'), width: at('width'), height: at('height') };
-
-  if (isPan) {
-    // ⚠️ 滑動一律「從截圖頂端開始、往下滑」。
-    // 2026-08-12 修正：原本以「目標欄位」當起點，而欄位多半在畫面中下方，
-    // 結果一開場就看到截圖下半部（使用者回報「完全錯誤，要先顯示上方標題再往下滑」）。
-    const durSec = Math.max(0.5, run.endSec - run.startSec);
-    const imgH = (run.imageHeight || 0) * sc;
-    // 起點：讓「截圖的標題」落在畫面 PAN_START_FRAC 高度處。
-    // 貼齊畫面頂端的話，標題會被上方的節目 header 蓋掉（2026-08-12 使用者回報）。
-    const PAN_START_FRAC = 0.25;
-    const titleY = onlyCell && onlyCell.titleY != null ? onlyCell.titleY : 0;
-    const startY = Math.max(0, height * PAN_START_FRAC - titleY * sc);
-    const minY = Math.min(0, height - imgH);  // 滑到底（圖片下緣對齊畫面下緣）
-    // ── 滑動節奏（2026-08-12 使用者定案）──
-    // 「先顯示上方標題時要停留一下，再往下滑動」「滑動偏快，可以再慢一點」
-    //   ① 開頭先停 PAN_HOLD_SEC 秒讓觀眾看清楚標題
-    //   ② 之後在整段的 PAN_FINISH_FRAC 之前滑完，速度上限 COMFORT_PX_PER_SEC
-    // 理想版本是「講到下方資訊時剛好滑到那裡」，但清單頁的 OCR 讀不出個股名，
-    // 無法對位，所以先用固定節奏；哪天 OCR 讀得到就會改用 panToY 精準對位。
-    const PAN_HOLD_SEC = 1.5;
-    const PAN_FINISH_FRAC = 0.8;
-    const COMFORT_PX_PER_SEC = 175;
-    const hold = Math.min(PAN_HOLD_SEC, durSec * 0.3);
-    const moveSec = Math.max(0.8, durSec * PAN_FINISH_FRAC - hold);
-    const travel = Math.min(startY - minY, COMFORT_PX_PER_SEC * moveSec);
-    const endY = startY - Math.max(0, travel);
-    yoff = interpolate(
-      frame,
-      [0, Math.round(hold * fps), Math.round((hold + moveSec) * fps)],
-      [startY, startY, endY],
-      { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
-    );
-    // 黃框跟著圖一起往上移出畫面
-    const shift = yoff - targets[0].yoff;
-    box = { ...box, top: targets[0].top + shift };
-  }
+  const img = { left: at('imgLeft'), top: at('imgTop'), width: at('imgWidth') };
+  const box = { left: at('left'), top: at('top'), width: at('width'), height: at('height') };
   // 這一格到底有沒有黃框（0~1，換格時會淡入淡出）。
   // 「只指定顯示區域、不畫黃線」就是靠這個 —— 框與壓暗一起關掉
   //（2026-08-17 使用者：框出顯示區域跟拉黃線是兩件事，要分開）。
-  const boxOn = at('hasBox');
-  const boxOpacity = boxOn * (isPan
-    ? interpolate(frame, [0, Math.round(1.6 * fps), Math.round(2.4 * fps)], [1, 1, 0], {
-        extrapolateLeft: 'clamp',
-        extrapolateRight: 'clamp',
-      })
-    : 1);
-  // 壓暗帶：亮的那一條 = 黃框範圍（含 margin）或顯示區域範圍；上下壓黑。
-  // pan 模式在瀏覽整頁，不壓暗。壓多黑由 dimA 決定：
-  //   顯示區域 dimA=1（全黑，等於把畫面裁到這塊，其餘不露 heygen）；黃框 dimA=0.72（保留脈絡）。
-  // （2026-08-18 使用者：直式要依圈選範圍顯示、其餘壓黑不露 heygen。）
-  let bandTop, bandBot, dimA;
-  if (isPan) { bandTop = 0; bandBot = height; dimA = 0; }
-  else {
-    bandTop = at('bandTop');
-    bandBot = at('bandBot');
-    dimA = at('dimA');
-    // 滑動出場時黃框那條帶也跟著移。
-    // ⚠️ 只在「沒有 region」時才做 —— 有 region 的話這裡會把上面算好的 region 亮帶
-    //    重新蓋成黃框範圍（單格 run 一定命中，0826 的 shot2 就是這樣被蓋掉的）。
-    if (targets.length === 1 && withCell[0] && withCell[0].cell && !withCell[0].region) {
-      bandTop = box.top - SHOT_FOCUS.margin;
-      bandBot = box.top + box.height + SHOT_FOCUS.margin;
-    }
+  const boxOpacity = at('hasBox');
+  // 亮區（沒被壓暗的那一塊）：有 region 就是 region 落在畫面上的矩形（四邊都緊貼），
+  // 沒有 region 就是黃框範圍＋margin、左右滿寬。壓多黑由 dimA 決定：
+  //   顯示區域 0.9（很暗但不是全黑，2026-08-18 使用者定案）；黃框 0.72（保留脈絡）。
+  let bandTop = at('bandTop');
+  let bandBot = at('bandBot');
+  const bandLeft = at('bandLeft');
+  const bandRight = at('bandRight');
+  const dimA = at('dimA');
+  // 滑動出場時黃框那條帶也跟著移。單格 run 才會命中，而且只在「沒有 region」時 ——
+  // 有 region 的話這裡會把算好的裁切框重新蓋成黃框範圍（0826 的 shot2 就是這樣被蓋掉的）。
+  if (targets.length === 1 && withCell[0] && withCell[0].cell && !withCell[0].region) {
+    bandTop = box.top - SHOT_FOCUS.margin;
+    bandBot = box.top + box.height + SHOT_FOCUS.margin;
   }
   const dimColor = `rgba(11,13,18,${dimA})`;
 
@@ -418,10 +397,13 @@ export const ShotFocusImage: React.FC<{
         }}
       />
 
-      <div style={{ position: 'absolute', left: imgX, top: yoff, width: imgW }}>
-        <Img src={staticFile(run.src)} style={{ width: imgW, display: 'block' }} />
+      <div style={{ position: 'absolute', left: img.left, top: img.top, width: img.width }}>
+        <Img src={staticFile(run.src)} style={{ width: img.width, display: 'block' }} />
       </div>
 
+      {/* 壓暗：亮區以外的四塊。上下兩塊滿寬，左右兩塊只補亮區那一段高度。
+          沒有 region 時 bandLeft/bandRight 就是可用區的左右緣 → 左右兩塊寬度 0，
+          畫面跟 2026-09-11 改寫前完全一樣。 */}
       <div
         style={{
           position: 'absolute', left: rx, top: 0, width: rw,
@@ -432,6 +414,20 @@ export const ShotFocusImage: React.FC<{
         style={{
           position: 'absolute', left: rx, top: bandBot, width: rw,
           height: Math.max(0, height - bandBot), backgroundColor: dimColor,
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute', left: rx, top: bandTop,
+          width: Math.max(0, bandLeft - rx),
+          height: Math.max(0, bandBot - bandTop), backgroundColor: dimColor,
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute', left: bandRight, top: bandTop,
+          width: Math.max(0, rx + rw - bandRight),
+          height: Math.max(0, bandBot - bandTop), backgroundColor: dimColor,
         }}
       />
 
@@ -462,9 +458,6 @@ export function buildShotRuns<
     cellManual?: boolean;
     isColumn?: boolean;
     wholePage?: boolean;
-    pan?: boolean;
-    panToY?: number;
-    titleY?: number;
     imageWidth?: number | null;
     imageHeight?: number | null;
   }
@@ -480,9 +473,6 @@ export function buildShotRuns<
       cellManual: s.cellManual,
       isColumn: s.isColumn,
       wholePage: s.wholePage,
-      pan: s.pan,
-      panToY: s.panToY,
-      titleY: s.titleY,
     };
     // ⚠️ 2026-08-25：往回找「最近一個同一張圖的 run」，不是只看陣列裡的上一筆。
     // 為什麼：0825 大盤實測順序是 shot1(7.68~13.10) → shot6(7.68~9.60) → shot1(13.36~14.36)，
