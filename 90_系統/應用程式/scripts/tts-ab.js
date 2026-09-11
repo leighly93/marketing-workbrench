@@ -1,7 +1,17 @@
 // MiniMax 配音 A/B 測試 —— 獨立腳本，完全不碰 run.js、不覆蓋任何 public/ 或 src/ 產物。
 // 用法：node scripts/tts-ab.js [--voice=focusstock] [--model=speech-2.8-hd] [--dict]
 //   --voice= focusstock | dapan | midday | institution | male   （預設 focusstock）
+//   --voice-id= 直接給 moss_audio_… 原始 id（測還沒進 VOICES 表的新聲音；覆蓋 --voice）
+//   --voice-tag= 檔名標籤，只在用 --voice-id 時有意義（預設取 id 尾碼 8 碼）
+//   --text-file= 用外部檔案當稿子（覆蓋 --text；真實文案用這個，不要塞命令列）
 //   --model= 任一 MiniMax T2A 模型                              （預設 speech-2.8-hd）
+//            2026-09-11 拿本帳號的 key 逐一打 t2a_v2 實測，可用的只有這 8 個：
+//              speech-01-hd / speech-01-turbo / speech-02-hd / speech-02-turbo
+//              speech-2.6-hd / speech-2.6-turbo / speech-2.8-hd / speech-2.8-turbo
+//            ✗ speech-2.5-hd-preview / speech-2.5-turbo-preview → 2061「token plan not support」（方案沒開）
+//            ✗ speech-2.7-hd / speech-2.7-turbo → 2013「t2a-v2 not have model」（**根本沒這個世代**；
+//              帶 emotion 時它會先回「不支援 emotion」，那訊息會誤導人以為模型存在，別被騙）
+//            hd＝音質優先、turbo＝便宜快。聲音本身來自 voice_id（clone），換世代換的是音質與斷句。
 //   --text=  c（精簡驗證稿，字典 25 條全命中）| a（原始測試稿）| b（第一版驗證稿）
 //            | d（數字驗證稿，測 --tn）| e（腔調候選稿，測還沒進字典的兩岸差異字）  預設 c
 //   --dict   加上才會送發音字典；預設「不送」
@@ -31,10 +41,12 @@ if (!API_KEY || !GROUP_ID) {
   process.exit(1);
 }
 
+// 與 run.js 的 MINIMAX_FIXED_ANCHOR_VOICES 對齊（同 DICT 的規矩：一邊換了另一邊要跟上，
+// 不然這支測的是舊聲音，聽出來的結論套不回產線）。male 是雙人 path 的 B，產線表裡沒有。
 const VOICES = {
   focusstock:  "moss_audio_3a75102e-54db-11f1-981b-8a143315d498",
-  dapan:       "moss_audio_e9e9da93-9f57-11f1-9d0c-8efee81d8a3a",
-  midday:      "moss_audio_e9e9da93-9f57-11f1-9d0c-8efee81d8a3a",
+  dapan:       "moss_audio_b47d71d2-ada4-11f1-8900-9edb4a3ef07d", // 2026-09-11 換，原 e9e9da93…
+  midday:      "moss_audio_f85dc873-ada4-11f1-a626-8a59b47fb1f9", // 2026-09-11 換，原本與 dapan 共用 e9e9da93…
   institution: "moss_audio_ad826960-9f57-11f1-8aea-1268c6bb306c",
   male:        "moss_audio_44ce6b04-5a39-11f1-981b-8a143315d498",
 };
@@ -147,9 +159,15 @@ if (MIX && MIX.length > 4) {
   console.error("❌ --mix 最多 4 個 voice，收到 " + MIX.length + " 個");
   process.exit(1);
 }
-const VOICE_ID = VOICES[VOICE_KEY];
+// --voice-id=moss_audio_…：直接指定還沒進 VOICES 表的聲音（2026-09-11 新增）。
+// 為什麼不先寫進 VOICES：新 clone 的聲音要先聽過才決定用不用，沒過關的留在表裡只會誤導人；
+// 定案要進產線時再寫進 run.js 的 MINIMAX_FIXED_ANCHOR_VOICES，順手補進這張表。
+// 檔名標籤預設取 id 尾碼 8 碼（--voice-tag= 可自訂），不然一次測兩支新聲音會分不出誰是誰。
+const RAW_VOICE_ID = arg("voice-id", "");
+const VOICE_ID = RAW_VOICE_ID || VOICES[VOICE_KEY];
+const VOICE_LABEL = RAW_VOICE_ID ? (arg("voice-tag", "") || "id-" + RAW_VOICE_ID.slice(-8)) : VOICE_KEY;
 if (!VOICE_ID) {
-  console.error("❌ 不認得的 --voice=" + VOICE_KEY + "（可用：" + Object.keys(VOICES).join(" / ") + "）");
+  console.error("❌ 不認得的 --voice=" + VOICE_KEY + "（可用：" + Object.keys(VOICES).join(" / ") + "；或用 --voice-id= 直接指定）");
   process.exit(1);
 }
 
@@ -233,10 +251,15 @@ const TEXTS = {
     "電子權值股整個翻紅。<#0.80#>接下來看到傳產這邊。",
   ].join("\n"),
 };
-const TEXT_KEY = arg("text", "c");
-const TEXT = TEXTS[TEXT_KEY];
+// --text-file=路徑：改用外部檔案的稿子（2026-09-11 新增，用來測新聲音在**真實文案**上的表現）。
+// 走檔案不走 --text=「一整段字」是因為真實文案有全形標點、驚嘆號與百分比，
+// 塞進命令列很容易被 shell 咬掉一半，出來的音檔跟你以為送出去的東西不一樣。
+const TEXT_FILE = arg("text-file", "");
+const TEXT_ARG = arg("text", "c");
+const TEXT_KEY = TEXT_FILE ? "file" : TEXT_ARG;
+const TEXT = TEXT_FILE ? fs.readFileSync(TEXT_FILE, "utf8").trim() : TEXTS[TEXT_ARG];
 if (!TEXT) {
-  console.error("❌ 不認得的 --text=" + TEXT_KEY + "（可用：c / a / b）");
+  console.error("❌ 不認得的 --text=" + TEXT_ARG + "（可用：" + Object.keys(TEXTS).join(" / ") + "；或用 --text-file= 指定稿子）");
   process.exit(1);
 }
 
@@ -487,7 +510,7 @@ async function tts(text, tag) {
       "　← 這行很重要，要搬進 run.js 的話照這個寫");
   }
 
-  const mixTag = MIX ? "mix-" + MIX.map((m) => m._key + m.weight).join("-") : VOICE_KEY;
+  const mixTag = MIX ? "mix-" + MIX.map((m) => m._key + m.weight).join("-") : VOICE_LABEL;
   const name = [MODEL, mixTag, "text" + TEXT_KEY, USE_DICT ? "dict" : "nodict", USE_TN ? "tn" : "notn", USE_PAUSE ? "pause" + (PAUSE_SCALE !== 1 ? "x" + PAUSE_SCALE : "") : "nopause", USE_NUMFIX ? "numfix" : "nonumfix", EMOTION ? "emo-" + EMOTION : "emo-auto", KEEP_HYPHEN ? "hyphen" : "nohyphen", tag].join("_") + ".mp3";
   const out = path.join(OUT_DIR, name);
   fs.writeFileSync(out, Buffer.from(data.data.audio, "hex"));
@@ -502,9 +525,9 @@ async function tts(text, tag) {
 }
 
 (async () => {
-  console.log("model=" + MODEL + "  text=" + TEXT_KEY + "  voice=" + VOICE_KEY + " (" + VOICE_ID + ")  發音字典=" + (USE_DICT ? "有送" : "不送") +
+  console.log("model=" + MODEL + "  text=" + TEXT_KEY + "  voice=" + VOICE_LABEL + " (" + VOICE_ID + ")  發音字典=" + (USE_DICT ? "有送" : "不送") +
     "  數字正規化=" + (USE_TN ? "開" : "關") + "  情緒=" + (EMOTION || "自動（不送欄位）") +
-    (MIX ? "\n混音 timbre_weights：" + MIX.map((m) => m._key + " " + m.weight).join(" ＋ ") + "（voice_setting.voice_id 仍是 " + VOICE_KEY + "）" : ""));
+    (MIX ? "\n混音 timbre_weights：" + MIX.map((m) => m._key + " " + m.weight).join(" ＋ ") + "（voice_setting.voice_id 仍是 " + VOICE_LABEL + "）" : ""));
   console.log("原文 " + TEXT.length + " 字");
   // 覆蓋率表只對 text c 有意義（它就是為了「一支聽完驗完整份字典」設計的）。
   // d／e 是另外的用途，印 0/25 只會製造雜訊、讓人誤以為出事了。

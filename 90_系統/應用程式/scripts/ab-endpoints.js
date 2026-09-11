@@ -70,12 +70,13 @@ const PROBE = flag("probe");
 const DRY_RUN = flag("dry-run");
 const GO = flag("go");
 
-// run.js 的固定主播三條線設定（改 run.js 時這裡要同步，否則測的不是同一組人聲）
+// run.js 的固定主播四條線設定（改 run.js 時這裡要同步，否則測的不是同一組人聲）
+// dapan／midday 的 avatar 與 HeyGen 聲音於 2026-09-11 跟著 run.js 換掉（兩條線的聲音也從此各自獨立）。
 const PRESETS = {
-  dapan: { avatar: "8032bdb625654e1ab849163373dfcf0a", voice: "f331fe732c7f44c88803ae019811ef50" },
+  dapan: { avatar: "cf57d30031a44a31bc39822af8de4c30", voice: "dc529e16819846b2a0ba986a7fc51a85" },
   institution: { avatar: "57d5790b64e34472a932d6c7d0b4f64b", voice: "e96f2834052f404c9c3725b4fd6ee55a" },
   focusstock: { avatar: "7765f68aaa6a4b658b95f4e5357c21d5", voice: "65b04effe83f423dbb1f66317318c37f" },
-  midday: { avatar: "0d84f2f57a97434a9a11b4166980201a", voice: "f331fe732c7f44c88803ae019811ef50" },
+  midday: { avatar: "b1be6a97186e4c49896f3eb503f8065f", voice: "9cb1516ecebf4c06b668e03f7f6e91f7" },
 };
 
 // 變因定義。engine = null 表示不送 engine 欄位（舊端點的行為）。

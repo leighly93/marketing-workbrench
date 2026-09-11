@@ -29,8 +29,10 @@ if (!["default", "dapan", "institution", "focusstock", "midday"].includes(TEMPLA
   console.error(`❌ 不認得的 --template=${TEMPLATE}（目前支援：default / dapan / institution / focusstock / midday）`);
   process.exit(1);
 }
-// 大盤小報／三大法人／焦點股日報／盤中焦點是「同一個模子」的四條固定主播產線：固定 avatar、125% 加速，
+// 大盤小報／三大法人／焦點股日報／盤中焦點是「同一個模子」的四條固定主播產線：固定 avatar、125% 加速。
 // 配音 2026-08-24 起走 MiniMax + HeyGen 音訊驅動對嘴（原本是 HeyGen 文字驅動，--heygen-voice 可退回）。
+// 大盤小報／盤中焦點在 2026-09-11 當天曾短暫改回 HeyGen 內建語音，同日又改回 MiniMax（換了新 clone 聲音），
+// 所以現在**四條線一致走 MiniMax**（見 HEYGEN_VOICE_ONLY_TEMPLATES，那個集合現在是空的）。
 // 用這個集合統一判斷，避免每處都寫 (dapan || institution || focusstock || midday)。
 // ⚠️ 這個集合是「加速只跑一次」的守門依據：generateHeygenVideo() 末尾的加速用 !FIXED_ANCHOR_TEMPLATE
 //    擋掉，固定主播三條線一律只走 main() 內那一次。新增固定主播版型時只要加進這個集合即可，
@@ -61,7 +63,8 @@ const SKIP_GENERATE = process.argv.includes("--skip-generate");
 //   --no-speed ：跳過 125% 加速（想保留原始講話速度時用）。四個版型都吃這個旗標。
 //   --no-ad    ：焦點股只出客製版，不出投廣套框版
 //   --minimax  ：投廣模板／雙人 path 退回 MiniMax 配音（2026-08-17 起預設用 HeyGen 內建語音）
-//   --heygen-voice：固定主播三條線退回 HeyGen 內建語音（2026-08-24 起預設走 MiniMax 配音 + 音訊驅動）
+//   --heygen-voice：三大法人／焦點股日報退回 HeyGen 內建語音（2026-08-24 起預設走 MiniMax 配音 + 音訊驅動）
+//                   大盤小報／盤中焦點 2026-09-11 起本來就是 HeyGen 內建語音，這個旗標對它們沒差
 //   --simp     ：送 MiniMax 前先做繁→簡轉換（2026-08-24 起**預設不轉**，繁體直送）
 //                （`--no-simp` 仍然收，但已經是預設行為、等於沒作用，留著只是為了舊指令不報錯）
 //   --heygen-v2：整批退回舊端點 —— 文字驅動與音訊驅動都走 /v2/videos、音檔上傳走 upload.heygen.com/v1/asset
@@ -117,9 +120,12 @@ const MINIMAX_LANGUAGE_BOOST = "Chinese";
 // 接著 A/B 聽 happy 與 fluent →「fluent 斷句可以就是有點平」「happy 這情緒還行，比較下會偏好這個」。
 // ⚠️ 合法值只有九個（happy/sad/angry/fearful/disgusted/surprised/calm/fluent/whisper），
 //    **沒有 neutral／auto**，送了會回 error 2013。要退回「自動挑」把這行設成 null 或空字串即可。
-// ⚠️ 這是**全域**設定：三支固定主播（大盤小報／三大法人／盤中焦點）＋投廣模板／雙人 path 都會套到。
-//    但使用者只在 **institution（三大法人）** 這支聲音上聽過 happy —— 另外兩支主播的第一支成品
-//    請特別聽一下情緒會不會太over；要縮成只有某個版型套用，改 minimaxTTS() 那行判斷即可。
+// ⚠️ 這是**全域**設定：四條固定主播線＋投廣模板／雙人 path 都會套到。
+//    2026-09-11 使用者在大盤小報／盤中焦點的兩支新聲音上也 A/B 聽過 happy 與「不送 emotion」，
+//    定案「有特別改 happy 的不錯，保留」—— 所以現在三支主播聲音都是聽過才套的。
+//    （順帶一提：不送 emotion 時 b47d71d2 那支同一段字會慢 4 秒，平又拖，不要退回「自動挑」。）
+//    焦點股日報那支還沒單獨聽過，第一支成品留意一下情緒會不會太 over；
+//    要縮成只有某個版型套用，改 minimaxTTS() 那行判斷即可。
 // ⚠️ emotion **沒有強度參數**，九個值是離散的。voice_modify.intensity（−100~100）是另一組東西
 //    （變聲器），跟 timbre_weights 同一類風險 —— 混音已實測「聽起來很假」，要用要單獨測。
 const MINIMAX_EMOTION = "happy";
@@ -278,11 +284,17 @@ const HEYGEN_DUAL_VOICES = {
 
 // 大盤小報：固定單一 avatar（「每日固定主播」形式，不像投廣模板從池子隨機抽），
 // 2026-08-06 使用者定案。只在 TEMPLATE === "dapan" 時使用。
-const DAPAN_AVATAR = { id: "8032bdb625654e1ab849163373dfcf0a", gender: "female" }; // 2026-08-10 使用者更換主播 avatar（原 c2c2963b…）
+const DAPAN_AVATAR = { id: "cf57d30031a44a31bc39822af8de4c30", gender: "female" }; // 2026-09-11 使用者更換 avatar look（原 8032bdb6…、更早 c2c2963b…）
+// ⚠️ 換 look 要順便確認上面 HEYGEN_ASPECT_RATIO 那條：大盤小報寫死 16:9 是因為舊主播素材是橫式。
+//    新 look 若是直式，16:9 會左右補白 —— 出片後看一眼，真的補白就把它改成 9:16。
 // 大盤小報：HeyGen 內建語音 voice_id（2026-08-07 使用者要求聲音改用 HeyGen 生、不經 MiniMax）。
-// ⚠️ 待補：目前是空值，去 HeyGen 後台「Voice Library」或呼叫 GET https://api.heygen.com/v3/voices
-// 找一個中文女聲的 voice_id 填進來，沒填就跑 --template=dapan 會直接報錯擋下來（見 main() 內檢查）。
-const DAPAN_HEYGEN_VOICE_ID = "f331fe732c7f44c88803ae019811ef50";
+// 2026-08-24 ~ 2026-09-10 這段期間改走 MiniMax、這個常數閒置；2026-09-11 使用者要求改回來，現在又是預設路徑。
+// 2026-09-11 使用者換聲音：dc529e16…（原 f331fe73…）。
+// ⚠️ 清空它會讓 --template=dapan 直接報錯擋下來（見 main() 內檢查）。要換聲音去 HeyGen 後台
+//    「Voice Library」或呼叫 GET https://api.heygen.com/v3/voices 挑一支中文女聲。
+// ⚠️ 改這裡要順手改 scripts/check-voices.js 與 scripts/ab-endpoints.js 的同一組 id，
+//    不然那兩支測的是舊聲音。
+const DAPAN_HEYGEN_VOICE_ID = "dc529e16819846b2a0ba986a7fc51a85";
 
 // 三大法人：跟大盤小報同一個模子（固定主播、HeyGen 文字驅動、125% 加速），只在 TEMPLATE === "institution" 用。
 // 2026-08-10 使用者提供：avatar 57d5790b…、中文女聲 voice e96f2834…。
@@ -301,10 +313,15 @@ const FOCUSSTOCK_HEYGEN_VOICE_ID = "65b04effe83f423dbb1f66317318c37f";
 // ⚠️ 只出直式（沒有橫式 composition），而且這支 photo 的原圖是**直式**（2026-08-31 使用者確認），
 //    所以 HEYGEN_ASPECT_RATIO 走非 dapan 的預設 9:16。別跟著大盤小報抄 16:9 —— 那是因為
 //    大盤主播的素材是橫式，抄過來會上下補白（見 HEYGEN_ASPECT_RATIO 那段註解）。
-const MIDDAY_AVATAR = { id: "0d84f2f57a97434a9a11b4166980201a", gender: "female" };
-const MIDDAY_HEYGEN_VOICE_ID = DAPAN_HEYGEN_VOICE_ID;
+const MIDDAY_AVATAR = { id: "b1be6a97186e4c49896f3eb503f8065f", gender: "female" }; // 2026-09-11 使用者更換 avatar look（原 0d84f2f5…）
+// ⚠️ 2026-09-11 起盤中焦點有自己的 HeyGen 聲音（9cb1516e…），不再等於大盤小報那一支 ——
+//    上面那段「voice id 一樣」是 2026-08-31 的舊定案，已被使用者這次的指定取代。
+//    這裡寫死字面值（不要再寫成 = DAPAN_HEYGEN_VOICE_ID），兩條線之後各換各的互不影響。
+//    MiniMax 那邊同日也拆開了（MINIMAX_FIXED_ANCHOR_VOICES.midday 換成自己的 f85dc873…）。
+// ⚠️ 這個常數目前是**退路**，不是預設路徑 —— 現在走的是 MiniMax，只有 --heygen-voice 才會用到它。
+const MIDDAY_HEYGEN_VOICE_ID = "9cb1516ecebf4c06b668e03f7f6e91f7";
 
-// ── 固定主播三條線改用 MiniMax 配音（2026-08-24 使用者要求）────────────
+// ── 固定主播線改用 MiniMax 配音（2026-08-24 使用者要求；大盤小報／盤中焦點已於 2026-09-11 改回）──
 // 使用者：「我要改成先把腳本送給 minimax 配音再給 HeyGen 做對嘴」。
 // 也就是這三條線從「HeyGen 文字驅動（script + voice_id，HeyGen 自己 TTS）」
 // 改回「MiniMax T2A → 上傳音檔 → HeyGen audio_asset_id 音訊驅動對嘴」，
@@ -315,18 +332,38 @@ const MIDDAY_HEYGEN_VOICE_ID = DAPAN_HEYGEN_VOICE_ID;
 //
 // ⚠️ 計費模式也跟著換了：文字驅動是 HeyGen 連 TTS 一起算，音訊驅動變成
 //    MiniMax 按字符收費（3.5 元/萬字符）+ HeyGen 按音檔秒數收費，兩邊都會扣。
+// ⚠️ 2026-09-11 大盤小報與盤中焦點換成兩支**新 clone 的聲音，而且彼此不同** ——
+//    2026-08-31 那條「盤中焦點 voice id 跟大盤小報一樣」的舊定案到此為止，兩條線之後各換各的。
+//    新聲音在改之前用 scripts/tts-ab.js 配真實文案試聽過（emotion=happy，＝下面 MINIMAX_EMOTION 的值），
+//    對照素材留在 90_系統/暫存/產線輸出/tts-ab/，檔名帶 newA／newB。
+//    重跑：node scripts/tts-ab.js --voice-id=<id> --text-file=<稿子> --dict --emotion=happy --trad-only
 const MINIMAX_FIXED_ANCHOR_VOICES = {
-  dapan: "moss_audio_e9e9da93-9f57-11f1-9d0c-8efee81d8a3a",       // 大盤小報
+  dapan: "moss_audio_b47d71d2-ada4-11f1-8900-9edb4a3ef07d",       // 大盤小報（2026-09-11 換，原 e9e9da93…）
   institution: "moss_audio_ad826960-9f57-11f1-8aea-1268c6bb306c", // 三大法人
   focusstock: "moss_audio_3a75102e-54db-11f1-981b-8a143315d498",  // 焦點股日報（＝既有 MINIMAX_VOICE_ID）
-  midday: "moss_audio_e9e9da93-9f57-11f1-9d0c-8efee81d8a3a",      // 盤中焦點（＝大盤小報同一支，2026-08-31 使用者定案「voice id 一樣」）
+  midday: "moss_audio_f85dc873-ada4-11f1-a626-8a59b47fb1f9",      // 盤中焦點（2026-09-11 換，原本與大盤小報共用 e9e9da93…）
 };
 
-// 退路：固定主播三條線回到 HeyGen 內建語音（2026-08-07 ~ 2026-08-23 的行為）。
+// 退路：固定主播四條線回到 HeyGen 內建語音（2026-08-07 ~ 2026-08-23 的行為）。
 const USE_HEYGEN_VOICE = process.argv.includes("--heygen-voice");
 
-// 固定主播三條線這次要不要走 MiniMax（單一判斷點，避免三個分支各寫一次）
-const FIXED_ANCHOR_USE_MINIMAX = FIXED_ANCHOR_TEMPLATE && !USE_HEYGEN_VOICE;
+// ── 某些版型「預設走 HeyGen 內建語音」的名單 ──────────────────────────────
+// 進這個集合的版型效果等同自帶 --heygen-voice：走 script + voice_id 文字驅動，
+// 不上傳音檔、不扣 MiniMax 點數，用的是各自的 *_HEYGEN_VOICE_ID 常數。
+//
+// **現在是空的 —— 四條固定主播線一律走 MiniMax。**
+// 沿革：2026-09-11 使用者一度要求大盤小報／盤中焦點「voice 都先改用 HeyGen 內建的聲音，不要接 minimax」，
+// 同一天又拿到兩支新 clone 的 MiniMax 聲音、試聽後定案改回 MiniMax（見 MINIMAX_FIXED_ANCHOR_VOICES）。
+// 機制保留不刪：哪天某條線又要退回 HeyGen 內建語音，把版型名字加回這個集合就好，
+// 其餘分支邏輯（FIXED_ANCHOR_USE_MINIMAX 與 main() 裡那四段）完全不必動。
+// 臨時只退一次：指令加 --heygen-voice。
+const HEYGEN_VOICE_ONLY_TEMPLATES = new Set([]);
+
+// 固定主播四條線這次要不要走 MiniMax（單一判斷點，避免四個分支各寫一次）
+const FIXED_ANCHOR_USE_MINIMAX =
+  FIXED_ANCHOR_TEMPLATE &&
+  !USE_HEYGEN_VOICE &&
+  (!HEYGEN_VOICE_ONLY_TEMPLATES.has(TEMPLATE) || USE_MINIMAX);
 
 // ── 繁→簡轉換：2026-08-24 起預設關閉（使用者定案「不要改簡體字了」）────────────
 // 這個轉換是 2026-05-21（commit b08ba99「聲音改串接Minmax完成」）加的，當時的理由記在
@@ -1297,13 +1334,14 @@ async function main() {
     }
     // 需要 MiniMax key 的兩種情況：
     //   ① 投廣模板／雙人 path 加了 --minimax（2026-08-17 起那兩條線預設走 HeyGen 內建語音）
-    //   ② 固定主播三條線（2026-08-24 起預設走 MiniMax 配音，除非加 --heygen-voice）
+    //   ② 三大法人／焦點股日報（2026-08-24 起預設走 MiniMax 配音，除非加 --heygen-voice）
+    //      大盤小報／盤中焦點 2026-09-11 起預設 HeyGen 內建語音，不在此列（除非加 --minimax）
     const needMinimax = USE_MINIMAX || FIXED_ANCHOR_USE_MINIMAX;
     if (needMinimax && (!MINIMAX_API_KEY || !MINIMAX_GROUP_ID)) {
       console.error("❌ 缺少 MINIMAX_API_KEY 或 MINIMAX_GROUP_ID（請填到 .env）");
       console.error(
         FIXED_ANCHOR_USE_MINIMAX
-          ? "   固定主播四條線（dapan／institution／focusstock／midday）2026-08-24 起預設用 MiniMax 配音。\n   不想加 key 的話，指令加 --heygen-voice 退回 HeyGen 內建語音。"
+          ? "   三大法人／焦點股日報 2026-08-24 起預設用 MiniMax 配音（大盤小報／盤中焦點 2026-09-11 起已改回 HeyGen 內建語音）。\n   不想加 key 的話，指令加 --heygen-voice 退回 HeyGen 內建語音。"
           : "   指定了 --minimax 就需要這兩個 key。"
       );
       process.exit(1);
@@ -1513,8 +1551,8 @@ async function generateHeygenVideo(heygenPath) {
     log("   預計等待 3-5 分鐘，請耐心等候 ☕");
     await runDualPath(segments, pair, heygenPath);
   } else if (TEMPLATE === "dapan") {
-    // ── 大盤小報單人 path：預設 MiniMax 配音 + HeyGen 音訊驅動對嘴（2026-08-24 起）──
-    //    加 --heygen-voice 退回 HeyGen 內建語音的文字驅動。
+    // ── 大盤小報單人 path：預設 MiniMax 配音 + HeyGen 音訊驅動對嘴 ──
+    //    加 --heygen-voice 才走 HeyGen 內建語音的文字驅動（script + voice_id）。
     if (!FIXED_ANCHOR_USE_MINIMAX && !DAPAN_HEYGEN_VOICE_ID) {
       console.error("❌ 大盤小報要用 HeyGen 內建語音，但 DAPAN_HEYGEN_VOICE_ID 還是空值。");
       console.error("   去 HeyGen 後台「Voice Library」或呼叫 GET https://api.heygen.com/v3/voices 找一個中文女聲 voice_id，填進 run.js 的 DAPAN_HEYGEN_VOICE_ID 常數。");
@@ -1540,10 +1578,10 @@ async function generateHeygenVideo(heygenPath) {
     await downloadVideo(videoUrl, heygenPath);
   } else if (TEMPLATE === "midday") {
     // ── 盤中焦點單人 path：跟大盤小報同一套（預設 MiniMax 配音 + HeyGen 音訊驅動對嘴）──
-    //    avatar 是自己的，聲音沿用大盤小報同一支（2026-08-31 使用者定案）。
+    //    avatar 與聲音都是自己的（MiniMax、HeyGen 兩邊的聲音 2026-09-11 起都不再沿用大盤小報那一支）。
     if (!FIXED_ANCHOR_USE_MINIMAX && !MIDDAY_HEYGEN_VOICE_ID) {
       console.error("❌ 盤中焦點要用 HeyGen 內建語音，但 MIDDAY_HEYGEN_VOICE_ID 還是空值。");
-      console.error("   它預設等於 DAPAN_HEYGEN_VOICE_ID，去 run.js 確認那個常數有沒有被清空。");
+      console.error("   去 HeyGen 後台「Voice Library」或呼叫 GET https://api.heygen.com/v3/voices 找一個中文女聲 voice_id，填進 run.js 的 MIDDAY_HEYGEN_VOICE_ID 常數。");
       process.exit(1);
     }
     let cleanedScript = cleanScript(rawScript);
