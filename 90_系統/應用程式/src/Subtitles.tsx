@@ -55,11 +55,19 @@ const PUNCT_RE = /[，。、！？：；]/;
 // 2026-09-03：斷點只認「離它最近的那個字」。0903 南亞科：新(–3.30)高(3.30–3.347)，斷點在高的結尾 3.347，
 // 但 3.30 也落在 0.05 容差內 → 在「新」後面提早切一刀、「高」又自己再切一刀，變成 0.047 秒的獨立字幕閃一下
 // （使用者：「『再創歷史新高』變成『再創歷史新』『高』」）。下一個字的結尾離斷點更近，這個字就先不切。
+//
+// 2026-09-11：平手（兩個字的結尾跟斷點距離一樣）時要切**後面**那個，原本的 >= 會切前面 →
+// 同一個症頭又出現一次。0911 鎧俠那支：「利基型 DRAM！」的 M 是 correct-subtitles 的強制對齊
+// 從 whisper 時間戳 token 還原出來的，start === end === 14.52，剛好就是 ！ 的斷點時間。
+// 於是 A（結尾 14.52）與 M（結尾 14.52）距離都是 0，>= 成立 → 在 M 前面切一刀，
+// 字幕變成「但晶豪科主攻利基型DRA」＋只有 1 frame 的「M」（使用者回報：DRAM 變成 DRA／M）。
+// 改成 > 之後：A 不切（0 > 0 不成立）、M 切（下一個字「8」結尾 14.84，距離 0.32 > 0）。
+// 0903 那個案子不受影響（0.047 vs 0，> 與 >= 同樣不切）。
 function isAtScriptBreak(endTime: number, breaks: number[], nextEnd?: number): boolean {
   return breaks.some(
     (t) =>
       Math.abs(endTime - t) < BREAK_TOLERANCE &&
-      (nextEnd == null || Math.abs(nextEnd - t) >= Math.abs(endTime - t))
+      (nextEnd == null || Math.abs(nextEnd - t) > Math.abs(endTime - t))
   );
 }
 
@@ -115,6 +123,11 @@ function splitIntoPhrases(
     // 只看 gap 就會把 0.88% 拆成「0.」「88%」兩行（2026-08-12 使用者回報）。
     // 前一段結尾是數字或小數點／千分位逗號，且下一個字以數字開頭 → 視為同一個數字，不斷。
     const midNumber = /[\d.,]$/.test(current.text) && /^[\d.,%]/.test(wordText);
+    // ⚠️ 2026-09-11 試過再加一條「英文字母中間不准斷」（DRAM 被切成 DRA／M 時想到的），
+    //    結果 0904 那支的「PCB、ABF」變成「PCBABF」—— 中間那個、本來就該斷，
+    //    而 whisper 給 ABF 的 token 沒有 leading space，分不出「同一個字」還是「兩個字」。
+    //    真正的斷點資訊在 _scriptBreaks（、有、DRAM 中間沒有），所以那一刀本來就該由
+    //    isAtScriptBreak 判掉，不要在這裡加英文特例。DRAM 那個 bug 修在 isAtScriptBreak 的平手處理。
     const shouldSplit =
       !midNumber && (atScriptBreak || prevEndsWithPunct || gap > GAP_THRESHOLD);
 

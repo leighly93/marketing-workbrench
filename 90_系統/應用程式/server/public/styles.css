@@ -180,16 +180,27 @@
   /* ⚠️ width:fit-content 不是為了好看。上面那排縮圖在圖多的時候比圖片還寬，
      會把這個容器撐開 —— 右邊多出一塊黑底看起來像圖的一部分。
      黃框的位置另外用像素算（見 drawEdBox），不靠這裡的寬度。 */
+  /* ⚠️ max-width:100% 是「橫式大圖不准壓到右欄」的那一半（另一半在下面 .ed-img img）。
+     flex:none 的意思是這個盒子不會被 flex 壓縮，所以沒有上限的話它就照圖片的寬度長出去，
+     蓋掉右邊那欄（2026-09-11 使用者回報：橫式圖「完全佔掉我選擇內文的地方，選不到他
+     應該要在哪句話出現」）。 */
   .ed-img{position:relative;line-height:0;cursor:crosshair;user-select:none;
     background:#000;border-radius:8px;overflow:hidden;flex:none;
-    width:fit-content;margin:0 auto}
+    width:fit-content;max-width:100%;margin:0 auto}
   /* ⚠️ 這個上限不是隨便抓的：扣掉 .ed 的 padding 26×2、.ed-in 的 padding 20×2、
      縮圖列固定高 104 ＋ margin 10，再留一點餘裕 = 215px。
      以前寫死 76vh，跟上面的縮圖列各算各的 —— 圖一多縮圖列換行長高，
      兩邊加起來超過視窗，圖片就從 .ed-in 底下溢出到畫面外，而且哪裡都沒有滑軌
      （2026-08-26 使用者回報：「截圖太長、圖片太多，顯示區域往下」）。
      縮圖列現在是固定高的單列橫捲（見下面 .ed-strip），這個扣除才會是準的。 */
-  .ed-img img{display:block;max-height:calc(100vh - 215px);width:auto}
+  /* 寬度上限（2026-09-11）：直式截圖靠上面的 max-height 就收得住，橫式的長邊是寬 ——
+     高度限制對它沒作用，圖片會把左欄撐得比 modal 還寬，右邊「出現在哪一段」被壓掉。
+     620px 的來源：.ed-in 最寬 1000 − padding 20×2 − gap 20 − 右欄 320。
+     視窗比 1052px 窄的時候換另一條：100vw − .ed padding 26×2 − 上面那 380 = 100vw − 432。
+     ⚠️ 動到 .ed-in 的 max-width／padding／gap 或 .ed-side 的寬度，這兩個數字要一起改。
+     縮小不會讓框畫歪 —— drawEdBox() 是拿圖片當下的 offsetWidth/Height 換算的。 */
+  .ed-img img{display:block;max-height:calc(100vh - 215px);
+    max-width:min(620px, calc(100vw - 432px));width:auto;height:auto}
   .ed-img .bx{position:absolute;border:3px solid #FFE600;border-radius:3px;pointer-events:none}
   .ed-img .bx.region{border-color:#3ba0ff;border-style:dashed}
   /* 左欄（縮圖列 ＋ 圖片）。以前是個沒有 class、沒有高度限制的裸 <div>，
