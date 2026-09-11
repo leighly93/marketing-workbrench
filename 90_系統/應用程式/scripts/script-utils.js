@@ -42,21 +42,47 @@ function parseVoiceRules(scriptRaw) {
  * 規則之間沒有重疊時，本函式與舊寫法輸出完全相同（已用專案現有腳本比對驗證）。
  */
 function applyVoiceRulesForward(text, rules) {
+  return applyVoiceRulesForwardWithMap(text, rules).out;
+}
+
+/**
+ * 同 applyVoiceRulesForward，另外回傳「換完的第 j 個字 ← 原文的哪一段」對照表。
+ *
+ * 為什麼需要（2026-09-11）：發音替換是給 TTS 用的，但配圖判定（auto-shot／auto-focus）
+ * 是拿旁白文字去比對「股名、關鍵詞、數字」。共用詞庫裡本來就有一堆股名與產業詞
+ * （萬海→one海、奇鋐→奇紅、DRAM→滴RAM、NAND→name的），判定吃到替換後的字就再也比不到 ——
+ * 而且是靜默失效：影片照出，只是圖配錯或配不到。
+ * 字元索引（startCharIdx／字幕時間軸）必須維持在「替換後」這個座標系，所以不能直接換掉來源，
+ * 要的是「索引照替換後、內容看原文」，這張對照表就是為此存在。
+ *
+ * srcStart[j] / srcStop[j] = 換完後第 j 個字對應原文的 [start, stop) 區間。
+ * 被規則換掉的那一整段（滴RAM 的 4 個字）全部指向原文的整個 from（DRAM）——
+ * 所以任何跨進那段的範圍取回來的都是完整的原文詞，不會拿到半截。
+ */
+function applyVoiceRulesForwardWithMap(text, rules) {
   const list = (rules || []).filter((r) => r && r.from);
-  if (!list.length) return text;
   // 長的優先：不然「南亞科」會先吃掉「南亞科技股份」的機會
   const sorted = [...list].sort((a, b) => b.from.length - a.from.length);
   let out = '';
+  const srcStart = [];
+  const srcStop = [];
   let i = 0;
   while (i < text.length) {
     let hit = null;
     for (const r of sorted) {
       if (text.startsWith(r.from, i)) { hit = r; break; }
     }
-    if (hit) { out += hit.to; i += hit.from.length; }
-    else { out += text[i]; i += 1; }
+    if (hit) {
+      for (let k = 0; k < hit.to.length; k++) { srcStart.push(i); srcStop.push(i + hit.from.length); }
+      out += hit.to;
+      i += hit.from.length;
+    } else {
+      srcStart.push(i); srcStop.push(i + 1);
+      out += text[i];
+      i += 1;
+    }
   }
-  return out;
+  return { out, srcStart, srcStop };
 }
 
 /**
@@ -64,10 +90,75 @@ function applyVoiceRulesForward(text, rules) {
  * 回傳：bodyAfterVoice 字串（保留標記、註解、空白、標點 — 給 parse-script 在上面找 (imageN) 區塊）
  */
 function getBodyAfterVoice(scriptRaw) {
+  return getBodyWithVoiceMap(scriptRaw).body;
+}
+
+/**
+ * 同 getBodyAfterVoice，但一併給「原文」與取原文的方法。
+ * 給「索引要照替換後、判定要看原文」的人用（auto-shot／auto-focus 的配圖判定）。
+ * 需要替換後字串的人（parse-*-script 的 char-index anchor、correct-subtitles 的對齊）
+ * 照舊呼叫 getBodyAfterVoice 就好 —— 那兩邊比對的是 whisper 聽到的音，本來就該用替換後的字。
+ */
+function getBodyWithVoiceMap(scriptRaw) {
   const parts = scriptRaw.split('===');
   const bodyRaw = parts.length >= 3 ? parts[parts.length - 1] : (parts[1] ?? scriptRaw);
   const rules = parseVoiceRules(scriptRaw);
-  return applyVoiceRulesForward(bodyRaw, rules);
+  const { out, srcStart, srcStop } = applyVoiceRulesForwardWithMap(bodyRaw, rules);
+  return {
+    body: out,
+    bodyOrig: bodyRaw,
+    rules,
+    /**
+     * 替換後的 [a, b) 區間 → 原文對應的那段字。
+     * 範圍只切到某個被替換詞的一半時，回傳的是那個詞的完整原文（見上面對照表的說明）。
+     */
+    origSlice(a, b) {
+      if (!out.length || !(b > a)) return '';
+      const lo = Math.max(0, Math.min(a, out.length - 1));
+      const hi = Math.max(0, Math.min(b - 1, out.length - 1));
+      return bodyRaw.slice(srcStart[lo], srcStop[hi]);
+    },
+    /**
+     * 逐字原文（2026-09-11 使用者定案：「替換後的字僅僅只有送去給發音時用，其他時候都不使用」）。
+     *
+     * 回傳一個跟 cleanedChars **等長** 的陣列，第 i 格是那個位置該顯示的原稿字。
+     * 等長是硬要求 —— 字元索引（startCharIdx／字幕時間軸 _scriptCharTimes）是整條產線的共同座標，
+     * 而它建立在「替換後」的字數上（字幕對齊比對的是 whisper 聽到的音，只能用替換後的字）。
+     * 所以這裡換的是**內容**，不是座標。
+     *
+     * 長度不一樣的規則怎麼配（NAND 4 字 → name的 5 字）：
+     *   原文字數 ≤ 格子數 → 從前面一格一字擺，多出來的格子給空字串（畫面上不顯示，索引照舊存在）
+     *   原文字數 > 格子數 → 前面一格一字，剩下的全部塞進最後一格
+     * 兩種情形下「整個詞的格子連起來」都還是完整的原文詞。
+     */
+    origChars(cleanedChars) {
+      const res = new Array(cleanedChars.length).fill('');
+      let i = 0;
+      while (i < cleanedChars.length) {
+        const bi = cleanedChars[i].origIdx;
+        const a0 = srcStart[bi];
+        const b0 = srcStop[bi];
+        // 同一個被替換詞產出的字會共用同一組 (a0, b0) —— 把它們圈成一組
+        let j = i;
+        while (
+          j + 1 < cleanedChars.length &&
+          srcStart[cleanedChars[j + 1].origIdx] === a0 &&
+          srcStop[cleanedChars[j + 1].origIdx] === b0
+        ) j++;
+        const n = j - i + 1;
+        // 原文那一段也走同一套清洗（去標記、去標點、去空白），不要在這裡自己再寫一份
+        const src = cleanBodyWithIndex(bodyRaw.slice(a0, b0)).map((c) => c.char);
+        if (src.length <= n) {
+          for (let k = 0; k < src.length; k++) res[i + k] = src[k];
+        } else {
+          for (let k = 0; k < n - 1; k++) res[i + k] = src[k];
+          res[j] = src.slice(n - 1).join('');
+        }
+        i = j + 1;
+      }
+      return res;
+    },
+  };
 }
 
 /**
@@ -218,7 +309,9 @@ module.exports = {
   OTHER_PUNCT_RE,
   parseVoiceRules,
   applyVoiceRulesForward,
+  applyVoiceRulesForwardWithMap,
   getBodyAfterVoice,
+  getBodyWithVoiceMap,
   cleanBodyWithIndex,
   resolveManualOverlaps,
 };

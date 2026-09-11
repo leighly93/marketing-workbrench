@@ -17,7 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  getBodyAfterVoice,
+  getBodyWithVoiceMap,
   cleanBodyWithIndex,
 } = require('./script-utils');
 
@@ -34,8 +34,12 @@ if (!fs.existsSync(SCRIPT_PATH)) {
 }
 
 const scriptRaw = fs.readFileSync(SCRIPT_PATH, 'utf-8');
-const bodyAfterVoice = getBodyAfterVoice(scriptRaw);
+// bodyAfterVoice = 發音替換後的字串。它只當**座標系**用（char-index anchor 必須跟字幕時間軸
+// 同一套），要顯示／記錄的字一律走 ORIG_CHARS／origSlice 拿原稿的字
+//（2026-09-11 使用者定案：「替換後的字僅僅只有送去給發音時用，其他時候都不使用」）。
+const { body: bodyAfterVoice, origSlice, origChars } = getBodyWithVoiceMap(scriptRaw);
 const cleanedChars = cleanBodyWithIndex(bodyAfterVoice);
+const ORIG_CHARS = origChars(cleanedChars);
 // origIdx → cleanedIdx 反查表
 const origToCleanedIdx = new Map();
 cleanedChars.forEach((c, i) => origToCleanedIdx.set(c.origIdx, i));
@@ -106,7 +110,9 @@ function bodyRangeToCleanedRange(bodyStart, bodyEnd) {
     endCharIdx = ci;
   }
   if (startCharIdx < 0) return null;
-  const phrase = cleanedChars.slice(startCharIdx, endCharIdx + 1).map((c) => c.char).join('');
+  // 原稿的字（anchors／_phrase／執行記錄都吃這個；渲染端早就改成純靠 charIdx 解時間，
+  // anchor 只剩「給人看」的作用，見 src/timeline.ts 的 resolveByCharIdx）
+  const phrase = ORIG_CHARS.slice(startCharIdx, endCharIdx + 1).join('');
   return { startCharIdx, endCharIdx, phrase };
 }
 
@@ -235,7 +241,12 @@ overlays.forEach((o) => {
 // ─── TextCard 解析 ─────────────────────────────────────
 const textCards = [];
 for (const m of bodyAfterVoice.matchAll(textPattern)) {
-  const text = m[1].trim();
+  // ⚠️ 卡片上的字要用**原稿**，不能用替換後的（2026-09-11）——
+  //    這是會印在畫面上的文字，發音替換寫的是「怎麼唸才對」（萬海→one海），印出來就是錯字。
+  //    m[1] 緊接在 "(text:" 之後，所以位置固定是 m.index + 6；對不上就退回 m[1]（不要靜默出錯字）。
+  const nameAt = m.index + '(text:'.length;
+  const sameSpot = bodyAfterVoice.substr(nameAt, m[1].length) === m[1];
+  const text = (sameSpot ? origSlice(nameAt, nameAt + m[1].length) : m[1]).trim();
   const anim = VALID_ANIMS.has(m[2]) ? m[2] : 'pop';
   const skip = m[3] === 'skip';
   const contentBodyStart = m.index + m[0].indexOf(m[4]);

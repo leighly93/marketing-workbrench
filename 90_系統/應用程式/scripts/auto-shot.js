@@ -22,7 +22,7 @@ const path = require('path');
 const { workspaceRoot, cliPath, dataPath } = require('../../paths');
 const ROOT = path.resolve(__dirname, '..');
 const WORKSPACE_ROOT = workspaceRoot(ROOT);
-const { getBodyAfterVoice, cleanBodyWithIndex, resolveManualOverlaps } = require('./script-utils');
+const { getBodyWithVoiceMap, cleanBodyWithIndex, resolveManualOverlaps } = require('./script-utils');
 const SHOT_MEMORY = require('./shot-memory');
 // 讓 PAGE_RULES / SHOT_MEMORY 開關在被 server 直接 spawn（--suggest-cells）時也讀得到 .env
 // quiet：dotenv v17 預設會往 stdout 印一行「◇ injecting env…」，而 server 是 JSON.parse 這支 --sentences 的 stdout，會炸。
@@ -305,10 +305,25 @@ function durationOf(a, b) {
 if (imgs.length === 0) fail('app-images.generated.json 裡沒有圖片');
 
 const raw = fs.readFileSync(SCRIPT_PATH, 'utf-8');
-const body = getBodyAfterVoice(raw);
+// ⚠️ body 是「發音替換後」的字串，只拿來當**座標系**用（字元索引、(shot:) 標記位置、
+//    斷句位置都必須跟字幕時間軸同一套）。凡是要「讀內容」的地方一律走 origSlice()／origPhrase()
+//    拿原稿的字 —— 共用發音詞庫裡有一堆股名與產業詞（萬海→one海、DRAM→滴RAM、NAND→name的），
+//    判定吃到替換後的字就比不到圖上的目標，而且是靜默失效：圖照配，只是配錯或配不到。
+//    （2026-09-11 使用者指出：「auto-shot 的配圖判定應該要吃原腳本才對」）
+const { body, origSlice, origChars } = getBodyWithVoiceMap(raw);
 const cleaned = cleanBodyWithIndex(body);
 const map = new Map();
 cleaned.forEach((c, i) => map.set(c.origIdx, i));
+/**
+ * 清洗後字元索引 [lo, hi] → 原稿的那段字（同樣清洗過：去標記、去標點、去空白）。
+ * 刻意再呼叫一次 cleanBodyWithIndex 而不是自己過濾 —— 清洗規則只能有一份。
+ */
+function origPhrase(lo, hi) {
+  const a0 = (cleaned[lo] || {}).origIdx;
+  const b0 = (cleaned[hi] || {}).origIdx;
+  if (a0 == null || b0 == null) return '';
+  return cleanBodyWithIndex(origSlice(a0, b0 + 1)).map((c) => c.char).join('');
+}
 function toCleaned(a, b) {
   let s = -1, e = -1;
   for (let i = a; i < b; i++) {
@@ -664,14 +679,17 @@ const clauses = [];
     //   句子不會。已撤回。）
     if (ch === '\n' && /^[ \t]*\n/.test(body.slice(i + 1))) blk++;
     if (/[。！？\n，、；：]/.test(ch)) {
+      // 切點（st/i）照替換後算，text 給原稿的字 —— 兩者長度可能不同（NAND→name的 差一個字），
+      // 所以「有沒有東西」的門檻仍看替換後那段，切法才跟以前完全一樣。
       const t = body.slice(st, i + 1);
-      if (t.trim().length > 1) clauses.push({ text: t, start: st, end: i + 1, sid, blk, u: clauses.length });
+      if (t.trim().length > 1)
+        clauses.push({ text: origSlice(st, i + 1), start: st, end: i + 1, sid, blk, u: clauses.length });
       st = i + 1;
       if (/[。！？\n]/.test(ch)) sid++;
     }
   }
   if (body.slice(st).trim().length > 1)
-    clauses.push({ text: body.slice(st), start: st, end: body.length, sid, blk, u: clauses.length });
+    clauses.push({ text: origSlice(st, body.length), start: st, end: body.length, sid, blk, u: clauses.length });
 }
 
 // ── 句子清單（--sentences）──
@@ -713,7 +731,12 @@ if (SENTENCES_ONLY) {
   // 中間不再經過「子句」這層轉換，也才能處理「一句話要配兩張圖」
   //（例：友達群創雙漲停。是一個子句，卻要分給兩張截圖）。
   // b=1 表示這個字後面是標點或換行，前台用來排版斷行。
-  const chars = cleaned.map((c, i) => ({ i, c: c.char, b: c.breakAfter ? 1 : 0, p: c.paraBreak ? 1 : 0 }));
+  // c 給**原稿的字**（2026-09-11 使用者定案：替換後的字只送 TTS，其他地方都不用）。
+  // i 仍是替換後的字元索引 —— 那是整條產線共用的座標（字幕時間軸也是這一套），不能動。
+  // 規則讓字數變多的地方（NAND→name的）會有幾格是空字串：畫面上不顯示、索引照舊存在，
+  // 前台照 i 存範圍所以不受影響（見 script-utils 的 origChars 說明）。
+  const oc = origChars(cleaned);
+  const chars = cleaned.map((c, i) => ({ i, c: oc[i], b: c.breakAfter ? 1 : 0, p: c.paraBreak ? 1 : 0 }));
   console.log(JSON.stringify({
     sentences: sentenceList.map(({ i, text }) => ({ i, text })),
     units: unitList.map(({ i, sid, text, startCharIdx, endCharIdx }) =>
@@ -750,7 +773,7 @@ if (SUGGEST_PATH) {
     : '規則庫的區域定義');
   const out = (Array.isArray(want) ? want : []).map((q) => {
     const lo = Math.min(q.startCharIdx, q.endCharIdx), hi = Math.max(q.startCharIdx, q.endCharIdx);
-    const text = cleaned.slice(lo, hi + 1).map((c) => c.char).join('');
+    const text = origPhrase(lo, hi);
     const img = imgs.find((m) => m.file === q.src);
     if (!img) return { src: q.src, startCharIdx: lo, endCharIdx: hi, phrase: text,
       cell: null, cellText: null, why: '這張圖沒有分析資料（沒跑過 analyze:app-images？）' };
@@ -790,8 +813,8 @@ if (SUGGEST_PATH) {
           src: a.src,
           startCharIdx: Math.min(a.startCharIdx, a.endCharIdx),
           endCharIdx: Math.max(a.startCharIdx, a.endCharIdx),
-          phrase: cleaned.slice(Math.min(a.startCharIdx, a.endCharIdx),
-            Math.max(a.startCharIdx, a.endCharIdx) + 1).map((c) => c.char).join(''),
+          phrase: origPhrase(Math.min(a.startCharIdx, a.endCharIdx),
+            Math.max(a.startCharIdx, a.endCharIdx)),
           _manual: true, _annotated: true,
           // ⚠️ imageWidth/Height 一定要有值，否則 ShotFocus.tsx 會退成「整張顯示」——
           //    使用者圈的框靜默失效。工作送出後才補上傳的截圖沒進 app-images.generated.json
@@ -1123,7 +1146,7 @@ const used = usedImg;
       if (!a.pan) continue;
       const img = imgByFile[a.src];
       if (!img) continue;
-      const phrase = body.slice(
+      const phrase = origSlice(
         (cleaned[a.startCharIdx] || {}).origIdx ?? 0,
         ((cleaned[a.endCharIdx] || {}).origIdx ?? 0) + 1
       );

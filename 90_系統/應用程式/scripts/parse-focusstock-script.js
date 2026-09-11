@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  getBodyAfterVoice,
+  getBodyWithVoiceMap,
   cleanBodyWithIndex,
 } = require('./script-utils');
 
@@ -33,8 +33,12 @@ if (!fs.existsSync(OUTPUT_DIR)) {
 }
 
 const scriptRaw = fs.readFileSync(SCRIPT_PATH, 'utf-8');
-const bodyAfterVoice = getBodyAfterVoice(scriptRaw);
+// bodyAfterVoice = 發音替換後的字串，只當**座標系**用（char-index 要跟字幕時間軸同一套）；
+// 要顯示／比對的字一律走 ORIG_CHARS／origSlice 拿原稿的字
+//（2026-09-11 使用者定案：「替換後的字僅僅只有送去給發音時用，其他時候都不使用」）。
+const { body: bodyAfterVoice, origSlice, origChars } = getBodyWithVoiceMap(scriptRaw);
 const cleanedChars = cleanBodyWithIndex(bodyAfterVoice);
+const ORIG_CHARS = origChars(cleanedChars);
 const origToCleanedIdx = new Map();
 cleanedChars.forEach((c, i) => origToCleanedIdx.set(c.origIdx, i));
 
@@ -58,7 +62,8 @@ function bodyRangeToCleanedRange(bodyStart, bodyEnd) {
     endCharIdx = ci;
   }
   if (startCharIdx < 0) return null;
-  const phrase = cleanedChars.slice(startCharIdx, endCharIdx + 1).map((c) => c.char).join('');
+  // 原稿的字（anchors／_phrase／執行記錄用；渲染端是靠 charIdx 解時間，anchor 只給人看）
+  const phrase = ORIG_CHARS.slice(startCharIdx, endCharIdx + 1).join('');
   return { startCharIdx, endCharIdx, phrase };
 }
 

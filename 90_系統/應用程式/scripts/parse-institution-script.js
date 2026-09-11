@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  getBodyAfterVoice,
+  getBodyWithVoiceMap,
   cleanBodyWithIndex,
 } = require('./script-utils');
 
@@ -34,8 +34,12 @@ if (!fs.existsSync(OUTPUT_DIR)) {
 }
 
 const scriptRaw = fs.readFileSync(SCRIPT_PATH, 'utf-8');
-const bodyAfterVoice = getBodyAfterVoice(scriptRaw);
+// bodyAfterVoice = 發音替換後的字串，只當**座標系**用（char-index 要跟字幕時間軸同一套）；
+// 要顯示／比對的字一律走 ORIG_CHARS／origSlice 拿原稿的字
+//（2026-09-11 使用者定案：「替換後的字僅僅只有送去給發音時用，其他時候都不使用」）。
+const { body: bodyAfterVoice, origSlice, origChars } = getBodyWithVoiceMap(scriptRaw);
 const cleanedChars = cleanBodyWithIndex(bodyAfterVoice);
+const ORIG_CHARS = origChars(cleanedChars);
 const origToCleanedIdx = new Map();
 cleanedChars.forEach((c, i) => origToCleanedIdx.set(c.origIdx, i));
 
@@ -59,7 +63,8 @@ function bodyRangeToCleanedRange(bodyStart, bodyEnd) {
     endCharIdx = ci;
   }
   if (startCharIdx < 0) return null;
-  const phrase = cleanedChars.slice(startCharIdx, endCharIdx + 1).map((c) => c.char).join('');
+  // 原稿的字（anchors／_phrase／執行記錄用；渲染端是靠 charIdx 解時間，anchor 只給人看）
+  const phrase = ORIG_CHARS.slice(startCharIdx, endCharIdx + 1).join('');
   return { startCharIdx, endCharIdx, phrase };
 }
 
@@ -99,8 +104,15 @@ shots.forEach((s) => {
 const focusPattern = /\(focus:([^():]+)(?::([^)]*))?\)([\s\S]*?)\(focus:\1\)/gi;
 const focuses = [];
 for (const m of bodyAfterVoice.matchAll(focusPattern)) {
-  const section = m[1].trim();
-  const cellText = (m[2] || '').trim();
+  // ⚠️ 高亮字是要拿去跟**圖上 OCR 的字**比對的，一定要用原稿（2026-09-11）——
+  //    發音替換會把數字與股名寫成唸法（百分之五、one海），拿它去比 OCR 永遠比不到，
+  //    而且是靜默失效：框就悄悄不見。位置是固定的：m[1] 接在 "(focus:" 之後，m[2] 再隔一個 ":"。
+  const nameAt = m.index + '(focus:'.length;
+  const cellAt = nameAt + m[1].length + 1;
+  const origOf = (at, raw) =>
+    (bodyAfterVoice.substr(at, raw.length) === raw ? origSlice(at, at + raw.length) : raw);
+  const section = origOf(nameAt, m[1]).trim();
+  const cellText = (m[2] == null ? '' : origOf(cellAt, m[2])).trim();
   const contentBodyStart = m.index + m[0].indexOf(m[3]);
   const contentBodyEnd = contentBodyStart + m[3].length;
   const range = bodyRangeToCleanedRange(contentBodyStart, contentBodyEnd);

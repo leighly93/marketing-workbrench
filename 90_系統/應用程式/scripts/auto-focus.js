@@ -23,7 +23,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getBodyAfterVoice, cleanBodyWithIndex, resolveManualOverlaps } = require('./script-utils');
+const { getBodyWithVoiceMap, cleanBodyWithIndex, resolveManualOverlaps } = require('./script-utils');
 
 const { cliPath } = require('../../paths');
 const ROOT = path.resolve(__dirname, '..');
@@ -220,7 +220,10 @@ function sectionOf(y) {
 
 // ── 讀腳本、切句、對回 cleaned char index（跟字幕時間軸同一套座標）──
 const raw = fs.readFileSync(SCRIPT_PATH, 'utf-8');
-const body = getBodyAfterVoice(raw);
+// ⚠️ body 是「發音替換後」的字串，只當座標系用；要讀內容一律走 origSlice()（原稿的字）。
+//    理由見 auto-shot.js 同一段註解與 script-utils 的 applyVoiceRulesForwardWithMap：
+//    共用發音詞庫會把股名／產業詞換掉（萬海→one海、DRAM→滴RAM），判定吃到就比不到目標。
+const { body, origSlice } = getBodyWithVoiceMap(raw);
 const cleaned = cleanBodyWithIndex(body);
 const origToCleaned = new Map();
 cleaned.forEach((c, i) => origToCleaned.set(c.origIdx, i));
@@ -238,8 +241,12 @@ function bodyRangeToCleanedRange(start, end) {
   return { startCharIdx: s, endCharIdx: e };
 }
 
-/** 依句號/驚嘆號/問號/換行切句，並記錄每句在 body 裡的位置 */
-function splitSentences(text) {
+/**
+ * 依句號/驚嘆號/問號/換行切句，並記錄每句在 body 裡的位置。
+ * start/end 是 body（發音替換後）的索引；text 則給原稿的字（2026-09-11，見檔頭 origSlice 註解）——
+ * 「有沒有東西」的門檻仍看替換後那段，切法才跟以前完全一樣。
+ */
+function splitSentences(text, origOf = null) {
   // 切到「子句」層級（逗號也切），因為一個句子常講到兩個數字：
   //   「今天加權指數上漲了1.59%，櫃買指數也上漲了1.93%」
   // 只用句號切的話只會框到 1.59%，講到櫃買時框沒有跟著走（使用者 2026-08-12 回報）。
@@ -251,13 +258,15 @@ function splitSentences(text) {
     const ch = text[i];
     if (/[。！？\n，、；：]/.test(ch)) {
       const seg = text.slice(start, i + 1);
-      if (seg.trim().length > 1) out.push({ text: seg, start, end: i + 1, sentenceId });
+      if (seg.trim().length > 1)
+        out.push({ text: origOf ? origOf(start, i + 1) : seg, start, end: i + 1, sentenceId });
       start = i + 1;
       if (/[。！？\n]/.test(ch)) sentenceId++;
     }
   }
   const tail = text.slice(start);
-  if (tail.trim().length > 1) out.push({ text: tail, start, end: text.length, sentenceId });
+  if (tail.trim().length > 1)
+    out.push({ text: origOf ? origOf(start, text.length) : tail, start, end: text.length, sentenceId });
   return out;
 }
 
@@ -335,7 +344,9 @@ for (const m of body.matchAll(focusPattern)) {
       ...(region ? { region }
         : (isLayout ? { region: { x: 0, y: 0, w: IW, h: IH } } : { wholePage: true })),
       ...(cell ? { cell } : {}),
-      _phrase: cleaned.slice(lo, hi + 1).map((c) => c.char).join('').slice(0, 28),
+      _phrase: cleanBodyWithIndex(
+        origSlice((cleaned[lo] || {}).origIdx ?? 0, ((cleaned[hi] || {}).origIdx ?? 0) + 1)
+      ).map((c) => c.char).join('').slice(0, 28),
       _annotated: true,
     });
     used++;
@@ -363,7 +374,7 @@ function overlapsManual(r) {
 // ── 主流程 ──
 // 逐「子句」判定。同一句裡若講到兩個數字，框會跟著旁白依序移動；
 // 沒有數字的子句若緊接在有聚焦的子句後面（同一句內），沿用前一個聚焦、不切回講者，避免畫面閃。
-const clauses = splitSentences(body);
+const clauses = splitSentences(body, origSlice);
 const auto = [];
 const preview = [];
 let lastFocus = null; // { section, cellText, sentenceId }
@@ -441,7 +452,7 @@ for (const s of clauses) {
 // 否則會出現「最大買家是外資，」切講者 0.8 秒 → 立刻又切回圖 的閃爍。
 // 作法：某個聚焦段的起點，往前吃掉同一句、且尚未被其他聚焦佔用的講者子句。
 {
-  const clauseList = splitSentences(body).map((c) => ({
+  const clauseList = splitSentences(body, origSlice).map((c) => ({
     ...c,
     range: bodyRangeToCleanedRange(c.start, c.end),
   }));
