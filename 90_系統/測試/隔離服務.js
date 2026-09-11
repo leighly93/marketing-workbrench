@@ -48,7 +48,10 @@ function confinedFs(root) {
 }
 
 // server 尚未分離啟動與路由；載入真實程式至合成副本、攔截監聽與程序操作。
-function loadServer(root) {
+// options.childProcess：需要觀察 spawn 出去的子程序時才給（例如「系統框選建議」那一次 execFileSync）；
+//   不給就維持預設的全面封鎖。options.idleTimers：tick() 排隊會呼叫 setTimeout，
+//   走到那條路的測試才放行成 no-op，其餘測試仍然禁止計時器。
+function loadServer(root, options = {}) {
   const sourceFile = applicationPath(repository, 'server/index.js');
   const source = fs.readFileSync(sourceFile, 'utf8');
   const cut = source.indexOf('\nserver.listen(');
@@ -60,7 +63,7 @@ function loadServer(root) {
     os,
     path,
     http: { createServer(handler) { route = handler; return { on() {}, listen: blocked }; } },
-    child_process: new Proxy({}, { get: () => blocked }),
+    child_process: options.childProcess || new Proxy({}, { get: () => blocked }),
     '../scripts/shot-memory': localRequire('../scripts/shot-memory'),
     '../scripts/script-utils': localRequire('../scripts/script-utils'),
     '../../paths': localRequire('../../paths'),
@@ -76,7 +79,8 @@ function loadServer(root) {
     },
     process: { env: {}, on() {}, cwd: () => applicationPath(root), exit: blocked, kill: blocked },
     Buffer, URL, console,
-    setTimeout: blocked, setInterval: blocked,
+    setTimeout: options.idleTimers ? () => 0 : blocked,
+    setInterval: options.idleTimers ? () => 0 : blocked,
   };
   const operations = vm.runInNewContext(
     source.slice(0, cut) + '\n;({ snapshotWorkspace, restoreWorkspace, pruneOldJobs, archivePath, backupJobArtifacts, stageJobInputs });',
