@@ -231,9 +231,6 @@ type MarketingGeneratedShot = {
   _manualCell?: boolean;
   isColumn?: boolean;
   wholePage?: boolean;
-  pan?: boolean;
-  panToY?: number;
-  titleY?: number;
   imageWidth?: number;
   imageHeight?: number;
 };
@@ -251,9 +248,6 @@ const MARKETING_SHOTS = (marketingShots as MarketingGeneratedShot[]).flatMap((g)
       cellManual: g._manualCell,
       isColumn: g.isColumn,
       wholePage: g.wholePage,
-      pan: g.pan,
-      panToY: g.panToY,
-      titleY: g.titleY,
       imageWidth: g.imageWidth,
       imageHeight: g.imageHeight,
     },

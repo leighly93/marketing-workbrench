@@ -723,7 +723,7 @@ function pendingAnnotsOf(job, rows) {
       src: a.src,
       startCharIdx: Math.min(a.startCharIdx, a.endCharIdx),
       endCharIdx: Math.max(a.startCharIdx, a.endCharIdx),
-      region: a.region || null, cell: a.cell || null, pan: !!a.pan,
+      region: a.region || null, cell: a.cell || null,
       imgW: a.imgW || null, imgH: a.imgH || null,
     }))
     .filter((a) => !(rows || []).some((r) => r.src === a.src && r.startCharIdx != null
@@ -764,7 +764,7 @@ function appendMissingAnnots(job, edits) {
     if (overlaps(item, dropped)) return;   // 同事刻意刪掉的，不要復活
     added.push({
       i: `ann${i}`, _added: true, _manual: true, _late: true, deleted: false,
-      src: a.src, pan: !!a.pan, cell: a.cell || null, region: a.region || null,
+      src: a.src, cell: a.cell || null, region: a.region || null,
       startCharIdx: item.lo, endCharIdx: item.hi,
       imgW: a.imgW || null, imgH: a.imgH || null,
     });
@@ -818,7 +818,6 @@ function buildPlanView(job) {
       start: st, end: en,
       dur: st != null && en != null ? +(en - st).toFixed(1) : null,
       cellText: s.cellText || (s.wholePage ? '整張' : ''),
-      pan: !!s.pan,
       wholePage: !!s.wholePage,
       // 框的座標與原圖尺寸 —— 前台直接用比例畫出來，也讓人可以拖著改
       //（2026-08-17 使用者：「我認為你可以看我手動來學習」）
@@ -850,7 +849,6 @@ function buildPlanView(job) {
     editable: true,
     // 三大法人的聚焦是「捲到區塊帶 + 壓暗其餘」，沒有「往下滑動」這回事 ——
     // 勾了也不會有任何效果，所以前台不要畫那個勾選框（靜默失效比沒有更糟）。
-    supportsPan: kind !== 'focus',
     rows, images, totalSec,
     // 2026-09-07 每張圖系統判定的頁型，給審核頁顯示＋決定要不要給 📌（認不出來才給）。
     pages: pagesOf(state),
@@ -886,7 +884,7 @@ function applyPlanEdits(job, edits) {
   // 而 run.js --render-only 只讀 ROOT 的 *.generated.json。
   // 原本寫回快照 = 寫進一個 doRender 結尾就 rmrf 掉的資料夾 →
   // 所有人工框選／改時間／加一段全部靜默消失，render 用的還是自動計畫
-  // （含自動帶上的 pan:true），前台卻顯示「已套用 N 項人工修正」。
+  // （當年還會自動帶上已移除的 pan:true），前台卻顯示「已套用 N 項人工修正」。
   // 過去每次都在下面的合併／裁切邏輯裡找原因，但那些程式根本沒作用在被 render 的檔案上。
   const state = ROOT;
   const cfg = TEMPLATES[job.template];
@@ -978,8 +976,6 @@ function applyPlanEdits(job, edits) {
       delete s.cell; delete s.cellText;
       s.isColumn = false;
     }
-    // 三大法人沒有「往下滑動」（聚焦是捲到區塊帶 + 壓暗），前台也不畫那個勾選框 → 不要寫這個欄位
-    if (!FOCUS && typeof e.pan === 'boolean') s.pan = e.pan;
     // 人工拖出來的框：完全照使用者給的，不再套任何自動推算。
     // ⚠️ region（顯示區域）與 cell（黃框）是兩件事，各自可有可無
     //（2026-08-17 使用者指出的設計錯誤）。
@@ -1321,9 +1317,6 @@ function recordCorrections(job, before, edits) {
     if (e.src && e.src !== b.src)
       diffs.push({ type: '換圖', phrase: b.phrase || phrase, from: b.src, to: e.src, reason });
 
-    if (typeof e.pan === 'boolean' && e.pan !== b.pan)
-      diffs.push({ type: e.pan ? '改成滑動' : '改成定格', phrase: b.phrase || phrase, from: b.src, reason });
-
     // ── 改框 ──
     // 2026-08-18 使用者要求：「就算 AI 原本沒框也要記錄為什麼人手動框了」。
     // 原本的判斷式是 `e.cell && b.cell`，所以「AI 沒框、人自己框」這個最重要的訊號
@@ -1437,7 +1430,6 @@ function recordCorrections(job, before, edits) {
   job.autoPlan = cfRows.map((r, i) => ({
     i: r.i != null ? r.i : i,
     src: r.src,
-    pan: !!r.pan,
     cellText: r.cellText || (r.wholePage ? '整張顯示' : ''),
     phrase: r.phrase || r._phrase || '',
   }));

@@ -68,9 +68,6 @@ type GeneratedShot = {
   _manualCell?: boolean;
   isColumn?: boolean;
   wholePage?: boolean;
-  pan?: boolean;
-  panToY?: number;
-  titleY?: number;
   imageWidth?: number;
   imageHeight?: number;
 };
@@ -106,9 +103,6 @@ export const FOCUSSTOCK_SHOTS: FocusstockShot[] = (generatedShots as GeneratedSh
         cellManual: g._manualCell,
         isColumn: g.isColumn,
         wholePage: g.wholePage,
-        pan: g.pan,
-        panToY: g.panToY,
-        titleY: g.titleY,
         imageWidth: g.imageWidth,
         imageHeight: g.imageHeight,
       },

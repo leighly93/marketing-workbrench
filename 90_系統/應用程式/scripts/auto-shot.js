@@ -44,10 +44,8 @@ const MIN_ENUM_SEC = 0.8;         // 同一句裡的列舉例外：「南亞科�
                                   // 要塞四檔就是每張 0.83 秒。用 1.4 秒去卡會直接丟掉兩張圖，
                                   // 但使用者更不能接受「圖沒出現」。所以同句列舉放寬到 0.8 秒。
                                   // （這是取捨，不是最佳解 —— 覺得太快就在審核頁把時間改長。）
-const PAN_IF_LONGER_SEC = 8;      // 一段超過這麼久還定格 → 改滑動
 const MAX_SHOT_SEC = 10;          // 一張圖最長就停這麼久，超過直接截斷回講者
                                   //（使用者兩次回報「停留太久」）
-const PAN_IF_TARGET_BELOW = 0.5;  // 「概括型目標」（欄位/清單）中心低於此比例 → 改滑動
 
 // --script=路徑：讓前台指定要讀哪一份腳本（標注頁在 HeyGen 還在跑的時候就要用，
 // 那時候 public/script.txt 可能是別人的工作）。沒給就照舊讀 public/script.txt。
@@ -527,15 +525,9 @@ function findCell(text, img, row) {
     const padY = Math.round(b.h * 0.35);
     return {
       cell: { x: b.x - padX, y: b.y - padY, w: b.w + padX * 2, h: b.h + padY * 2 },
-      cellText: (img.topic || '標題') + (img.isStockPage ? '（框股名）' : '（頁面標題→滑動）'),
+      cellText: (img.topic || '標題') + (img.isStockPage ? '（框股名）' : '（頁面標題）'),
       region: 'title',
       isColumn: false,
-      // pan：從標題開始、慢慢往下滑過內容。找不到具體目標時，
-      // 與其定格在標題，不如把整頁帶過去讓觀眾看到全貌（2026-08-12 使用者提議）。
-      // ⚠️ 只有清單／族群／未知頁才滑動。個股頁的「標題」＝最上面的股名那一列，
-      //   列舉句（「南亞科、」「友達」）常常只有 1~2 秒，滑動根本來不及、只會晃一下
-      //   （2026-08-13）。個股頁就乾脆定格框住股名。
-      pan: !img.isStockPage,
     };
   }
 
@@ -783,7 +775,6 @@ if (SUGGEST_PATH) {
       cell: pick && pick.cell ? pick.cell : null,
       cellText: pick ? (pick.cellText || null) : null,
       isColumn: !!(pick && pick.isColumn),
-      pan: !!(pick && pick.pan),
       why: pick && pick.cell ? ruleOf(pick.cellText) : '系統也找不到可框的目標（會整張顯示）',
       imageWidth: img.width, imageHeight: img.height, page: img.page,
     };
@@ -826,8 +817,6 @@ if (SUGGEST_PATH) {
           ...(hasCell0 ? { cell: a.cell, cellText: '人工黃框', isColumn: false } : {}),
           ...(hasRegion0 ? { region: a.region } : {}),
           ...(!hasCell0 && !hasRegion0 ? { wholePage: true } : {}),
-          pan: !!a.pan,
-          ...(a.pan && img0.topicBox ? { titleY: img0.topicBox.y } : {}),
         });
         continue;
       }
@@ -862,8 +851,6 @@ if (SUGGEST_PATH) {
         ...(hasCell ? { cell: a.cell, cellText: '人工黃框', isColumn: false } : {}),
         ...(hasRegion ? { region: a.region } : {}),
         ...(!hasCell && !hasRegion ? { wholePage: true } : {}),
-        pan: !!a.pan,
-        ...(a.pan && img.topicBox ? { titleY: img.topicBox.y } : {}),
       });
     }
     if (ann.length) console.log(`✋ 讀到 ${manual.filter((m) => m._annotated).length} 筆人工標注（自動判定不會碰這些句子）`);
@@ -1015,7 +1002,7 @@ for (const c of clauses) {
     page: cur.img.page,
     imageWidth: cur.img.width,
     imageHeight: cur.img.height,
-    ...(f ? { cell: f.cell, cellText: f.cellText, isColumn: !!f.isColumn, wholePage: !!f.wholePage, pan: !!f.pan } : {}),
+    ...(f ? { cell: f.cell, cellText: f.cellText, isColumn: !!f.isColumn, wholePage: !!f.wholePage } : {}),
   });
   preview.push(
     `  ${f ? '🔍' : '🖼 '} ${disp}…\n       → ${cur.img.file}` +
@@ -1122,75 +1109,14 @@ const used = usedImg;
     }
   }
 
-  // 判準（直接對應使用者的手動標記）：
-  //   image4/image3/image2 都是「族群清單頁」→ 內容是一長串個股、重點多半在下方 → 滑動
-  //   image1 是「大盤指數頁」→ 三個指數磚就在畫面中段、數字明確 → 定格，這是使用者說「表現最好」的
-  //   另外不論頁面型別，一段超過 PAN_IF_LONGER_SEC 還定格就太悶 → 改滑動
-  const LIST_PAGES = ['industry-list', 'focus-list', 'focus-rank']
-    .concat((process.env.PAGE_RULES || 'v1').toLowerCase() === 'v2'
-      ? ['contrib-rank', 'watchlist', 'portfolio-institutions', 'portfolio-main-force'] : []);   // 2026-09-03 v2 新增的清單型頁
-  for (const a of auto) {
-    if (a.wholePage || a.pan) continue;
-    const d = dur(a.startCharIdx, a.endCharIdx);
-    const isList = LIST_PAGES.includes(a.page);
-    const long = d != null && d > PAN_IF_LONGER_SEC;
-    if (isList || long) { a.pan = true; a._panReason = isList ? '清單頁' : '停留過久'; }
-  }
-
-
-  // 滑動要滑到哪：把這段旁白提到、而且圖上找得到的「個股名」抓出來，取位置最低的那個。
-  // 使用者：「像是講到南電時，就要滑動到下方了」——所以終點不是盲滑，而是滑到被提到的內容。
-  {
-    const imgByFile = Object.fromEntries(imgs.map((i) => [i.file, i]));
-    for (const a of auto) {
-      if (!a.pan) continue;
-      const img = imgByFile[a.src];
-      if (!img) continue;
-      const phrase = origSlice(
-        (cleaned[a.startCharIdx] || {}).origIdx ?? 0,
-        ((cleaned[a.endCharIdx] || {}).origIdx ?? 0) + 1
-      );
-      // 圖上 2~4 個中文字、且出現在旁白裡的詞（多半就是個股名）
-      // 排除欄位標題（股票／股價／走勢／產業／龍頭…），那些不是內容
-      const HEADERS = ['股票', '股價', '走勢', '產業', '龍頭', '漲跌', '成交', '即時', '日期'];
-      const mentioned = (img.words || []).filter(
-        (w) =>
-          w.c >= 55 &&
-          /^[\u4e00-\u9fff]{2,4}$/.test(w.t) &&
-          !HEADERS.includes(w.t) &&
-          phrase.includes(w.t)
-      );
-      if (mentioned.length) {
-        const lowest = mentioned.sort((x, y) => y.y - x.y)[0];
-        a.panToY = lowest.y + lowest.h / 2;
-        a._panTo = lowest.t;
-      }
-    }
-  }
-
-  // 滑動起點需要知道「截圖標題」在圖上的位置，才能讓它落在畫面上適當高度
-  //（2026-08-12 使用者：標題貼齊畫面頂端會被節目 header 蓋住）
-  {
-    const byFile = Object.fromEntries(imgs.map((i) => [i.file, i]));
-    for (const a of auto) {
-      if (!a.pan) continue;
-      const img = byFile[a.src];
-      if (img && img.topicBox) a.titleY = img.topicBox.y;
-    }
-  }
+  // ⚠️ 2026-09-11 使用者定案「長圖捲動其實可以整個刪掉」：
+  //    原本這裡會把清單頁／停留過久的段落標成 pan（從標題往下滑過整頁），
+  //    再算 panToY（滑到旁白提到的個股）與 titleY（滑動起點），最後把相鄰的
+  //    同圖 pan 段併成一次連續滑動。整條路連同渲染端（ShotFocus.tsx）一起移除。
+  //    現在這些段落就是定格顯示；要限制看到哪一塊，用人工「顯示區域」圈。
 
   // 硬性上限：重分配可能又把某段拉長，再截一次
   truncate();
-
-  // 相鄰、同一張圖、且都要滑動 → 併成一段連續滑動
-  //（使用者把「今天最強的主線是PCB。南電攻上漲停…」整塊標成一次滑動）
-  for (let i = auto.length - 1; i > 0; i--) {
-    const cur2 = auto[i], prev2 = auto[i - 1];
-    if (prev2.src === cur2.src && prev2.pan && cur2.pan) {
-      prev2.endCharIdx = cur2.endCharIdx;
-      auto.splice(i, 1);
-    }
-  }
 
   // 合併後長度可能又超標 → 再截斷一次
   for (const a of auto) {

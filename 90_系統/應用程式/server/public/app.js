@@ -747,7 +747,7 @@ function drawAnnots(job) {
         el('div', { class: 's' },
           el('b', {}, '出現在：' + rangeText(a)),
           el('span', {}, ([a.region ? '有顯示區域' : null, a.cell ? '有黃框' : null]
-            .filter(Boolean).join('＋') || '整張顯示') + '　' + (a.pan ? '往下滑動' : '定格'))),
+            .filter(Boolean).join('＋') || '整張顯示'))),
         el('button', { class: 'ghost danger', onclick: (ev) => {
           ev.stopPropagation();
           ANNOTS.splice(k, 1); saveAnnots(job); drawAnnots(job);
@@ -866,18 +866,9 @@ function addAnnot(job, src) {
   // 開錯張也能當場換掉，不再是死路。
   const use = src || jobImages(job)[0];
   if (!use) return alert('這支工作沒有上傳截圖，沒有東西可以標注。');
-  ANNOTS.push({ src: use, startCharIdx: null, endCharIdx: null, region: null, cell: null, pan: false });
+  ANNOTS.push({ src: use, startCharIdx: null, endCharIdx: null, region: null, cell: null });
   drawAnnots(job);
   editAnnot(job, ANNOTS.length - 1);
-}
-
-// 「往下滑動」不是每個版型都有效（三大法人沒有）。藏起來的時候順手取消勾選，
-// 免得上一次開別的版型留下的勾在看不見的地方被送出去。
-// ⚠️ 這裡要用 style.display 不能用 `.hidden` —— `.chk{display:flex}` 的優先度比
-//    瀏覽器內建的 `[hidden]{display:none}` 高，設 hidden 完全沒有效果（實測踩到）。
-function showPanRow(show) {
-  $('#edPanRow').style.display = show ? '' : 'none';
-  if (!show) { $('#edPan').checked = false; $('#edPanNote').textContent = ''; }
 }
 
 function editAnnot(job, k) {
@@ -887,9 +878,7 @@ function editAnnot(job, k) {
     cell: a.cell ? { ...a.cell } : null,
     from: a.startCharIdx ?? null, to: a.endCharIdx ?? null };
   $('#edTitle').textContent = '標注　' + a.src;
-  $('#edPan').checked = !!a.pan;
-  // 標注階段還沒有 planView（那是「準備中」跑完才算的），所以用版型判斷 —— 三大法人沒有滑動
-  showPanRow(job.template !== 'institution');
+  $('#edNote').textContent = '';
   setEdMode('region');
   // 縮圖列 2026-09-01 補回來（使用者：「按下去沒有出現給我全部上傳圖片的選項，導致我一直選不到我要的圖」）。
   // ⚠️ 2026-08-17 當初把它清空，是為了擋「第一張圖選好的範圍出現在第二張圖」。
@@ -946,7 +935,7 @@ function planCard(job) {
   edits = {};
   let addSeq = 0;
   for (const r of pv.rows) {
-    edits[r.i] = { i: r.i, src: r.src, pan: r.pan, deleted: false,
+    edits[r.i] = { i: r.i, src: r.src, deleted: false,
       cell: r.cell || null, region: r.region || null, start: r.start, end: r.end, _manual: false,
       startCharIdx: r.startCharIdx, endCharIdx: r.endCharIdx,
       imgW: r.imageWidth, imgH: r.imageHeight,
@@ -962,7 +951,7 @@ function planCard(job) {
   for (const a of late) {
     const key = 'a' + (addSeq++);
     edits[key] = { i: key, _added: true, _manual: true, _late: true, deleted: false,
-      src: a.src, pan: !!a.pan, cell: a.cell || null, region: a.region || null,
+      src: a.src, cell: a.cell || null, region: a.region || null,
       startCharIdx: a.startCharIdx, endCharIdx: a.endCharIdx,
       imgW: a.imgW || null, imgH: a.imgH || null };
   }
@@ -998,8 +987,6 @@ function planCard(job) {
             : (e._added ? '人工新增' : (e._manual ? '人工調整過' : '自動：' + (e._autoCellText || '—')))));
       setTd.replaceChildren(
         el('div', { class: 'sec' }, e.src || '（未選圖）'),
-        // 三大法人沒有滑動／定格的概念，這一行對它是雜訊（見 showPanRow 的註解）
-        pv.supportsPan === false ? '' : el('div', { class: 'sec' }, e.pan ? '往下滑動' : '定格'),
         el('div', { class: 'sec' }, [e.region ? '顯示區域' : null, e.cell ? '黃框' : null].filter(Boolean).join('＋') || '整張顯示'));
     };
     paint();
@@ -1018,7 +1005,9 @@ function planCard(job) {
     // 空表格看起來像壞掉／像圖都不見了 —— 講清楚並指向下面的截圖牆。
     tb.replaceChildren(...(keys.length ? keys.map(buildRow)
       : [el('tr', {}, el('td', { colspan: 4, class: 'empty', style: 'padding:26px 0' },
-          '這支還沒有任何配圖 —— 從下面的「全部截圖」點一張開始加。'))]));
+          pv.images.length
+            ? '這支還沒有任何配圖 —— 從下面的「全部截圖」點一張開始加。'
+            : '這支還沒有任何配圖，也還沒有截圖 —— 先用下面的「＋ 上傳截圖」傳幾張。'))]));
     drawUnused();
   }
 
@@ -1031,7 +1020,7 @@ function planCard(job) {
     if (!use) return alert('這支工作沒有上傳截圖，沒有東西可以加 —— 請先上傳截圖。');
     const key = 'a' + (addSeq++);
     edits[key] = { i: key, _added: true, _manual: true, deleted: false,
-      src: use, pan: false, cell: null, region: null,
+      src: use, cell: null, region: null,
       startCharIdx: null, endCharIdx: null, imgW: null, imgH: null };
     renderTable();
     openEditor(job, pv, { i: key, phrase: '新增的一段' }, () => renderTable());
@@ -1045,26 +1034,39 @@ function planCard(job) {
   function drawUnused() {
     const count = {};
     Object.values(edits).filter((e) => !e.deleted).forEach((e) => { count[e.src] = (count[e.src] || 0) + 1; });
-    if (!pv.images.length) return gallery.replaceChildren();
+    // 沒有截圖就沒有東西可以配 → 藏掉「＋ 加一段」，只留上傳。
+    // ⚠️ 2026-09-11：以前這裡是 `if (!pv.images.length) return gallery.replaceChildren();`，
+    //    整塊清空連上傳按鈕一起沒了，但底下的「＋ 加一段」還在 —— 同事看得到那顆、
+    //    卻沒有任何地方可以傳圖，按下去還把整台伺服器打死（空檔名 → 目錄 → EISDIR）。
+    //    現在反過來：沒圖時只出現上傳，傳了圖才出現「＋ 加一段」。
+    addSegBtn.hidden = !pv.images.length;
+    // 待確認階段也能補圖（2026-09-01 使用者：「讓待確認階段還能補圖」）。
+    // ⚠️ 上傳完**只重畫這面縮圖牆**，絕對不要走 loadJob() —— 那會重建 `edits`，
+    //    把你剛剛拉的框、加的段全部丟掉（而且完全沒有提示）。
+    const upload = el('button', { class: 'ghost tiny', onclick: () => pickMoreShots(job, (added) => {
+      for (const n of added) if (!pv.images.includes(n)) pv.images.push(n);
+      drawUnused();
+      const box = $('#planUpMsg');
+      if (box) {
+        box.textContent = added.length ? `已加入 ${added.join('、')}，點縮圖就能用它加一段` : '';
+        setTimeout(() => { if ($('#planUpMsg')) $('#planUpMsg').textContent = ''; }, 6000);
+      }
+    }) }, pv.images.length ? '＋ 上傳更多截圖' : '＋ 上傳截圖');
+    const upMsg = el('span', { id: 'planUpMsg', style: 'font-size:12.5px;color:var(--dim)' });
+    if (!pv.images.length) {
+      return gallery.replaceChildren(
+        el('div', { style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' },
+          el('div', { style: 'font-size:13.5px' },
+            '這支工作還沒有任何截圖 —— 先傳幾張，才能把旁白配到畫面上。'),
+          upload, upMsg));
+    }
     const used = pv.images.filter((n) => count[n]).length;
     gallery.replaceChildren(
       el('div', { style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' },
         el('div', { style: 'font-size:12.5px;color:var(--dim)' },
           `全部截圖 ${pv.images.length} 張，已經用了 ${used} 張　—　`
           + '點一下就加一段用它；同一張可以點多次、各自標不同區塊。'),
-        // 待確認階段也能補圖（2026-09-01 使用者：「讓待確認階段還能補圖」）。
-        // ⚠️ 上傳完**只重畫這面縮圖牆**，絕對不要走 loadJob() —— 那會重建 `edits`，
-        //    把你剛剛拉的框、加的段全部丟掉（而且完全沒有提示）。
-        el('button', { class: 'ghost tiny', onclick: () => pickMoreShots(job, (added) => {
-          for (const n of added) if (!pv.images.includes(n)) pv.images.push(n);
-          drawUnused();
-          const box = $('#planUpMsg');
-          if (box) {
-            box.textContent = added.length ? `已加入 ${added.join('、')}，點縮圖就能用它加一段` : '';
-            setTimeout(() => { if ($('#planUpMsg')) $('#planUpMsg').textContent = ''; }, 6000);
-          }
-        }) }, '＋ 上傳更多截圖'),
-        el('span', { id: 'planUpMsg', style: 'font-size:12.5px;color:var(--dim)' })),
+        upload, upMsg),
       el('div', { class: 'shots' }, ...pv.images.map((n) => {
         const c = count[n] || 0;
         // 2026-09-07 系統判定的頁型（來自 app-images.generated.json，server 放進 planView.pages）。
@@ -1085,10 +1087,13 @@ function planCard(job) {
       })));
   }
 
+  // 先建好再 renderTable() —— drawUnused() 會依「有沒有截圖」決定要不要藏它，
+  // 而 renderTable() 結尾就會呼叫 drawUnused()，順序反了會抓到 undefined。
+  const addSegBtn = el('button', { class: 'ghost', onclick: () => addSeg() }, '＋ 加一段');
   renderTable();
   c.append(t, gallery);
   c.append(el('div', { style: 'margin-top:20px;display:flex;gap:12px;align-items:center' },
-    el('button', { class: 'ghost', onclick: () => addSeg() }, '＋ 加一段'),
+    addSegBtn,
     el('button', { class: 'go', onclick: () => approve(job, Object.values(edits)) }, '確認，開始出片')));
   return c;
 }
@@ -1165,7 +1170,7 @@ function loadEdImage(src) {
   if (swapped) {
     edCtx.region = null;
     edCtx.cell = null;
-    const note = $('#edPanNote');
+    const note = $('#edNote');
     if (note) note.textContent = '（換了截圖，原本的框已清掉 —— 請在新的圖上重新框）';
     // 「同一張圖的其他段」是虛線、別張圖是實線 —— 換了圖，這個判斷就變了，要重畫一次。
     // （開編輯器的第一次載入不算換圖，那條路本來就會在後面自己呼叫 drawRange。）
@@ -1223,13 +1228,6 @@ window.addEventListener('mouseup', () => {
   const r = edCtx[edMode()];
   // 太小多半是誤點
   if (r && (r.w < edCtx.natW * 0.02 || r.h < edCtx.natH * 0.008)) edCtx[edMode()] = null;
-  // 自己拖了框 → 自動計畫留下的「往下滑動」自動退掉（想要滑動可以再勾回來）。
-  // 滑動模式會讓整張圖從上往下帶過、黃框 2.4 秒後淡出，跟「我要看這一塊」互相衝突。
-  if (r && edCtx.panInherited && $('#edPan').checked) {
-    $('#edPan').checked = false;
-    edCtx.panInherited = false;
-    $('#edPanNote').textContent = '（已自動取消滑動 —— 你框了範圍。要滑動請自己勾回來）';
-  }
   drawEdBox();
 });
 // 框是用像素畫的 → 視窗大小一變（圖片跟著縮放）就要重畫，不然會跟圖片脫節
@@ -1243,17 +1241,10 @@ function openEditor(job, pv, row, done) {
   edCtx = { job, mode: 'shot', e, done, drag: null, src: e.src, mode2: 'cell',
     region: e.region ? { ...e.region } : null,
     cell: e.cell ? { ...e.cell } : null,
-    // 自動計畫可能已經幫這段勾了「往下滑動」。使用者自己拖框時要把它退掉 ——
-    // 不然會出現「我沒勾卻自己滑動、而且框淡出看不見」（2026-08-18 使用者回報）。
-    panInherited: !!e.pan,
     // 出現範圍用「在腳本上拖選」，不叫人填秒數
     from: e.startCharIdx ?? null, to: e.endCharIdx ?? null };
   $('#edTitle').textContent = row.phrase || '調整這一段';
-  $('#edPan').checked = !!e.pan;
-  $('#edPanNote').textContent = '';
-  // 三大法人的聚焦是「捲到區塊帶 + 壓暗其餘」，沒有往下滑動這回事 —— 勾了完全不會有效果，
-  // 所以乾脆不要畫（伺服器用 planView.supportsPan 告訴前台）。
-  showPanRow(pv.supportsPan !== false);
+  $('#edNote').textContent = '';
   setEdMode('cell');
   drawStrip(pv.images);
   loadEdImage(e.src);
@@ -1271,7 +1262,6 @@ $('#edOK').onclick = () => {
     a.endCharIdx = Math.max(edCtx.from, edCtx.to);
     a.region = edCtx.region; a.cell = edCtx.cell;
     a.imgW = edCtx.natW; a.imgH = edCtx.natH;
-    a.pan = $('#edPan').checked;
     const job = edCtx.job;
     $('#ed').style.display = 'none'; edCtx = null;
     drawAnnots(job); saveAnnots(job);
@@ -1282,11 +1272,11 @@ $('#edOK').onclick = () => {
   const a0 = Math.min(edCtx.from, edCtx.to), b0 = Math.max(edCtx.from, edCtx.to);
   const changed = JSON.stringify([edCtx.region, edCtx.cell]) !== JSON.stringify([e.region, e.cell])
     || a0 !== e.startCharIdx || b0 !== e.endCharIdx
-    || edCtx.src !== e.src || $('#edPan').checked !== e.pan;
+    || edCtx.src !== e.src;
   e.region = edCtx.region; e.cell = edCtx.cell;
   e.imgW = edCtx.natW; e.imgH = edCtx.natH;
   e.startCharIdx = a0; e.endCharIdx = b0;
-  e.src = edCtx.src; e.pan = $('#edPan').checked;
+  e.src = edCtx.src;
   if (changed) e._manual = true;
   $('#ed').style.display = 'none'; edCtx = null;
   done();

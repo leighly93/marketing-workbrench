@@ -216,8 +216,11 @@
        同事看到那兩行終端機指令只會愣住 —— 他們既沒有那台 Mac，也不知道那在幹嘛
        （2026-08-26 使用者要求）。按鈕不擋，只講清楚，避免有人被莫名其妙鎖住。 -->
   <span id="staleOther">這頁還是可以正常看，資料都是對的。只是先別按「開始出片」，出來的會是舊設定 —— 等伺服器重開之後再出片就好。</span>
-  <span id="staleAdmin" hidden>重開才會生效：<code>launchctl kickstart -k gui/$(id -u)/com.cmoney.marketing-video-studio</code>
-  　或終端機 Ctrl+C 後 <code>npm run studio</code></span>
+  <!-- 2026-09-11 服務從 LaunchAgent 搬到 LaunchDaemon（screen 一關 gui 網域就不重啟），
+       所以這裡的網域前綴改成 system/ 且要 sudo；打舊的 gui/ 會回 "Could not find service"。
+       終端機 alias 是 studio（已同步改過）。 -->
+  <span id="staleAdmin" hidden>重開才會生效：<code>sudo launchctl kickstart -k system/com.cmoney.marketing-video-studio</code>
+  　或終端機打 <code>studio</code></span>
 </div>
 
 <div class="ed" id="ed">
@@ -243,9 +246,10 @@
       <div class="tip">在左圖拖曳就會畫出「現在要畫的那一種」。<br>
         兩種可以只有一種、也可以都有；都沒有就是整張顯示。</div>
 
-      <label class="chk" id="edPanRow" style="margin-top:14px"><input type="checkbox" id="edPan">
-        <span>往下滑動<small>慢慢往下帶過內容，適合重點在圖片下方。</small>
-        <small id="edPanNote" style="color:#c98a00"></small></span></label>
+      <!-- 2026-09-11 使用者定案「長圖捲動其實可以整個刪掉」：原本這裡是「往下滑動」勾選框。
+           整條 pan 路徑（前台勾選 → annotations → auto-shot → ShotFocus 渲染）都已移除，
+           留下的這個欄位只是換圖時的提示（「換了截圖，原本的框已清掉」）。 -->
+      <div id="edNoteRow" style="margin-top:14px"><small id="edNote" style="color:#c98a00"></small></div>
 
       <div id="edRangeWrap">
         <label>出現在哪一段（點頭、再點尾）</label>

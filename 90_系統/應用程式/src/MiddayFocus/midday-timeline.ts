@@ -75,9 +75,6 @@ type GeneratedShot = {
   _manualCell?: boolean;
   isColumn?: boolean;
   wholePage?: boolean;
-  pan?: boolean;
-  panToY?: number;
-  titleY?: number;
   imageWidth?: number | null;
   imageHeight?: number | null;
 };
@@ -93,9 +90,6 @@ export type MiddayShot = {
   cellManual?: boolean;
   isColumn?: boolean;
   wholePage?: boolean;
-  pan?: boolean;
-  panToY?: number;
-  titleY?: number;
   imageWidth?: number | null;
   imageHeight?: number | null;
 };
@@ -115,9 +109,6 @@ export const MIDDAY_SHOTS: MiddayShot[] = (generatedShots as GeneratedShot[])
         cellManual: g._manualCell,
         isColumn: g.isColumn,
         wholePage: g.wholePage,
-        pan: g.pan,
-        panToY: g.panToY,
-        titleY: g.titleY,
         imageWidth: g.imageWidth,
         imageHeight: g.imageHeight,
       },
