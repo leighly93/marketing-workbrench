@@ -105,6 +105,9 @@ const TEMPLATES = {
   // ⚠️ 這個物件的「宣告順序＝前台版型清單的顯示順序」（index.html 用 Object.entries(TPLS) 畫）。
   // 2026-08-31 使用者要求：盤中焦點 → 大盤小報 → 三大法人 → 焦點股日報（焦點股日報放最後）。
   // 要調順序就搬這裡的區塊，不要去 index.html 排序。
+  // ⚠️ 2026-09-11 起前台實際只看得到**盤中焦點與大盤小報**兩個 —— 三大法人、焦點股日報、
+  //    投廣模板都標了 hidden。宣告順序與內容全部保留，拿掉 hidden 就原地回來。
+  //    /api/health 仍然回傳**全部**版型：工作列表要靠它顯示舊工作的版型名稱（見 public/app.js 的 pickable）。
   midday: {
     // 2026-08-31 新增。版面照大盤小報直式複製一份，所以標題規格跟大盤小報一樣（兩行、每行 9 字參考值）。
     title: { lines: 2, per: 9, wrap: true, where: '開場第一秒' },
@@ -129,6 +132,13 @@ const TEMPLATES = {
   institution: {
     title: { lines: 2, per: 11, wrap: true, where: '開場第一秒' },
     label: '三大法人',
+    // 2026-09-11 使用者：「目前都用不到了」→ 從前台選版型清單拿掉。
+    // 跟投廣模板同一個做法：**整條產線原封不動保留**（render:institution、auto-focus、
+    // MINIMAX_FIXED_ANCHOR_VOICES.institution、planKind: 'focus' 那套寫回規則全都還在），
+    // 這裡只是不給前台選。要重新開放：刪掉這行 hidden 就會回到清單。
+    // ⚠️ 沒有加 disabled —— 舊工作照樣能開、能改配圖、能重跑，只是開不了新的。
+    //    真要連 API 建立都擋掉再補 disabled: true（見 default 那個先例與 POST 建立處的檢查）。
+    hidden: true,
     hint: '',
     outputs: ['out/output-institution.mp4'],
     plan: 'src/Institution/institution-focus.generated.json',
@@ -143,6 +153,9 @@ const TEMPLATES = {
     // 145px 字級 ÷ 1000px 可用寬 ≈ 一行 7 字，14 字剛好折成兩行、版面還有空間。
     title: { lines: 1, per: 14, wrap: true, where: '開場第一秒（超過 7 字會折行，字級不變）' },
     label: '焦點股日報',
+    // 2026-09-11 使用者：「目前都用不到了」→ 從前台選版型清單拿掉（同 institution，見上面那段註解）。
+    // 這支的客製版／投廣套框版兩條輸出、--with-ad 旗標都照原樣留著。
+    hidden: true,
     // 2026-08-13 使用者定案：只出客製版。要投廣套框版才勾選項（run.js 的 --with-ad）。
     hint: '',
     outputs: ['out/output-focusstock.mp4', 'out/output-focusstock-ad.mp4'],
