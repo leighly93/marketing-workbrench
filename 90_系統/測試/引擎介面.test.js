@@ -8,9 +8,13 @@ const vm = require('node:vm');
 const { createEngine, validate } = require('../應用程式/scripts/transcription-engine');
 
 const { normalizeCpp } = require('../應用程式/scripts/transcription-engine');
+// [_TT_n]（時間戳）與 [_LANG_zh]（語言）結尾沒有底線，而且 offsets 就是 segment 邊界：
+// 一旦漏濾，它們會變成零長度的 word，字幕與配圖的強制對齊可能整串字落在上面（只閃 1 frame）。
 const rawCpp = { result: { language: 'zh' }, transcription: [{ text: '測試', offsets: { from: 100, to: 1100 }, tokens: [
   { text: '[_BEG_]', id: 50364 },
+  { text: '[_LANG_zh]', id: 50260, offsets: { from: 100, to: 100 } },
   { text: '測試', offsets: { from: 100, to: 1100 }, p: 0.9 },
+  { text: '[_TT_110]', id: 50474, offsets: { from: 1100, to: 1100 } },
   { text: '[_EOT_]', id: 50257 },
 ] }] };
 

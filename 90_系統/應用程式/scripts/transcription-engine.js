@@ -28,7 +28,15 @@ function normalizeCpp(raw) {
   if (!Array.isArray(raw?.transcription)) throw new Error('whisper.cpp 缺少 transcription');
   const segments = raw.transcription.map((segment, id) => {
     if (!Array.isArray(segment.tokens)) throw new Error('whisper.cpp 缺少 token 時間，需 --output-json-full');
-    const words = segment.tokens.filter((token) => typeof token.text === 'string' && !/^\[_.*_\]$/.test(token.text) && token.text.trim()).map((token) => ({
+    // 特殊 token 一律不當成字：whisper.cpp 除了 [_BEG_]／[_EOT_] 這種前後都有底線的，
+    // 還會吐時間戳 token [_TT_305] 與語言 token [_LANG_zh]（結尾是數字／語言碼，沒有底線）。
+    // 原本的 /^\[_.*_\]$/ 漏掉後兩種，它們就帶著 start === end 的零長度時間混進 words，
+    // 而且 [_TT_n] 的 offsets 剛好是 segment 結尾 → correct-subtitles.js 的全域對齊
+    // 在 whisper 聽錯整句時（0911「月線失而復得」被聽成「越限適合負責」，同代價路徑）
+    // 會把整串正確字元判給那顆零長度 token：字幕只剩 1 frame 一閃而過，
+    // 配圖的 _scriptCharTimes 也變成零長度 → dapan-timeline.js 直接丟掉那張圖。
+    // 所以改成只要是 [_...] 包起來的 token 就濾掉（真人講話不會產生這種字）。
+    const words = segment.tokens.filter((token) => typeof token.text === 'string' && !/^\[_.*\]$/.test(token.text) && token.text.trim()).map((token) => ({
       word: token.text, start: token.offsets?.from / 1000, end: token.offsets?.to / 1000,
       probability: token.p,
     }));
