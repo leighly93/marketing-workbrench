@@ -144,3 +144,26 @@ test('歷史 state/public 與 state/src 快照恢復至程式區，不在工作�
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(state, 'src/DapanXiaobao/dapan-shots.generated.json'), 'utf8')), generated);
   assert.equal(fs.existsSync(applicationPath(state)), false);
 });
+
+// 2026-09-11 事故回歸：同事在「一張截圖都沒有」的工作按「＋ 加一段」，前台退路是 src:''，
+// 送出的網址變成 /api/jobs/<id>/file/（檔名空白）。伺服器把它解回 _製作資料/thumbs 這個
+// **資料夾**，createReadStream 對目錄丟的是非同步 EISDIR（stream 的 'error' 事件），
+// 呼叫端 try/catch 攔不到 → 未處理例外 → 整台伺服器中止，全公司連不進來 35 分鐘。
+// 這裡鎖住：這類檔名一律 404，而且服務要還活著。
+test('檔名空白或指向資料夾時回 404，且服務不得中止', async (t) => {
+  const root = fixture(t);
+  const record = job(root, 'fixture-empty-name');
+  write(workFile(root, record.id, 'thumbs', 'plan-0.png'), 'synthetic-thumb');
+  write(workFile(root, record.id, 'input', 'shot1.png'), 'synthetic-shot');
+  const request = loadServer(root);
+  // '..' 不在清單裡：new URL() 會先正規化掉，`/file/..` 變成 `/api/jobs/<id>/`，
+  // 根本進不到檔案路由。'%2F' 則不會被正規化，解碼後 basename 一樣是空字串。
+  for (const suffix of ['', '.', '%2F']) {
+    const response = await request('GET', `/api/jobs/${record.id}/file/${suffix}`);
+    assert.equal(response.status, 404, `檔名「${suffix}」應該回 404`);
+    assert.ok(response.body.error);
+  }
+  const alive = await request('GET', `/api/jobs/${record.id}/file/plan-0.png`);
+  assert.equal(alive.status, 200);
+  assert.equal(alive.bytes.toString(), 'synthetic-thumb');
+});

@@ -1985,6 +1985,11 @@ const MIME = {
 function sendFile(req, res, file, download) {
   if (!fs.existsSync(file)) return send(res, 404, { error: '找不到檔案' });
   const st = fs.statSync(file);
+  // ⚠️ 資料夾不能當檔案送 —— createReadStream 對目錄是**非同步**丟 EISDIR（stream 的
+  //    'error' 事件），呼叫端的 try/catch 攔不到 → 未處理例外 → 整台伺服器當場死。
+  //    2026-09-11 17:32：同事在沒有截圖的工作按「＋ 加一段」，前台送出檔名是空字串的
+  //    /api/jobs/<id>/file/，解回 _製作資料/thumbs 這個目錄 → 全公司連不進來 35 分鐘。
+  if (!st.isFile()) return send(res, 404, { error: '找不到檔案' });
   const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
   const headers = { 'Content-Type': type, 'Cache-Control': 'no-store' };
   if (download) {
@@ -2004,6 +2009,16 @@ function sendFile(req, res, file, download) {
     headers['Content-Disposition'] = `attachment; filename="${ascii}"; filename*=UTF-8''${enc}`;
   }
 
+  // 保險：讀到一半出事（檔案被刪、權限、磁碟）也只能斷這一條連線。
+  // 沒有這個 handler 的話，stream 的 'error' 會變成未處理例外，一個壞請求＝整台重開。
+  const pipe = (stream) => {
+    stream.on('error', (e) => {
+      console.error(`  ⚠️ 送檔中斷 ${path.basename(file)}：${e.message}`);
+      res.destroy();
+    });
+    return stream.pipe(res);
+  };
+
   // 影片要支援拖時間軸 → Range
   const range = req.headers.range;
   if (range && /^bytes=\d*-\d*$/.test(range)) {
@@ -2016,10 +2031,10 @@ function sendFile(req, res, file, download) {
       'Accept-Ranges': 'bytes',
       'Content-Length': end - start + 1,
     });
-    return fs.createReadStream(file, { start, end }).pipe(res);
+    return pipe(fs.createReadStream(file, { start, end }));
   }
   res.writeHead(200, { ...headers, 'Content-Length': st.size, 'Accept-Ranges': 'bytes' });
-  fs.createReadStream(file).pipe(res);
+  pipe(fs.createReadStream(file));
 }
 
 // ── 留言／唸法回報 ────────────────────────
@@ -2566,6 +2581,9 @@ const server = http.createServer(async (req, res) => {
       const job = getJob(seg[2]);
       if (!job) return send(res, 404, { error: '找不到工作' });
       const name = path.basename(decodeURIComponent(seg.slice(4).join('/')));
+      // ''、'.'、'..' 的 basename 會讓下面的 jobPath 解回「資料夾本身」而不是檔案。
+      // 路徑是 basename 過的，跳不出工作目錄，但拿資料夾去開 stream 會炸（見 sendFile）。
+      if (!name || name === '.' || name === '..') return send(res, 404, { error: '找不到檔案' });
       // 成品在成品庫，不在 jobs/ 底下（只存一份）
       const arc = (job.outputs || []).find((o) => o.name === name && o.archive);
       if (arc) {
@@ -2575,7 +2593,9 @@ const server = http.createServer(async (req, res) => {
       }
       for (const d of ['out', 'thumbs', 'state/public', 'input']) {
         const f = jobPath(job.id, d, name);
-        if (fs.existsSync(f)) return sendFile(req, res, f, url.searchParams.get('dl') === '1');
+        // isFile：上面成品那條跟下面靜態檔那條本來就有，只有這個迴圈漏了。
+        if (fs.existsSync(f) && fs.statSync(f).isFile())
+          return sendFile(req, res, f, url.searchParams.get('dl') === '1');
       }
       return send(res, 404, { error: '找不到檔案' });
     }

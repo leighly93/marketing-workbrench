@@ -1023,9 +1023,15 @@ function planCard(job) {
   }
 
   function addSeg(src) {
+    // ⚠️ 2026-09-11：原本最後一層退路是 src:''，前台跟著去抓 /api/jobs/<id>/file/
+    //    （檔名空的）→ 伺服器解成資料夾 → EISDIR → **整台掛掉**，同事全部連不進來。
+    //    只有「一張截圖都沒傳」的工作會走到那層，所以本機測不出來（自己永遠先傳圖）。
+    //    隔壁 addAnnot 早就有同一道守門，這裡補上。伺服器端也擋了，兩層都要有。
+    const use = src || pv.images[0];
+    if (!use) return alert('這支工作沒有上傳截圖，沒有東西可以加 —— 請先上傳截圖。');
     const key = 'a' + (addSeq++);
     edits[key] = { i: key, _added: true, _manual: true, deleted: false,
-      src: src || pv.images[0] || '', pan: false, cell: null, region: null,
+      src: use, pan: false, cell: null, region: null,
       startCharIdx: null, endCharIdx: null, imgW: null, imgH: null };
     renderTable();
     openEditor(job, pv, { i: key, phrase: '新增的一段' }, () => renderTable());
