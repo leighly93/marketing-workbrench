@@ -120,6 +120,10 @@ const MINIMAX_LANGUAGE_BOOST = "Chinese";
 // 接著 A/B 聽 happy 與 fluent →「fluent 斷句可以就是有點平」「happy 這情緒還行，比較下會偏好這個」。
 // ⚠️ 合法值只有九個（happy/sad/angry/fearful/disgusted/surprised/calm/fluent/whisper），
 //    **沒有 neutral／auto**，送了會回 error 2013。要退回「自動挑」把這行設成 null 或空字串即可。
+// ⚠️ 而且不是每個值都跟每個模型相容：2026-09-11 實測 **speech-2.8 系列不支援 whisper**
+//    （2013「speech 2.8 don't support whisper」），要用得連 MINIMAX_MODEL 一起退到 2.6／02。
+//    這裡設 whisper 會讓**每一支出片都直接失敗**，不是只有音色變掉 —— 改這行前先用
+//    scripts/tts-ab.js 配同一個 model 跑一次確認。
 // ⚠️ 這是**全域**設定：四條固定主播線＋投廣模板／雙人 path 都會套到。
 //    2026-09-11 使用者在大盤小報／盤中焦點的兩支新聲音上也 A/B 聽過 happy 與「不送 emotion」，
 //    定案「有特別改 happy 的不錯，保留」—— 所以現在三支主播聲音都是聽過才套的。

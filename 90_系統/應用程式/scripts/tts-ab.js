@@ -23,7 +23,8 @@
 //   --numfix 送 TTS 前把「年份」與「股號」轉成中文數字（只動送 TTS 的那份，字幕不受影響）
 //   --pause-scale=0.5  把稿子裡所有停頓秒數乘上這個倍率（配 --pause 用，調長短不必改稿）
 //   --emotion= happy|sad|angry|fearful|disgusted|surprised|calm|fluent|whisper
-//              不送＝MiniMax 依文字自動挑（＝目前產線行為，實測偏平）
+//              不送＝MiniMax 依文字自動挑（實測偏平；產線現在固定送 happy）
+//              ⚠️ whisper 在 speech-2.8 系列不支援，要配 --model=speech-2.6-hd 或 speech-02-hd
 // 每跑一次出兩支：繁體直送 vs opencc 轉簡體後送，其餘參數完全一致。
 // 輸出：out/tts-ab/<model>_<voice>_<dict|nodict>_<trad|simp>.mp3
 
@@ -120,6 +121,9 @@ const DRY_RUN = process.argv.includes("--dry");
 // emotion：2026-09-01 使用者聽完 institution + numfix 那支後說「聲音可以，但有可能在有一點點情緒嗎？」
 // 現況是**不送這個欄位**＝MiniMax 依文字內容自動挑，實測出來偏平。要有情緒得明確指定。
 // ⚠️ 合法值只有下面九個，**沒有 neutral／auto**，送了會回 error 2013（run.js:548 已記）。
+// ⚠️ 九個值不是每個模型都吃：2026-09-11 實測 **speech-2.8 系列（hd 與 turbo）不支援 whisper**
+//    → 2013「speech 2.8 don't support whisper」。要聽 whisper 得退到 --model=speech-2.6-hd
+//    或 speech-02-hd（兩個都實測可用）。其餘八個在 2.8 上都正常。
 // ⚠️ emotion 沒有「強度」參數。voice_modify.intensity（-100~100）是另一組東西 ——
 //    那是變聲器，跟 timbre_weights 一樣有把 clone 語調弄壞的風險（混音已實測「很假」），
 //    要用的話單獨開一輪測，不要跟 emotion 混在一起。
