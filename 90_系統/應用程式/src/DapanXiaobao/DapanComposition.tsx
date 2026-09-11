@@ -85,10 +85,10 @@ export const DapanComposition: React.FC = () => {
       {/* === 主段：主講者影片期 === */}
       <Sequence from={introFrames} durationInFrames={heygenFrames}>
         {/* 主軌：講者影片，無 PIP、無模糊
-            2026-08-07 修正：大盤小報的來源影片是「橫式（16:9）、人物置中」，不是 HeyGen
-            直式輸出，所以用 objectFit:'cover'（等比放大＋置中裁切左右）把畫面填滿直式畫布，
-            人物本來就在正中央，裁掉的是左右兩側背景，跟現有 MarketingVideo.tsx 那套
-            「contain + scale(1.03)」（給直式來源用）是不同情境，這裡不能沿用 */}
+            2026-08-07 修正：大盤小報的來源影片是「橫式（16:9）」，不是 HeyGen 直式輸出，
+            所以用 objectFit:'cover'（等比放大＋裁切左右）把畫面填滿直式畫布，裁掉的是
+            左右兩側背景，跟現有 MarketingVideo.tsx 那套「contain + scale(1.03)」
+            （給直式來源用）是不同情境，這裡不能沿用 */}
         <AbsoluteFill>
           <OffthreadVideo
             src={staticFile('heygen.mp4')}
@@ -97,7 +97,18 @@ export const DapanComposition: React.FC = () => {
               width: '100%',
               height: '100%',
               objectFit: 'cover',
-              objectPosition: 'center center',
+              // 2026-09-11 使用者：「人不夠置中，應該要往畫面左邊移動一點」。
+              // 舊值是 'center center'，前提是上面那句「人物本來就在正中央」—— 量過之後
+              // **那個前提是錯的**：現行 avatar（run.js 的 DAPAN_AVATAR 5bad6432…）在 1920px
+              // 的來源畫面裡，頭肩中點落在 x≈995（0.518），比正中央偏右 35px。
+              // cover 進 1080×1920 之後放大 1.778 倍 → 成品裡人物偏右 62.5px（實測 09-11
+              // 出的直式.mp4，頭肩中點 602.5、畫布中心 540），所以看起來就是沒對準。
+              // ⚠️ objectPosition 的百分比**不是位移量**，是「來源的 x% 對齊框的 x%」：
+              //    數字調大 → 畫面內容往左跑。可裁掉的寬度是 3413−1080＝2333px，
+              //    要往左推 62.5px 就是 62.5/2333 ≈ 2.7% → 50% + 2.7% = 52.7%。
+              // ⚠️ 這個值**綁現在這個 avatar look**。run.js 換 DAPAN_AVATAR 之後要重量一次
+              //    （拿一張來源幀量頭肩中點比例，再套上面那條算式），不能直接沿用 52.7%。
+              objectPosition: '52.7% center',
             }}
           />
         </AbsoluteFill>

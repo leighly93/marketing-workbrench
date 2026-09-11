@@ -75,9 +75,8 @@ export const DapanLandscapeComposition: React.FC = () => {
 
   return (
     <AbsoluteFill style={{ backgroundColor: 'black' }}>
-      {/* 講者影片：往左集中在左側可見區（x0 ~ PANEL_LEFT_X），cover 置中。
-          寬度多墊 20px 塞到面板底下，避免左右接縫露黑邊（面板不透明會蓋住）。
-          來源 16:9 人物置中 → cover 進 ~1198×1080 後人物仍落在可見區正中央。 */}
+      {/* 講者影片：往左集中在左側可見區（x0 ~ PANEL_LEFT_X）。
+          寬度多墊 20px 塞到面板底下，避免左右接縫露黑邊（面板不透明會蓋住）。 */}
       <AbsoluteFill>
         <OffthreadVideo
           src={staticFile('heygen.mp4')}
@@ -89,7 +88,15 @@ export const DapanLandscapeComposition: React.FC = () => {
             width: PANEL_LEFT_X + 20,
             height: '100%',
             objectFit: 'cover',
-            objectPosition: 'center center',
+            // 2026-09-11 跟直式一起修（使用者是對直式反映「人不夠置中」，但橫式偏得更多，
+            // 原因一樣）。舊值 'center center' 配上面那句「人物仍落在可見區正中央」的註解 ——
+            // 實測 09-11 出的橫式.mp4，頭肩中點在 643.5、可見區中心是 589，**偏右 54.5px**。
+            // 偏移由兩件事疊出來，跟直式那邊只有第一項不同：
+            //   ① avatar 本身偏右 35px（見 DapanComposition.tsx 的長註解）→ ×1.2 ＝ 42px
+            //   ② 框比可見區寬 20px（墊在面板底下防黑邊），置中等於整個人往右挪 10px → ×1.2 ＝ 12px
+            // 換算：可裁寬度 1920−1198＝722px，要往左推 54.5/1.2＝45.4px → 6.3% → 50%+6.3%。
+            // ⚠️ 換 DAPAN_AVATAR 或改 PANEL_LEFT_X／那 20px 墊寬，這個值都要重算。
+            objectPosition: '56.3% center',
             transform: 'scale(1.2)', // 2026-08-10 使用者定案人物放大 1.2（往中心放大；右側溢出被面板蓋掉、上下由畫布裁掉，頭仍在框內）
             transformOrigin: 'center center',
           }}
