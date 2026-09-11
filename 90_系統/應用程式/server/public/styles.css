@@ -2,7 +2,26 @@
   :root{
     --bg:#f6f7f9; --card:#fff; --line:#e3e6ea; --ink:#1b1f24; --dim:#6b7280;
     --accent:#1f6feb; --ok:#0f9960; --warn:#b7791f; --bad:#c53030; --soft:#f0f3f7;
+    /* 版型配色用的三個衍生色（2026-09-11）。原本這幾個藍色調是散在各條規則裡寫死的，
+       抽成變數才有辦法「換一個版型就整頁換色」。預設值＝原本寫死的那三個藍。 */
+    --accent-soft:#f2f7ff;   /* 選中／hover 的淡底 */
+    --accent-soft2:#eaf2ff;  /* 拖曳中的深一階淡底 */
+    --accent-line:#bcd4f7;   /* 1～5 卡片外框 */
   }
+  /* ── 版型配色（2026-09-11 使用者：「想用視覺顏色區分不然容易點錯」）──────────
+     data-tpl 掛在 #v-new 上（由 app.js 的 boot2() 設定，那是唯一每次換版型都會跑的地方）。
+     ⚠️ 刻意**只**套在 #v-new：--accent 也被工作列表的狀態標籤（.st.review 等）與連結用到，
+        掛在 body 上會讓「待確認」之類的標籤跟著變橘色，那跟版型無關、只會誤導。
+     大盤小報維持 :root 的藍（使用者定案），所以這裡只列盤中焦點。
+     #bf5700 是挑過的：對白底對比 4.59，跟原本的藍（4.63）幾乎一樣重，換色不會忽然變淡或變刺；
+     也刻意避開 --warn #b7791f（偏黃褐，狀態標籤在用）與 --bad #c53030（紅色）。 */
+  #v-new[data-tpl="midday"]{
+    --accent:#bf5700; --accent-soft:#fff6ef; --accent-soft2:#ffe9d8; --accent-line:#f0c9a8;
+  }
+  /* 1～5 的卡片外框跟著版型走（使用者要求「連 1-5 點的外框細線一起變色」）。
+     只動顏色不動粗細 —— 1px 換成有彩度的淡色，遠看是一整片同色的框，近看不會比原本搶眼。
+     其他頁（工作列表、工作內頁）的 .card 不受影響，仍是灰框。 */
+  #v-new .card{border-color:var(--accent-line)}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
     font:15px/1.65 -apple-system,BlinkMacSystemFont,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
@@ -28,7 +47,7 @@
   .tpl{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
   .tpl div{border:1.5px solid var(--line);border-radius:10px;padding:15px;cursor:pointer;
     background:#fff;text-align:center;font-size:14.5px;font-weight:600}
-  .tpl div.on{border-color:var(--accent);background:#f2f7ff;color:var(--accent)}
+  .tpl div.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
   .tpl div.off{background:#f2f3f5;color:#b0b4ba;cursor:not-allowed;border-style:dashed}
   .chk{display:flex;align-items:flex-start;gap:9px;margin:9px 0;font-size:14px;cursor:pointer}
   .chk input{margin-top:3px;flex:none}
@@ -48,7 +67,7 @@
   .hint{font-size:12.5px;color:var(--dim);margin-top:-2px}
   .vdrop{border:1.5px dashed var(--line);border-radius:9px;padding:15px;text-align:center;
     cursor:pointer;background:#fcfdfe}
-  .vdrop:hover,.vdrop.hot{border-color:var(--accent);background:#f2f7ff}
+  .vdrop:hover,.vdrop.hot{border-color:var(--accent);background:var(--accent-soft)}
   .vdrop b{display:block;font-size:13.5px}
   .vdrop span{font-size:12px;color:var(--dim)}
   .vdrop.ok{border-style:solid;border-color:var(--ok);background:#f3fbf7}
@@ -56,14 +75,14 @@
   .brands{display:flex;gap:9px;margin-top:12px;flex-wrap:wrap}
   .brands div{border:1.5px solid var(--line);border-radius:9px;padding:9px 18px;cursor:pointer;
     font-size:14px;background:#fff}
-  .brands div.on{border-color:var(--accent);background:#f2f7ff;color:var(--accent);font-weight:600}
+  .brands div.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
   /* 圖片欄位 */
   .slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:12px}
   .slot{border:1.5px dashed var(--line);border-radius:10px;aspect-ratio:3/4;display:flex;
     flex-direction:column;align-items:center;justify-content:center;cursor:pointer;
     background:#fcfdfe;position:relative;overflow:hidden;text-align:center;padding:10px}
-  .slot:hover{border-color:var(--accent);background:#f2f7ff}
-  .slot.hot{border-color:var(--accent);background:#eaf2ff}
+  .slot:hover{border-color:var(--accent);background:var(--accent-soft)}
+  .slot.hot{border-color:var(--accent);background:var(--accent-soft2)}
   .slot.filled{border-style:solid;border-color:var(--line);background:#fff;padding:0}
   .slot img{width:100%;height:100%;object-fit:cover;object-position:top}
   .slot .n{font-size:13.5px;color:var(--dim);font-weight:600}

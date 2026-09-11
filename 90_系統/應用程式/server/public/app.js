@@ -224,6 +224,10 @@ async function boot() {
 function boot2() {
   document.querySelectorAll('#tpl div').forEach((d) =>
     d.classList.toggle('on', d.dataset.k === tpl));   // 用 data-k 對，不能用順序（清單會過濾）
+  // 版型配色（2026-09-11）：CSS 用 #v-new[data-tpl=…] 覆寫 --accent 那組變數，
+  // 1～5 的卡片外框、選中的版型、開始出片按鈕會一起換色，避免選錯版型（使用者要求）。
+  // 放這裡是因為 boot2() 是**唯一**每次換版型都會跑的地方（onclick 與 boot() 都收斂到它）。
+  $('#v-new').dataset.tpl = tpl || '';
   // 2026-08-31：tpl 的初始值改成 null（預設＝清單第一個），所以這裡不能再假設它一定指到一個版型
   // ——「全部版型都被關掉」時 tpl 會留在 null，下面幾行直接 .flags 會整頁掛掉。
   const cur = TPLS[tpl] || {};
