@@ -288,7 +288,7 @@ const HEYGEN_DUAL_VOICES = {
 
 // 大盤小報：固定單一 avatar（「每日固定主播」形式，不像投廣模板從池子隨機抽），
 // 2026-08-06 使用者定案。只在 TEMPLATE === "dapan" 時使用。
-const DAPAN_AVATAR = { id: "cf57d30031a44a31bc39822af8de4c30", gender: "female" }; // 2026-09-11 使用者更換 avatar look（原 8032bdb6…、更早 c2c2963b…）
+const DAPAN_AVATAR = { id: "5bad6432678c4157aeaf245021a2326e", gender: "female" }; // 2026-09-11 使用者更換 avatar look（同日稍早 cf57d300…、更早 8032bdb6…／c2c2963b…）
 // ⚠️ 換 look 要順便確認上面 HEYGEN_ASPECT_RATIO 那條：大盤小報寫死 16:9 是因為舊主播素材是橫式。
 //    新 look 若是直式，16:9 會左右補白 —— 出片後看一眼，真的補白就把它改成 9:16。
 // 大盤小報：HeyGen 內建語音 voice_id（2026-08-07 使用者要求聲音改用 HeyGen 生、不經 MiniMax）。
