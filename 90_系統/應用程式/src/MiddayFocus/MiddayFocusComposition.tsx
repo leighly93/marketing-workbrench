@@ -187,8 +187,12 @@ const TitleCard: React.FC<{ topOffset?: number }> = ({ topOffset = 0 }) => {
       <div
         style={{
           position: 'absolute',
-          left: 60,
-          right: 60,
+          // 2026-09-14 使用者定案「縮左右邊距、字級不動」（60 → 20）：直式標題要真的塞得下 10 字。
+          //   可用寬 1080 − 20 − 20 = 1040px ÷ 字級 103 ≈ 10.09 字，10 字 = 1030px 剛好進得去，
+          //   只剩 10px 餘裕 —— 使用者看過成品後說「很靠邊沒關係」。字級 103 維持不動（縮字級的方案被否決）。
+          //   前台 TEMPLATES.title.per 的 10（server/index.js）到這裡才算數：per 只是提示，換行是這裡的寬度決定的。
+          left: 20,
+          right: 20,
           top: 700 + topOffset,
           display: 'flex',
           flexDirection: 'column',
