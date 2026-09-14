@@ -44,6 +44,14 @@
   input[type=text],textarea,select{width:100%;padding:9px 11px;border:1px solid var(--line);
     border-radius:8px;font:inherit;font-size:14px;background:#fff;color:var(--ink)}
   textarea{min-height:200px;resize:vertical;line-height:1.75}
+  /* 欄位裡的示範文字。瀏覽器預設那個灰跟真的填進去的字太接近，整頁看起來像已經填滿了
+     （2026-09-14 使用者：「看起來有夠亂」）。壓到 --line 與 --dim 之間 ——
+     一眼分得出「這是例子」還是「這是我打的」，又還讀得出來。
+     ⚠️ 不要再往下調了：這個值對白底是 1.9:1，再淺（#c4c9cf 以下）就會變成
+     「有人看得到、有人完全看不到」—— 螢幕亮度低或在窗邊的人根本讀不到那行例子，
+     那比太深更糟（填錯了連範例都沒得參考）。
+     opacity:1 是給 Firefox 的：它的 ::placeholder 預設帶透明度，只給 color 會更淡。 */
+  input::placeholder,textarea::placeholder{color:#b9bfc6;opacity:1}
   .tpl{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
   .tpl div{border:1.5px solid var(--line);border-radius:10px;padding:15px;cursor:pointer;
     background:#fff;text-align:center;font-size:14.5px;font-weight:600}
