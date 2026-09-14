@@ -110,8 +110,11 @@ const TEMPLATES = {
   //    投廣模板都標了 hidden。宣告順序與內容全部保留，拿掉 hidden 就原地回來。
   //    /api/health 仍然回傳**全部**版型：工作列表要靠它顯示舊工作的版型名稱（見 public/app.js 的 pickable）。
   midday: {
-    // 2026-08-31 新增。版面照大盤小報直式複製一份，所以標題規格跟大盤小報一樣（兩行、每行 9 字參考值）。
-    title: { lines: 2, per: 9, wrap: true, where: '開場第一秒' },
+    // 2026-08-31 新增。版面照大盤小報直式複製一份，所以標題規格跟大盤小報一樣（兩行、每行 10 字參考值）。
+    // ⚠️ 2026-09-14 使用者把參考值從 9 改成 10，並指定「一樣置中，可以參考圖片很靠邊沒關係」——
+    //    直式可用寬 960px（left/right 各 60）÷ 字級 103 ≈ 9.3 字，10 字幾乎貼齊左右邊，
+    //    這是使用者看過成品截圖後拍板的。wrap 仍是 true，超過只是折行、字級不變。
+    title: { lines: 2, per: 10, wrap: true, where: '開場第一秒' },
     label: '盤中焦點',
     hint: '',
     // 只出直式（使用者定案「只出直式」），所以只有一個輸出、不需要 outputLabels 標「直式／橫式」。
@@ -121,7 +124,9 @@ const TEMPLATES = {
     flags: [],
   },
   dapan: {
-    title: { lines: 2, per: 9, wrap: true, where: '直式：開場第一秒　／　橫式：右側面板全程顯示' },
+    // 2026-09-14 使用者：跟盤中焦點一起從 9 改成 10（見 midday 那段說明）。
+    // 橫式的標題在右側面板，可用寬 706px ÷ 字級 68 ≈ 10.4 字 —— 兩邊都是「剛好塞得下、很靠邊」。
+    title: { lines: 2, per: 10, wrap: true, where: '直式：開場第一秒　／　橫式：右側面板全程顯示' },
     label: '大盤小報',
     hint: '',
     outputs: ['out/output-dapan.mp4', 'out/output-dapan-landscape.mp4'],
