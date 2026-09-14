@@ -533,6 +533,17 @@ function archivePath(job, outName) {
   return dest;
 }
 
+// ── 配音語氣（2026-09-14 使用者定案）──────────────────────────
+// MiniMax 的 emotion 參數。九個合法值裡前台只開放兩個，**而且白名單一定要在伺服器端**：
+// 前台不顯示只擋得住同事，擋不住直接打 /api/jobs 的人，而 whisper 配 speech-2.8
+// 是「整支出片直接失敗」（API 回 2013），不是音色變掉而已。
+// 收到白名單以外的值一律當預設 —— 不回 400，因為這欄位不是同事填的，是介面送的，
+// 擋下整支工作不如用預設把片出完（使用者定案：「server 收到非 happy/fluent 一律當 fluent」）。
+// 第一個是預設值：舊工作的 job.json 沒有這個欄位，重跑時也會拿到它。
+// ⚠️ 值要跟 server/public/app.js 的 EMOTIONS 一致，由 90_系統/測試/配音語氣.test.js 綁住。
+const EMOTIONS = ['fluent', 'happy'];
+const normalizeEmotion = (v) => (EMOTIONS.includes(v) ? v : EMOTIONS[0]);
+
 // ── 執行 run.js ───────────────────────────
 /** pid 還活著，而且真的是我們的 run.js（防 pid 被回收後誤判） */
 function isRunJs(pid) {
@@ -1661,6 +1672,8 @@ async function doPrepare(job) {
   if (job.skipGenerate) args.push('--skip-generate');
   if (job.noSpeed) args.push('--no-speed');
   if (job.withAd) args.push('--with-ad');
+  // 一律明講，不靠 run.js 的預設 —— 出片當下用的是哪個語氣要留在執行記錄裡（run.js 配音那行會印）。
+  args.push(`--emotion=${normalizeEmotion(job.emotion)}`);
   await runPipeline(job, args);
 
   buildCounterfactual(job);
@@ -2328,6 +2341,7 @@ const server = http.createServer(async (req, res) => {
         skipGenerate: !!body.skipGenerate,
         noSpeed: !!body.noSpeed,
         withAd: !!body.withAd,
+        emotion: normalizeEmotion(body.emotion),
         brand: body.brand ? String(body.brand) : null,
         autoApprove: !!body.autoApprove,
       };

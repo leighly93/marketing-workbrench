@@ -39,6 +39,23 @@ const STATUS_TEXT = { draft:'建立中', queued:'排隊中', preparing:'準備�
 // tpl 的初始值只是「還沒收到 /api/health 之前」的暫時值；boot2() 收到 TPLS 之後
 // 會把它校正成「可選清單的第一個」（2026-08-31 使用者要求：焦點股日報移到最後，預設改成第一個）。
 let TPLS = {}, BRANDS = [], ADMIN = false, brand = null, tpl = null, view = 'new', openJob = null;
+
+// 配音語氣（2026-09-14）：[值, 按鈕文字]。**值要跟 server/index.js 的 EMOTIONS 白名單一字不差**，
+// 由 90_系統/測試/配音語氣.test.js 綁住 —— 這裡多塞一個 whisper 之類的值，
+// 不是「多一個選項」，是讓選到的人整支出片直接失敗（speech-2.8 不支援，API 回 2013）。
+// 第一個是預設。
+const EMOTIONS = [['fluent', '流暢'], ['happy', '開心']];
+let emotion = EMOTIONS[0][0];
+
+// 出片卡片裡兩組並排的小選項各自的說明（2026-09-14）。
+// 講者影片那組操作的是 #skipGenerate 這個藏起來的 checkbox —— 它仍然是狀態來源。
+const EMOTION_TIP = '講漲勢、好消息用「開心」；重挫、壞消息用「流暢」（平穩）。'
+  + '<b>不選擇預設就是流暢。</b>';
+const EMOTION_TIP_OFF = '用現成的講者影片不會重新配音 —— 這支的語氣就是那支影片原本的。';
+const HEYGEN_MODES = [
+  [false, '重新生成', '會呼叫 HeyGen 生成一支新的講者影片。'],
+  [true, '用現成的', '不呼叫 HeyGen、<b>不扣點數</b> —— 拿一支之前的講者影片重跑就好。'],
+];
 // 這個分頁載入 index.html 時，伺服器上那個檔案的時間戳（第一次 poll 記起來，之後比對）
 let webSeen = null;
 
@@ -55,6 +72,15 @@ function titleCfg() {
 function titleLines() {
   return titleVals.slice(0, titleCfg().lines).map((v) => v.trim()).filter(Boolean);
 }
+// 送出按鈕帶版型名（2026-09-14 使用者：同事會按錯版型）。
+// 按鈕本來就已經是版型色（button.go 吃 --accent，盤中焦點是橘的），加上名字變成
+// 顏色＋文字雙重提示，而且是在**手指按下去的那一刻**看到，比多一層彈窗有用。
+// ⚠️ 送出過程會把文字換成「建立工作…／上傳 1/3…」，失敗時要用這支還原，不能寫死「開始出片」。
+function submitLabel() {
+  const t = (TPLS[tpl] || {}).label;
+  return t ? `開始出片：${t}` : '開始出片';
+}
+
 function drawTitle() {
   const cfg = titleCfg();
   const wrap = $('#titleLines');
@@ -81,6 +107,10 @@ function drawTitle() {
     rows.push(el('div', { class: 'tline' }, inp, cnt));
   }
   wrap.replaceChildren(...rows);
+  // 標題前面掛版型名（「大盤小報標題」）—— 同事會在選錯版型的情況下把標題打完，
+  // 這裡多兩個字就多一次自我檢查。drawTitle() 每次換版型都會跑（boot2 呼叫）。
+  $('#titleLabel').textContent = ((TPLS[tpl] || {}).label || '影片') + '標題';
+  $('#submit').textContent = submitLabel();
   $('#twhere').textContent = cfg.where;
 }
 
@@ -169,6 +199,9 @@ let heygenFile = null;
 $('#skipGenerate').onchange = (e) => {
   $('#heygenSlot').style.display = e.target.checked ? 'block' : 'none';
   $('#costWarn').hidden = e.target.checked;   // 用現成影片不呼叫 HeyGen，不扣點數
+  // 用現成影片＝不重新配音 → 語氣那組變灰（drawEmotion 自己讀 #skipGenerate）
+  drawHeygenMode();
+  drawEmotion();
 };
 function setHeygen(f) {
   if (!f) return;
@@ -240,7 +273,38 @@ function boot2() {
     $('#brands').replaceChildren(...BRANDS.map((b) =>
       el('div', { class: b === brand ? 'on' : '', onclick: () => { brand = b; boot2(); } }, b)));
   } else brand = null;
+  drawHeygenMode();
+  drawEmotion();
   drawTitle();   // 換版型 → 標題行數／字數限制不同
+}
+
+// 出片卡片的兩組選項。樣式沿用編輯器的 .modes（等寬、選到的那顆發亮）。
+// 用現成的講者影片時不會重新配音 → 語氣那組變灰不給點（.modes.off），
+// 但**留在畫面上**，不是隱藏 —— 隱藏會讓整張卡片跳一下，而且看不出為什麼選項不見了。
+function drawEmotion() {
+  const off = $('#skipGenerate').checked;
+  $('#emotion').className = 'modes' + (off ? ' off' : '');
+  $('#emotionTip').innerHTML = off ? EMOTION_TIP_OFF : EMOTION_TIP;
+  $('#emotion').replaceChildren(...EMOTIONS.map(([v, label]) =>
+    el('div', {
+      class: v === emotion ? 'on' : '',
+      onclick: off ? null : () => { emotion = v; drawEmotion(); },
+    }, label)));
+}
+
+function drawHeygenMode() {
+  const cur = $('#skipGenerate').checked;
+  $('#heygenTip').innerHTML = (HEYGEN_MODES.find(([v]) => v === cur) || [])[2] || '';
+  $('#heygenMode').replaceChildren(...HEYGEN_MODES.map(([v, label]) =>
+    el('div', {
+      class: v === cur ? 'on' : '',
+      onclick: () => {
+        if (v === cur) return;
+        $('#skipGenerate').checked = v;
+        // 既有的 onchange 不是自動觸發的（程式改 .checked 不會發事件），要自己呼叫
+        $('#skipGenerate').onchange({ target: $('#skipGenerate') });
+      },
+    }, label)));
 }
 
 async function poll() {
@@ -292,8 +356,16 @@ $('#submit').onclick = async () => {
   if ($('#skipGenerate').checked && !heygenFile) return alert('勾了「用現成的講者影片」，請選擇 heygen.mp4');
 
   // 勾了「用現成的講者影片」不呼叫 HeyGen、不扣點數，就不用問
+  // 版型放第一行（2026-09-14 使用者：「同事會按錯」）。原生 confirm 不能粗體、不能上色、
+  // 也不能置中（Chrome 一律釘在分頁上緣），能強調的只有「排在最前面」與【】。
+  // 「按下確定就會扣點數」那句拿掉 —— 按鈕正上方的紅框已經整段在講同一件事，
+  // 同一句話講兩次反而讓人整段略過（使用者：「這樣更簡單清楚」）。
+  const tplLabel = (TPLS[tpl] || {}).label || tpl;
+  const emoLabel = (EMOTIONS.find(([v]) => v === emotion) || [])[1] || emotion;
   if (!$('#skipGenerate').checked &&
-      !confirm('確定要開始出片嗎？\n\n按下確定會馬上呼叫 HeyGen 生成講者影片，點數當下就扣掉，之後取消或重出都退不回來。\n\n請先確認腳本、標題、截圖都是最新的。')) return;
+      !confirm(`這支要出的是【${tplLabel}】\n配音語氣：${emoLabel}\n\n`
+        + '確定要開始出片嗎？\n'
+        + '送出前再確認一次：版型、腳本、標題、截圖。')) return;
 
   btn.disabled = true;
   try {
@@ -306,7 +378,7 @@ $('#submit').onclick = async () => {
         // noSpeed 的勾選框 2026-08-19 拿掉了（加速已經改在 HeyGen 生成端做，正常出片不會重複）。
         // run.js 的 --no-speed 旗標還在，要用就在終端機下。
         skipGenerate: $('#skipGenerate').checked,
-        withAd: $('#withAd').checked, autoApprove: false, brand,
+        withAd: $('#withAd').checked, autoApprove: false, brand, emotion,
       }),
     });
     const ups = imgs.map((f, i) => ({ f, name: 'shot' + (i + 1) + (/\.jpe?g$/i.test(f.name) ? '.jpg' : '.png') }));
@@ -332,7 +404,7 @@ $('#submit').onclick = async () => {
     drawSlots(); drawTitle();
     openJob = job.id; go('job');
   } catch (e) { alert('出錯了：' + e.message); }
-  btn.disabled = false; btn.textContent = '開始出片';
+  btn.disabled = false; btn.textContent = submitLabel();
 };
 
 // ── 列表 ──

@@ -115,24 +115,46 @@ const MINIMAX_MODEL = "speech-2.8-hd"; // HD 品質。要省可改 speech-2.8-tu
 //    釘住 "Chinese" 之後語言就固定是普通話，不再靠偵測。合法值裡沒有台灣腔／zh-TW ——
 //    腔調完全來自 voice_id 本身（clone 的樣本），這個參數只決定「哪一種中文」。
 const MINIMAX_LANGUAGE_BOOST = "Chinese";
-// emotion（2026-09-01 上線）。**不送這個欄位＝MiniMax 依文字自動挑**，實測結果偏平：
+// emotion（2026-09-01 上線，2026-09-14 起改由前台每支片選）。
+// **不送這個欄位＝MiniMax 依文字自動挑**，實測結果偏平：
 // 使用者聽完 institution 那支說「聲音可以，但有可能在有一點點情緒嗎？」，
 // 接著 A/B 聽 happy 與 fluent →「fluent 斷句可以就是有點平」「happy 這情緒還行，比較下會偏好這個」。
+//
+// 2026-09-14 定案改成**前台選、預設 fluent**。起因是 happy 拿去講重挫不合適
+// （使用者：「講股市有時候是重挫的內容 Happy 不適合」）。當天拿真實重挫稿
+// （工作 20260911-161722-wai2，大盤小報、下跌 755 點）配 dapan 聲音、產線參數全套，
+// 只換 emotion 出四支試聽：happy 69.23 秒／calm 63.04／sad 75.35／fluent 56.56（同 588 字符，
+// 檔案在 90_系統/暫存/產線輸出/tts-ab/）。使用者聽後：**sad 太誇張**，定案只開放 fluent 與 happy 兩個值。
+// ⚠️ 同一份字不同情緒長度差 33%（56.6～75.4 秒）—— 這是「段落各挑情緒」會讓整支語速忽快忽慢的依據，
+//    所以這顆開關是**整支一個值**，不做段落級。
+// ⚠️ 前台只給兩個值，白名單在 server/index.js 的 EMOTIONS（前台不顯示擋得住同事，擋不住直接打 API 的人）。
+//    這裡的 --emotion= 是給終端機用的，九個合法值都收 —— 真的要試別的值請先走 scripts/tts-ab.js。
+//
 // ⚠️ 合法值只有九個（happy/sad/angry/fearful/disgusted/surprised/calm/fluent/whisper），
-//    **沒有 neutral／auto**，送了會回 error 2013。要退回「自動挑」把這行設成 null 或空字串即可。
+//    **沒有 neutral／auto**，送了會回 error 2013。要退回「自動挑」下 `--emotion=`（空值）即可。
 // ⚠️ 而且不是每個值都跟每個模型相容：2026-09-11 實測 **speech-2.8 系列不支援 whisper**
 //    （2013「speech 2.8 don't support whisper」），要用得連 MINIMAX_MODEL 一起退到 2.6／02。
-//    這裡設 whisper 會讓**每一支出片都直接失敗**，不是只有音色變掉 —— 改這行前先用
-//    scripts/tts-ab.js 配同一個 model 跑一次確認。
-// ⚠️ 這是**全域**設定：四條固定主播線＋投廣模板／雙人 path 都會套到。
+//    whisper 會讓**整支出片直接失敗**，不是只有音色變掉 —— 所以下面在開跑前就先擋，
+//    不要等 HeyGen 都生完了才死在配音那一步。
+// ⚠️ 這是**全域**設定：四條固定主播線＋投廣模板／雙人 path 都會套到同一個值。
 //    2026-09-11 使用者在大盤小報／盤中焦點的兩支新聲音上也 A/B 聽過 happy 與「不送 emotion」，
-//    定案「有特別改 happy 的不錯，保留」—— 所以現在三支主播聲音都是聽過才套的。
+//    當時定案「有特別改 happy 的不錯，保留」；09-14 的重挫稿試聽把預設換成 fluent，happy 改成手動選。
 //    （順帶一提：不送 emotion 時 b47d71d2 那支同一段字會慢 4 秒，平又拖，不要退回「自動挑」。）
-//    焦點股日報那支還沒單獨聽過，第一支成品留意一下情緒會不會太 over；
-//    要縮成只有某個版型套用，改 minimaxTTS() 那行判斷即可。
 // ⚠️ emotion **沒有強度參數**，九個值是離散的。voice_modify.intensity（−100~100）是另一組東西
 //    （變聲器），跟 timbre_weights 同一類風險 —— 混音已實測「聽起來很假」，要用要單獨測。
-const MINIMAX_EMOTION = "happy";
+const MINIMAX_EMOTIONS = ["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"];
+const MINIMAX_EMOTION_ARG = process.argv.find((a) => a.startsWith("--emotion="));
+const MINIMAX_EMOTION = MINIMAX_EMOTION_ARG ? MINIMAX_EMOTION_ARG.split("=").slice(1).join("=") : "fluent";
+if (MINIMAX_EMOTION && !MINIMAX_EMOTIONS.includes(MINIMAX_EMOTION)) {
+  console.error(`❌ 不認得的 --emotion=${MINIMAX_EMOTION}（合法值：${MINIMAX_EMOTIONS.join(" / ")}；`
+    + "沒有 neutral／auto，要「自動挑」請下 --emotion= 空值）");
+  process.exit(1);
+}
+if (MINIMAX_EMOTION === "whisper" && MINIMAX_MODEL.startsWith("speech-2.8")) {
+  console.error(`❌ ${MINIMAX_MODEL} 不支援 --emotion=whisper（API 回 2013），這樣跑會在配音那一步整支失敗。`
+    + "\n   要聽 whisper 請一起把 MINIMAX_MODEL 退到 speech-2.6-hd 或 speech-02-hd。");
+  process.exit(1);
+}
 
 // ── MiniMax 發音字典（2026-08-24 建立，2026-09-01 在 speech-2.8-hd 上全面重校）──────
 // 取代「拿錯字騙 TTS」的字元替換做法。差別很實際：
@@ -347,7 +369,7 @@ const MIDDAY_HEYGEN_VOICE_ID = "9cb1516ecebf4c06b668e03f7f6e91f7";
 //    MiniMax 按字符收費（3.5 元/萬字符）+ HeyGen 按音檔秒數收費，兩邊都會扣。
 // ⚠️ 2026-09-11 大盤小報與盤中焦點換成兩支**新 clone 的聲音，而且彼此不同** ——
 //    2026-08-31 那條「盤中焦點 voice id 跟大盤小報一樣」的舊定案到此為止，兩條線之後各換各的。
-//    新聲音在改之前用 scripts/tts-ab.js 配真實文案試聽過（emotion=happy，＝下面 MINIMAX_EMOTION 的值），
+//    新聲音在改之前用 scripts/tts-ab.js 配真實文案試聽過（emotion=happy，當時 MINIMAX_EMOTION 的值；2026-09-14 起預設改成 fluent），
 //    對照素材留在 90_系統/暫存/產線輸出/tts-ab/，檔名帶 newA／newB。
 //    重跑：node scripts/tts-ab.js --voice-id=<id> --text-file=<稿子> --dict --emotion=happy --trad-only
 const MINIMAX_FIXED_ANCHOR_VOICES = {

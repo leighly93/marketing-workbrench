@@ -252,7 +252,21 @@
   .modes{display:flex;gap:7px}
   .modes div{flex:1;text-align:center;border:1.5px solid var(--line);border-radius:8px;
     padding:8px 0;cursor:pointer;font-size:13.5px}
-  .modes div.on{border-color:var(--accent);background:#f2f7ff;color:var(--accent);font-weight:600}
+  /* 底色用變數（＝原本寫死的 #f2f7ff），這樣出片頁的選項也跟著版型換色 */
+  .modes div.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+  /* 不適用的那一組：看得到但不能點（例：用現成的講者影片就不會重新配音） */
+  .modes.off div{color:#b0b4ba;background:#f2f3f5;border-color:var(--line);
+    border-style:dashed;cursor:not-allowed;font-weight:400}
+  /* 灰掉也要看得出原本選的是哪一顆 —— 選項只是「這次不適用」，不是被清空 */
+  .modes.off div.on{color:#8b9097;background:#e9ebee;border-style:solid;font-weight:600}
+  /* 出片卡片裡的小選項並排（配音語氣／講者影片），中間一條淺虛線分隔
+     （2026-09-14 使用者：「中間可以有淺淺的虛線分隔線嗎，現在還是有點亂」）。
+     做法跟「跟我說」那頁的 .sayrow 一樣（flex + flex:1），這份 CSS 全檔沒有 media query。
+     gap 與 padding-left 同值，虛線兩側的留白才對稱。 */
+  .optcols{display:flex;gap:22px}
+  .optcols>div{flex:1;min-width:0}
+  .optcols>div+div{border-left:1px dashed var(--line);padding-left:22px}
+  .optcols>div>label{margin-top:0}
   .rects{margin-top:11px;font-size:13px;display:flex;flex-direction:column;gap:7px}
   .rects>div{display:flex;align-items:center;gap:7px}
   .rects span{color:var(--dim);font-size:12.5px;flex:1}

@@ -35,7 +35,9 @@
       <label>你是誰</label>
       <input type="text" id="owner" placeholder="王小明">
 
-      <label>影片標題</label>
+      <!-- 標題欄位前面掛版型名（2026-09-14 使用者：同事會按錯版型）。
+           文字由 app.js 的 drawTitle() 依當下版型填，這裡只留預設值當 fallback。 -->
+      <label id="titleLabel">影片標題</label>
       <div id="titleLines"></div>
       <div class="hint" id="twhere"></div>
 
@@ -71,16 +73,37 @@
 
     <div class="card">
       <h2>5・出片</h2>
-      <div class="note" id="mustAnnotate">出片前一定要先手動圈選截圖要顯示的範圍，確認後才會出片。</div>
+      <!-- 出片選項並排（2026-09-14 使用者：「五出片那邊視覺好亂」）。
+           原本由上到下是黃色提示框、配音語氣、勾選框、紅色警語，三種色塊疊在一起。
+           ① 「出片前一定要先手動圈選截圖…」那句拿掉 —— 下一頁的「手動標記」卡片講得更完整
+              （app.js 的 annotCard），在這裡先講一次只是多一塊黃色。
+           ② 配音語氣與講者影片改成兩組同等的選項並排，樣式都用 .modes。
+           配音語氣：MiniMax 的 emotion，只開放「流暢／開心」。不開放 whisper ——
+           它配 speech-2.8 會讓**整支出片直接失敗**（API 回 2013），所以 server/index.js
+           的 EMOTIONS 白名單也擋一次（兩邊的值由 90_系統/測試/配音語氣.test.js 綁住）。
+           兩組按鈕都由 app.js 的清單畫出來，不在這裡寫死選項。 -->
+      <div class="optcols">
+        <div>
+          <label>配音語氣</label>
+          <div class="modes" id="emotion"></div>
+          <div class="tip" id="emotionTip"></div>
+        </div>
+        <div>
+          <label>講者影片</label>
+          <div class="modes" id="heygenMode"></div>
+          <div class="tip" id="heygenTip"></div>
+        </div>
+      </div>
+
+      <!-- 「用現成的講者影片」（2026-08-21 使用者要求開放給所有人 —— 這是唯一不花點數的出片
+           路徑，同事想試版面／配圖／字幕時應該用它）現在是上面那組按鈕，但這個 checkbox 留著
+           當狀態來源：送出前的檢查、POST 的 skipGenerate 欄位、#heygenSlot 的開關全都讀它。
+           改成另一個變數等於要同時動四處，留著反而少一個出錯的地方。 -->
+      <input type="checkbox" id="skipGenerate" hidden>
+
       <label class="chk" id="wrapWithAd"><input type="checkbox" id="withAd">
         <span>另外出一支投廣套框版<small>焦點股日報限定。預設只出客製版。</small></span></label>
 
-      <!-- 「用現成的講者影片」本來鎖在「進階」裡（#advBox 只有管理者看得到），
-           2026-08-21 使用者要求開放給所有人 —— 這是唯一「不花點數」的出片路徑，
-           同事想試版面／配圖／字幕時應該用它，而不是每試一次就燒掉一支影片的點數。
-           開放之後 advBox 就沒有任何內容了，整個 <details> 與 details.adv 樣式一起移除。 -->
-      <label class="chk"><input type="checkbox" id="skipGenerate">
-        <span>用現成的講者影片<small>不呼叫 HeyGen、<b>不扣點數</b>。想試版面、配圖、字幕的時候用這個 —— 拿一支之前的講者影片重跑就好。</small></span></label>
       <div id="heygenSlot" style="display:none;margin:8px 0 6px">
         <div class="vdrop" id="vdrop">
           <b>選擇或拖曳講者影片</b>
