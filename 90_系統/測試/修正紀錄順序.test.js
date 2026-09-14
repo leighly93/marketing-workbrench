@@ -34,7 +34,11 @@ function 建立待確認工作(root) {
   write(workFile(root, ID, 'state', 'src', 'app-images.generated.json'), {
     images: [{ file: 'shot3.jpg', width: 1000, height: 2000, page: 'stock-k', words: [] }],
   });
-  write(workFile(root, ID, 'auto-noannots.json'), []);   // 對照組：這一句 AI 本來不配圖
+  // 對照組：AI 有排東西（所以比得出來），只是沒排到這一句 → 這一句 AI 本來不配圖。
+  // ⚠️ 不可以寫成空陣列 —— 那是「對照組整份沒排出來」，語意是「比不出來」（見 recordCorrections 的 autoKind）。
+  write(workFile(root, ID, 'auto-noannots.json'), [
+    { src: 'shot3.jpg', startCharIdx: 旁白.length + 10, endCharIdx: 旁白.length + 15, _auto: true },
+  ]);
   // 同型頁面之前已經教過一次 —— 建議應該看到這一筆，不該看到使用者這次畫的框。
   write(dataPath(root, 'shot-memory.json'), {
     codeNames: {},

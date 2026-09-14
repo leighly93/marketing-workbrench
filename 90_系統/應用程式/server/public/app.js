@@ -1770,9 +1770,15 @@ async function loadFix() {
         cell ? '黃框 ' + fmtCell(cell, r.size) : null,
         region ? '區域 ' + fmtCell(region, r.size) : null,
       ].filter(Boolean).join('　') || '整張顯示';
+      // 「原本」是空的有三種：AI 真的不配圖、這一支對照組整份沒排出來、
+      // 舊紀錄比對用錯欄位（focus 版型，autoKind 由伺服器補）。只有第一種能說「AI 不配圖」。
+      const blank = {
+        noCounterfactual: '（比不出來：這一支對照組一段都沒排，多半是頁型沒認出來）',
+        legacyNoSrc: '（比不出來：舊紀錄沒記到 AI 配了哪張圖）',
+      }[r.autoKind] || '（AI 本來不配圖）';
       before = r.from
         ? `${r.from}　${r.autoCellText || ''} ${pair(r.autoCell, r.autoRegion)}`.trim()
-        : '（AI 本來不配圖）';
+        : blank;
       after = `${r.to}　${pair(r.manualCell, r.manualRegion)}`;
     }
     const reason = [...((r.reason && r.reason.tags) || []), (r.reason && r.reason.note) || '']

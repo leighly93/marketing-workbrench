@@ -1166,6 +1166,28 @@ function allCorrections() {
     for (const c of j.corrections || [])
       rows.push({ at: j.approvedAt, job: j.id, template: j.template, by: j.approvedBy || j.owner || '', ...c });
   }
+  // 2026-09-14 起「人工標記」會自己寫 autoKind。它之前的紀錄沒有這個欄位，
+  // 其中 focus 版型（三大法人）那批的「原本」一律是空的 —— 不是 AI 沒配圖，
+  // 是比對時拿了對照組根本沒有的 `src` 欄位（見 recordCorrections 的 cfSrc）。
+  // append-only 的歷史檔不改，這裡只在回應裡標成「舊紀錄不可信」，讓頁面不要再講假話。
+  // 另一種空白：那一輪對照組整份是 0 段（不是「AI 判斷這裡不用配圖」，是根本沒有基準可比）。
+  // 舊紀錄裡看不出來，只能回頭看工作的 auto-noannots.json；工作被刪就維持原樣。
+  const cfEmpty = new Map();
+  const cfIsEmpty = (id) => {
+    if (cfEmpty.has(id)) return cfEmpty.get(id);
+    let v = false;
+    try {
+      const a = JSON.parse(fs.readFileSync(jobPath(id, 'auto-noannots.json'), 'utf-8'));
+      v = Array.isArray(a) && !a.length;
+    } catch (_) { v = false; }
+    cfEmpty.set(id, v);
+    return v;
+  };
+  for (const r of rows) {
+    if (r.type !== '人工標記' || r.autoKind || r.from) continue;
+    if ((TEMPLATES[r.template] || {}).planKind === 'focus') r.autoKind = 'legacyNoSrc';
+    else if (cfIsEmpty(r.job)) r.autoKind = 'noCounterfactual';
+  }
   return rows;
 }
 
@@ -1403,14 +1425,28 @@ function recordCorrections(job, before, edits) {
       jobPath(job.id, 'input', 'annotations.json'), 'utf-8')).shots || [];
     const cf = JSON.parse(fs.readFileSync(
       jobPath(job.id, 'auto-noannots.json'), 'utf-8')) || [];
+    // focus 版型（三大法人）的對照組段落**沒有 src** —— 圖永遠是那張版面截圖，
+    // auto-focus 只寫 section／cellText（見 planItemsOf 上方那段說明）。
+    // 2026-09-14 修：以前直接拿 `c.src` 比對，focus 的段落全部比出 undefined，
+    // `from` 變成空字串，修正紀錄頁就一律顯示「（AI 本來不配圖）」——
+    // 明明 AI 有配，紀錄卻說沒配，institution 的 38 筆全是這樣來的。
+    const FOCUS_CF = (TEMPLATES[job.template] || {}).planKind === 'focus';
+    const cfReg = FOCUS_CF ? institutionRegions(jobPath(job.id, 'state')) : null;
+    // 拿不到版面圖檔名（舊工作沒留快照）也不能退回 undefined —— 寧可寫「版面截圖」這個
+    // 說得出口的名字，也不要讓它變成「不配圖」。
+    const cfSrc = (c) => (c && c.src) || (FOCUS_CF ? ((cfReg && cfReg.imageFile) || '版面截圖') : null);
+    // 對照組整份是空的（auto-shot／auto-focus 這一輪一段都沒排，多半是頁型沒認出來）
+    // ＝ 這支根本沒有可比的基準，不是「AI 判斷這裡不用配圖」。兩者要分開講。
+    const noCf = !Array.isArray(cf) || !cf.length;
     for (const a of ann) {
       if (!a || !a.src || typeof a.startCharIdx !== 'number' || typeof a.endCharIdx !== 'number') continue;
       const lo = Math.min(a.startCharIdx, a.endCharIdx), hi = Math.max(a.startCharIdx, a.endCharIdx);
       // 對照組裡蓋到這段旁白的所有段落 ＝ AI 本來會在這裡放的東西
-      const hit = cf.filter((c) => c && c.startCharIdx != null
+      const hit = (Array.isArray(cf) ? cf : []).filter((c) => c && c.startCharIdx != null
         && !(c.endCharIdx < lo || c.startCharIdx > hi));
       const first = hit[0] || null;
-      const sameImg = hit.some((c) => c.src === a.src);
+      const hitSrcs = [...new Set(hit.map(cfSrc).filter(Boolean))];
+      const sameImg = hit.some((c) => cfSrc(c) === a.src);
       const manualBoxed = !!(box(a.cell) || box(a.region));
       const sug = sugOf(a.src, lo, hi);
       diffs.push({
@@ -1420,7 +1456,10 @@ function recordCorrections(job, before, edits) {
         systemPage: sug ? sug.page : null,   // 2026-09-03：記下系統當時判的頁型（cell-suggest 本來就帶 page），給 page-types / memKey 用
         systemWhy: sug ? sug.why : null,
         phrase: textOf(lo, hi),
-        from: hit.length ? [...new Set(hit.map((c) => c.src))].join('／') : null,
+        from: hitSrcs.length ? hitSrcs.join('／') : null,
+        // 「原本」為空時，這一欄說明是哪一種空：沒得比（noCf）還是真的沒配（none）。
+        // 舊紀錄沒有這個欄位，前台會照舊顯示（見 app.js 的 drawFix）。
+        autoKind: noCf ? 'noCounterfactual' : (hit.length ? 'covered' : 'none'),
         to: a.src,
         auto: first ? secOf(first.startCharIdx, hit[hit.length - 1].endCharIdx) : null,
         autoChars: first ? `${first.startCharIdx}~${hit[hit.length - 1].endCharIdx}` : null,
@@ -1430,13 +1469,15 @@ function recordCorrections(job, before, edits) {
         manual: secOf(lo, hi),
         manualChars: `${lo}~${hi}`,
         manualCell: box(a.cell), manualRegion: box(a.region),
-        autoWhy: (!hit.length
-          ? '這一句 AI 本來一張圖都不會配（對照組：留在講者畫面）'
-          : !sameImg
-            ? `AI 本來會配「${[...new Set(hit.map((c) => c.src))].join('／')}」，人改用「${a.src}」`
-            : manualBoxed
-              ? `AI 本來也用這張圖、框「${first.cellText || '整張顯示'}」，人自己框了別的地方`
-              : 'AI 本來也用這張圖，人只是重新指定了出現範圍') + sugNote(sug, a.cell),
+        autoWhy: (noCf
+          ? '這一支的對照組一段都沒排出來（多半是頁型沒認出來），所以比不出 AI 本來會怎麼配'
+          : !hit.length
+            ? '這一句 AI 本來一張圖都不會配（對照組：留在講者畫面）'
+            : !sameImg
+              ? `AI 本來會配「${hitSrcs.join('／')}」，人改用「${a.src}」`
+              : manualBoxed
+                ? `AI 本來也用這張圖、框「${first.cellText || '整張顯示'}」，人自己框了別的地方`
+                : 'AI 本來也用這張圖，人只是重新指定了出現範圍') + sugNote(sug, a.cell),
         size: a.imgW && a.imgH ? { w: a.imgW, h: a.imgH } : null,
         reason: null,
       });
