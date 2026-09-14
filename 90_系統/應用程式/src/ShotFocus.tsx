@@ -80,6 +80,17 @@ export const SHOT_FOCUS = {
   /** 圖片外露處的底色：純黑，把講者/heygen 完全蓋掉（在圖片底下再墊一層黑）。 */
   backdrop: '#000000',
   /**
+   * 沒圈顯示區域的圖，要「滿版」還是「完整放進安全框」的分界（2026-09-14 使用者定案）：
+   * cover 之後原圖至少要留得住這個比例才滿版，留不住就改成整張縮進安全框。
+   * 0.75＝裁掉不超過四分之一。實際落點（畫布 1080×1920，比例 0.5625）：
+   *   1179×2556 iPhone 截圖 0.461 → 留 82% ✅ 滿版      941×1672 截圖 0.563 → 留 100% ✅ 滿版
+   *   1179×1872 截圖 0.630   → 留 89% ✅ 滿版           1254×1254 方圖 1.0   → 留 56% ❌ 縮進安全框
+   *   869×1200 裁過的截圖 0.724 → 留 78% ✅ 滿版        777×155 橫幅 5.01   → 留 11% ❌ 縮進安全框
+   * 換算成比例區間就是 0.422 ~ 0.75 之間算「跟畫布差不多」；手機直式截圖全部都在裡面，
+   * iPad 直式（0.75）剛好壓線。要放寬就把這個數字調小，收緊就調大。
+   */
+  wholePageCoverKeep: 0.75,
+  /**
    * 黃框相對目標框的外擴（**畫面座標 px**，不乘 sc）—— 人工框、OCR 自動框一律同一個值。
    * 2026-09-07 使用者定案「所有黃框不論人工或 OCR 都用人工框那組」。
    * 在這之前自動框另有一組 26×18 **圖片座標** px（會再乘 sc）：同一個框在 720 寬截圖上
@@ -118,9 +129,11 @@ export const ShotFocusImage: React.FC<{
   focusY?: number;
   /** 圖片左右留白（橫式使用者定案 20px） */
   margin?: number;
-  /** 黃框的安全區（畫面座標）：上避節目 header、下避字幕條。
-      兩個都給才會生效 —— 沒給的版型（焦點股／投廣）行為完全不變。
-      2026-08-25 使用者定案：「圖片大小要跟原本一樣，只是圖片上移」。 */
+  /** 安全框（畫面座標）：上避節目 header、下避字幕條。
+      兩個都給才會生效；沒給的版型（投廣）不套安全框，整張顯示就落在整個畫布上。
+      三個用途：黃框超出時把圖推進來（2026-08-25 使用者定案「圖片大小要跟原本一樣，只是圖片上移」）、
+      有 region 時把圈選範圍縮放置中放進來（2026-09-11）、
+      沒圈 region 的整張顯示也縮放置中放進來（2026-09-14，直式限定，見下方 fitTop）。 */
   safeTop?: number;
   safeBottom?: number;
 }> = ({ run, width, height, fps, region, focusY: focusYProp, margin = 0, safeTop, safeBottom }) => {
@@ -165,6 +178,35 @@ export const ShotFocusImage: React.FC<{
 
   // 沒有要框的東西，或只是「看一下 App」→ 整張顯示
   if (!run.imageWidth || !run.imageHeight || withCell.length === 0) {
+    // 沒圈顯示區域時圖片怎麼放（2026-09-14 使用者定案，直式）。兩條路，看 cover 會裁掉多少：
+    //   手機截圖那種「本來就跟畫布差不多比例」→ 維持 cover 滿版（＝原本的行為，使用者定案
+    //     「圖片就讓它滿版放」，這次明確確認要留著）。
+    //   比例差太多 → 整張等比縮放置中放進安全框，一個像素都不裁。
+    //
+    // ⚠️ 為什麼要分：cover 的縮放是 max(W/w, H/h)，比例一偏離就爆炸 ——
+    //      869×1884 手機截圖（0.461）→ 只裁掉 18% 高度，就是漂亮的滿版
+    //      1254×1254 方圖           → 放大 1.53 倍、左右各裁 420px，只剩 56% 寬（0914 shot3）
+    //      777×155 橫幅             → 放大 12.39 倍，只剩 11% 寬、糊成一團（0914 shot1）
+    // ⚠️ 走 contain 那條的語意＝「沒圈顯示區域就等於圈了整張圖」，跟有 region 的那條路
+    //    （s2 = min(boxW/w, boxH/h)）算法一致，只是 region 換成整張圖。
+    // ⚠️ 橫式（margin > 0）完全不進這個判斷：一律 contain 進整個可用區，維持既有樣子
+    //    （它的 whole-page 圖本來就沒問題，字幕壓在圖上是既有設計，縮進 safeBottom 只會平白變小）。
+    // ⚠️ 沒給安全框的直式產線（投廣 MarketingVideo／FocusstockAd）：滿版那條不變，
+    //    另一條的 contain 放的是整個畫布而不是安全框。那兩支前台都沒開、沒有成品可核對。
+    // ⚠️ 讀不到圖片尺寸（imageWidth/Height 缺）就沒得判斷 → 走 contain，寧可小也不要放大裁掉。
+    const hasSafe = safeTop != null && safeBottom != null && safeBottom > safeTop;
+    const fullW = imgW;
+    const fullH = height - margin * 2;
+    // cover 之後原圖還看得到多少（0~1）：就是兩個長寬比的比值，小的除以大的。
+    // 只有一軸會被裁，被裁的那軸剩下的比例正好等於這個值。
+    const imgAR = run.imageWidth && run.imageHeight ? run.imageWidth / run.imageHeight : 0;
+    const boxAR = fullH > 0 ? fullW / fullH : 0;
+    const coverKeep =
+      imgAR > 0 && boxAR > 0 ? Math.min(imgAR, boxAR) / Math.max(imgAR, boxAR) : 0;
+    const fullBleed = margin === 0 && coverKeep >= SHOT_FOCUS.wholePageCoverKeep;
+    const useSafeBox = !fullBleed && margin === 0 && hasSafe;
+    const fitTop = useSafeBox ? (safeTop as number) : margin;
+    const fitHeight = useSafeBox ? (safeBottom as number) - (safeTop as number) : fullH;
     return (
       <AbsoluteFill style={{ opacity: appear }}>
         <div
@@ -175,16 +217,13 @@ export const ShotFocusImage: React.FC<{
         />
         {/* ⚠️ 圖片一定要包在 AbsoluteFill 裡：CSS 繪製順序上，絕對定位的元素會蓋在
             靜態元素之上（與 DOM 順序無關）。直接放 <Img> 會被上面那層黑底蓋成全黑。 */}
-        {/* 沒有要框的目標時的顯示方式：
-              直式（margin=0、整個畫布）→ cover 滿版，使用者定案「圖片就讓它滿版放」
-              橫式（有 margin/region）→ contain，完整放進左側可見區、不裁切 */}
         <div
           style={{
             position: 'absolute',
             left: imgX,
-            top: margin,
+            top: fitTop,
             width: imgW,
-            height: height - margin * 2,
+            height: fitHeight,
           }}
         >
           <Img
@@ -192,7 +231,7 @@ export const ShotFocusImage: React.FC<{
             style={{
               width: '100%',
               height: '100%',
-              objectFit: margin > 0 ? 'contain' : 'cover',
+              objectFit: fullBleed ? 'cover' : 'contain',
             }}
           />
         </div>
