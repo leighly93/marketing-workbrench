@@ -52,8 +52,9 @@
     <div class="card">
       <h2>3・截圖</h2>
       <div class="slots" id="slots"></div>
-      <input type="file" id="picker" accept="image/*" hidden>
-      <!-- 手動標記頁「＋ 上傳更多截圖」用（multiple：建立頁那個是一格一張，這裡是一次補好幾張） -->
+      <!-- 建立頁的截圖格（multiple：2026-09-14 起一次可以選好幾張，點哪一格就從那格開始往後填） -->
+      <input type="file" id="picker" accept="image/*" multiple hidden>
+      <!-- 手動標記頁與配圖計畫的「＋ 上傳更多截圖」用（檔名由伺服器排，走 auto=1） -->
       <input type="file" id="morePicker" accept="image/*" multiple hidden>
     </div>
 

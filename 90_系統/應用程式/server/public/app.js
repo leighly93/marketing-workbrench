@@ -77,6 +77,13 @@ function titleLines() {
 // 顏色＋文字雙重提示，而且是在**手指按下去的那一刻**看到，比多一層彈窗有用。
 // ⚠️ 送出過程會把文字換成「建立工作…／上傳 1/3…」，失敗時要用這支還原，不能寫死「開始出片」。
 function submitLabel() {
+  // 上傳中斷過就直接講「繼續」—— 同事最怕的是「剛剛已經按過了，再按一次會不會變成兩支」。
+  // 檔案全上去、掛在最後那一步 /submit 的情況也要有話講 —— 按鈕寫「開始出片」
+  // 卻不跳確認視窗（續傳不再問一次）會讓人以為按錯了。
+  if (pending && pending.sig === formSig()) {
+    const left = pending.total - pending.done.length;
+    return left > 0 ? `繼續上傳剩下的 ${left} 個檔案` : '繼續送出這支工作';
+  }
   const t = (TPLS[tpl] || {}).label;
   return t ? `開始出片：${t}` : '開始出片';
 }
@@ -146,23 +153,44 @@ let slots = [null, null, null];
 let pickingSlot = -1;
 
 $('#picker').onchange = (e) => {
-  const f = e.target.files[0];
-  if (f && pickingSlot >= 0) slots[pickingSlot] = f;
-  e.target.value = '';
-  drawSlots();
+  fillSlotsFrom(pickingSlot, [...e.target.files]);
+  e.target.value = '';   // 選同一個檔第二次也要能觸發
 };
 
-function setSlotFile(i, f) {
-  if (!f) return;
-  if (!/^image\//.test(f.type)) {
-    // 原本是靜靜忽略 —— 使用者把 mp4 拖進來會以為壞掉（2026-08-13 回報）
-    alert(/^video\//.test(f.type)
-      ? '這幾格是放 APP 截圖的。\n\n講者影片預設由系統自己生成，不用上傳；\n真的要用現成的影片，請展開下面的「進階」→ 勾「用現成的講者影片」。'
-      : `「${f.name}」不是圖片檔，這幾格只能放 png / jpg 截圖。`);
-    return;
+/**
+ * 這個檔能不能放進截圖格。
+ * ⚠️ 不要只認 f.type —— HEIC 在有些系統給的是空字串，而伺服器其實吃得下
+ *    （ensureUsableImage 會把 webp／heic／gif／bmp／tiff 自動轉成 png）。
+ *    判斷跟事後補圖那支（uploadMoreShots）刻意用同一套，三個入口不要各有各的標準。
+ */
+function isShotFile(f) {
+  return /^image\//.test(f.type) || /\.(png|jpe?g|webp|heic|heif|gif|bmp|tiff?)$/i.test(f.name);
+}
+
+// 從第 start 格開始往後填：第一張蓋掉 start 那格，其餘往後找空格，沒空格就長一格。
+// 點擊選檔（一次可以選好幾張）與拖曳都走這支。
+// ⚠️ 以前 #picker 那條是直接 `slots[i] = f`，完全沒有檢查，檢查只寫在拖曳那條：
+//    選到 mp4 沒人擋，要等送出、建完工作、上傳被伺服器退件（400）才看得到一句看不懂的錯，
+//    而且留下一支卡在「建立中」的工作（2026-09-14）。
+function fillSlotsFrom(start, files) {
+  if (start < 0 || !files.length) return;
+  const bad = files.filter((f) => !isShotFile(f));
+  let i = start;
+  for (const f of files.filter(isShotFile)) {
+    if (i >= slots.length) slots.push(null);
+    slots[i] = f;
+    do { i += 1; } while (i < slots.length && slots[i]);
   }
-  slots[i] = f;
   drawSlots();
+  // 一次選十張、其中三張不是圖片的話，彈三次視窗比不提醒還煩 —— 併成一則。
+  if (bad.length) {
+    const vid = bad.find((f) => /^video\//.test(f.type) || /\.(mp4|mov|m4v)$/i.test(f.name));
+    alert(vid
+      // 原本是靜靜忽略 —— 使用者把 mp4 拖進來會以為壞掉（2026-08-13 回報）
+      ? '這幾格是放 APP 截圖的。\n\n講者影片預設由系統自己生成，不用上傳。'
+      : `「${bad[0].name}」不是圖片檔，這幾格只能放截圖（png、jpg、heic 都可以）。`
+        + (bad.length > 1 ? `\n\n另外還有 ${bad.length - 1} 個檔也一樣，都沒有放進去。` : ''));
+  }
 }
 
 function drawSlots() {
@@ -173,7 +201,7 @@ function drawSlots() {
       onclick: () => { pickingSlot = i; $('#picker').click(); },
       ondragover: (e) => { e.preventDefault(); s.classList.add('hot'); },
       ondragleave: () => s.classList.remove('hot'),
-      ondrop: (e) => { e.preventDefault(); s.classList.remove('hot'); setSlotFile(i, e.dataTransfer.files[0]); },
+      ondrop: (e) => { e.preventDefault(); s.classList.remove('hot'); fillSlotsFrom(i, [...e.dataTransfer.files]); },
     });
     if (f) {
       s.append(
@@ -192,6 +220,9 @@ function drawSlots() {
     title: '再新增一張',
   }, '＋'));
   wrap.replaceChildren(...nodes);
+  // 換了圖就不是上次那支工作了 —— 按鈕要當場從「繼續上傳剩下的…」變回「開始出片」。
+  // （submitLabel() 自己會比對表單特徵，這裡只是給它一次重算的機會。）
+  if (pending) $('#submit').textContent = submitLabel();
 }
 
 // ── 進階：現成講者影片 ──
@@ -347,7 +378,28 @@ async function poll() {
   if (view === 'job' && openJob) loadJob();
 }
 
-// ── 送出 ──
+// ── 送出 ──────────────────────────────────
+// 上傳失敗後的續傳（2026-09-14）：工作是在上傳**之前**就建立的，所以第 8 張失敗時，
+// 前 7 張已經在 input/ 裡、列表上多一筆卡在「建立中」（draft）的工作；再按一次「開始出片」
+// 又會建一支新的、再問一次確認 —— 同事按個兩三次就是三支半成品。
+// → 記住那支工作與已經傳成功的檔名，下一次只補剩下的。
+// ⚠️ 能這樣重試，是因為建立階段的檔名是**固定的** shot<格號>（不是事後補圖那條的 auto=1 排號）：
+//    同一格重傳就是覆蓋同名檔，不會多一張圖、也不會跳號。事後補圖那條不能照抄這個做法。
+// ⚠️ 表單只要有一處不一樣就從頭建一支。腳本是建立那一刻就寫死進 input/script.txt 的，
+//    不會跟著更新 —— 沿用舊工作等於把改過的腳本配到舊稿子上。
+let pending = null;   // { id, sig, done: [已上傳的檔名], total }
+function formSig() {
+  return JSON.stringify([tpl, brand, emotion, $('#owner').value, titleLines(), $('#body').value,
+    $('#voice').value, $('#skipGenerate').checked, $('#withAd').checked,
+    slots.map((f) => f && [f.name, f.size, f.lastModified]),
+    heygenFile && [heygenFile.name, heygenFile.size, heygenFile.lastModified]]);
+}
+
+// 續傳狀態下改腳本＝那已經是另一支影片了，按鈕要當場變回「開始出片」，
+// 不然同事看到「繼續」兩個字、按下去卻建出一支新工作。
+// 沒有 pending 時什麼都不算 —— 不值得為了每一次按鍵重算一遍表單特徵。
+$('#body').addEventListener('input', () => { if (pending) $('#submit').textContent = submitLabel(); });
+
 $('#submit').onclick = async () => {
   const btn = $('#submit');
   const imgs = slots.filter(Boolean);
@@ -355,55 +407,77 @@ $('#submit').onclick = async () => {
   if (!$('#body').value.trim()) return alert('腳本是空的');
   if ($('#skipGenerate').checked && !heygenFile) return alert('勾了「用現成的講者影片」，請選擇 heygen.mp4');
 
-  // 勾了「用現成的講者影片」不呼叫 HeyGen、不扣點數，就不用問
+  const sig = formSig();
+  const resume = !!(pending && pending.sig === sig);
+  if (pending && !resume) pending = null;   // 內容改過了 → 上次那支半成品不要了，從頭建一支
+
+  // 續傳不再問一次：內容跟上次按下確定時**一模一樣**（sig 比對過），
+  // 而且按鈕上寫的就是「繼續上傳剩下的 N 個檔案」，不是「開始出片」。
+  // 勾了「用現成的講者影片」不呼叫 HeyGen、不扣點數，也不用問
   // 版型放第一行（2026-09-14 使用者：「同事會按錯」）。原生 confirm 不能粗體、不能上色、
   // 也不能置中（Chrome 一律釘在分頁上緣），能強調的只有「排在最前面」與【】。
   // 「按下確定就會扣點數」那句拿掉 —— 按鈕正上方的紅框已經整段在講同一件事，
   // 同一句話講兩次反而讓人整段略過（使用者：「這樣更簡單清楚」）。
   const tplLabel = (TPLS[tpl] || {}).label || tpl;
   const emoLabel = (EMOTIONS.find(([v]) => v === emotion) || [])[1] || emotion;
-  if (!$('#skipGenerate').checked &&
+  if (!resume && !$('#skipGenerate').checked &&
       !confirm(`這支要出的是【${tplLabel}】\n配音語氣：${emoLabel}\n\n`
         + '確定要開始出片嗎？\n'
         + '送出前再確認一次：版型、腳本、標題、截圖。')) return;
 
   btn.disabled = true;
   try {
-    btn.textContent = '建立工作…';
-    const { job } = await api('/api/jobs', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        template: tpl, owner: $('#owner').value,
-        title: lines.join('\n'), body: $('#body').value, voice: $('#voice').value,
-        // noSpeed 的勾選框 2026-08-19 拿掉了（加速已經改在 HeyGen 生成端做，正常出片不會重複）。
-        // run.js 的 --no-speed 旗標還在，要用就在終端機下。
-        skipGenerate: $('#skipGenerate').checked,
-        withAd: $('#withAd').checked, autoApprove: false, brand, emotion,
-      }),
-    });
+    let jobId;
+    if (resume) jobId = pending.id;
+    else {
+      btn.textContent = '建立工作…';
+      const { job } = await api('/api/jobs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          template: tpl, owner: $('#owner').value,
+          title: lines.join('\n'), body: $('#body').value, voice: $('#voice').value,
+          // noSpeed 的勾選框 2026-08-19 拿掉了（加速已經改在 HeyGen 生成端做，正常出片不會重複）。
+          // run.js 的 --no-speed 旗標還在，要用就在終端機下。
+          skipGenerate: $('#skipGenerate').checked,
+          withAd: $('#withAd').checked, autoApprove: false, brand, emotion,
+        }),
+      });
+      jobId = job.id;
+      pending = { id: jobId, sig, done: [], total: 0 };
+    }
     const ups = imgs.map((f, i) => ({ f, name: 'shot' + (i + 1) + (/\.jpe?g$/i.test(f.name) ? '.jpg' : '.png') }));
     if (heygenFile) ups.push({ f: heygenFile, name: 'heygen.mp4' });
+    pending.total = ups.length;
     for (let i = 0; i < ups.length; i++) {
+      if (pending.done.includes(ups[i].name)) continue;   // 上次已經傳上去的，不用再傳一遍
       const mb = (ups[i].f.size / 1048576).toFixed(1);
       btn.textContent = `上傳 ${i + 1}/${ups.length}（${mb} MB）…`;
       // ⚠️ 一定要檢查結果。原本沒檢查 → 上傳失敗畫面照樣往下走，
       //    最後才丟一個看不懂的錯（2026-08-13）。
-      const r = await fetch(withKey(`/api/jobs/${job.id}/upload?name=${ups[i].name}`),
+      const r = await fetch(withKey(`/api/jobs/${jobId}/upload?name=${ups[i].name}`),
         { method: 'POST', body: ups[i].f });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
+        // 那支工作在伺服器上已經不見了（被刪掉）→ 續傳沒有意義，下次從頭建一支
+        if (r.status === 404) pending = null;
         throw new Error(`上傳「${ups[i].f.name}」失敗（${r.status}）${j.error ? '：' + j.error : ''}`);
       }
+      pending.done.push(ups[i].name);
     }
     btn.textContent = '送出…';
-    await api(`/api/jobs/${job.id}/submit`, { method: 'POST' });
+    await api(`/api/jobs/${jobId}/submit`, { method: 'POST' });
+    pending = null;
     slots = [null, null, null]; heygenFile = null;
     $('#vdrop').classList.remove('ok');
     $('#heygenName').textContent = '支援 .mp4（會被存成 heygen.mp4）';
     $('#body').value = ''; titleVals = ['', ''];
     drawSlots(); drawTitle();
-    openJob = job.id; go('job');
-  } catch (e) { alert('出錯了：' + e.message); }
+    openJob = jobId; go('job');
+  } catch (e) {
+    alert('出錯了：' + e.message
+      + (pending && pending.done.length
+        ? `\n\n已經傳上去的 ${pending.done.length} 個檔案會留著，再按一次只補剩下的。` : ''));
+  }
   btn.disabled = false; btn.textContent = submitLabel();
 };
 
