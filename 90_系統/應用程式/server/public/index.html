@@ -66,10 +66,15 @@
         AI 唸錯字的時候用這裡救。<b>要填「怎麼寫它才唸得對」，不是注音</b> ——
         破音字換成同音字（收斂→收練、櫃買→貴買），股票代號直接寫成唸法（2330→二三三零）。<br>
         <b>字幕不受影響</b>，還是顯示你原本寫的字。<br>
-        如果是常常出現的詞（例如公司名），到「<b>跟我說</b>」那頁回報一下，我會加進共用詞庫，以後就不用每次填。
+        填在這裡的詞會<b>順便回報給我</b>（跟你在「跟我說」那頁回報同一個地方），
+        常出現的我會收進共用詞庫，以後你就不用再填一次。
       </div>
-      <label>一行一條，格式：原文→唸法</label>
-      <textarea id="voice" style="min-height:90px" placeholder="收斂→收練&#10;櫃買→貴買&#10;台積電2330→台積電二三三零"></textarea>
+      <div id="voiceRows"></div>
+      <button class="ghost" id="voiceAdd" style="margin-top:12px">＋ 再加一條</button>
+      <!-- 同事看到的是上面那幾排輸入框；這個 textarea 留著當「組出來的值」的狀態來源 ——
+           送出的 POST 與續傳的表單特徵都讀 #voice.value，跟 #skipGenerate 同一個套路，
+           改成另一個變數等於要同時動好幾處。 -->
+      <textarea id="voice" hidden></textarea>
     </div>
 
     <div class="card">

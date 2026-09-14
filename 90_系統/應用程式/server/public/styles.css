@@ -311,9 +311,16 @@
   /* 這條「伺服器跑舊版」提醒是固定在底部的覆蓋層 —— 一定要 pointer-events:none，
      否則它會蓋住底部的「確認，開始出片」按鈕、把點擊吃掉（2026-08-18 使用者實際踩到：
      按鈕沒反應，其實是點到這層橫幅）。 */
-  /* 「跟我說」的兩欄輸入 */
+  /* 「跟我說」的兩欄輸入。建立頁的「唸法」也用這個 —— 使用者要的就是兩邊長一樣
+     （2026-09-14：「應該要改成像是跟我說頁面那邊左邊一格右邊一格」）。 */
   .sayrow{display:flex;gap:14px}
   .sayrow>div{flex:1;min-width:0}
+  /* 唸法：一列一條，列尾有刪除鈕。第一列才有欄位標題，所以第二列起要自己補上距離
+     （.sayrow>div 的 label 有 margin-top，第一列不用另外加）。 */
+  #voiceRows .sayrow+.sayrow{margin-top:10px}
+  #voiceRows .vx{align-self:flex-end;flex-shrink:0;width:34px;height:38px;padding:0;
+    font-size:15px;color:var(--dim)}
+  #voiceRows .dup>div:first-child input{border-color:#c53030;background:#fff6f6}
   .msg{padding:13px 0;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:flex-start}
   .msg:last-child{border-bottom:none}
   .msg .b{flex:1;min-width:0}

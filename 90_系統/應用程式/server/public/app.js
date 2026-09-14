@@ -225,6 +225,87 @@ function drawSlots() {
   if (pending) $('#submit').textContent = submitLabel();
 }
 
+// ── 唸法（發音替換）──────────────────────
+// 以前是一個 textarea，要自己打「原文→唸法」。同事常打成半形 -> 或忘了打箭頭，
+// 那一行就會被伺服器的 parseVoiceLines() **靜默丟掉** —— 填了、沒生效、也沒人講，
+// 下次他就不填了（2026-09-14 使用者：「一個大空格自己填其實有點奇怪」）。
+// 改成左右兩格、箭頭由程式組，版面跟「跟我說」那頁的回報表單共用 .sayrow。
+// 送出的還是同一串「原文→唸法」文字，伺服器端一行都沒動。
+let voiceRows = [{ from: '', to: '' }];
+
+function drawVoiceRows() {
+  const wrap = $('#voiceRows');
+  wrap.replaceChildren(...voiceRows.map((r, i) => {
+    // 欄位標題只畫在第一列 —— 每列都掛一次會把整張卡片撐成一面標籤牆
+    const cell = (key, label, ph) => el('div', {},
+      i === 0 ? el('label', {}, label) : '',
+      el('input', { type: 'text', value: r[key], placeholder: ph,
+        oninput: (e) => { r[key] = e.target.value; syncVoice(); markVoiceDupes(); } }));
+    // ✕ 只有兩列以上才出現：只剩一列時還能刪，畫面會整個空掉，同事會以為功能不見了
+    const x = voiceRows.length > 1
+      ? el('button', { class: 'ghost vx', title: '刪掉這一條',
+          onclick: () => { voiceRows.splice(i, 1); drawVoiceRows(); syncVoice(); } }, '✕')
+      : '';
+    return el('div', { class: 'sayrow' },
+      cell('from', '預想會唸錯的詞', '收斂'), cell('to', '建議怎麼寫', '收練'), x);
+  }));
+  markVoiceDupes();
+}
+
+$('#voiceAdd').onclick = () => {
+  voiceRows.push({ from: '', to: '' });
+  drawVoiceRows();
+  const last = $('#voiceRows').lastElementChild;
+  if (last) last.querySelector('input').focus();
+};
+
+// 這幾格組出來的字串就是送出去的 body.voice。#voice 那個 textarea 還在（hidden），
+// 只是改由這裡寫 —— POST 與續傳的表單特徵都讀它，不用各自再認識一次 voiceRows。
+function syncVoice() {
+  $('#voice').value = voiceRows
+    .filter((r) => r.from.trim() && r.to.trim())
+    .map((r) => `${r.from.trim()}→${r.to.trim()}`).join('\n');
+  // 唸法也算在表單特徵裡：改了就不該再接續上一支（submitLabel 自己會重算）
+  if (pending) $('#submit').textContent = submitLabel();
+}
+
+// 同一個原文填兩次，只有第一條會生效（伺服器是照順序做字串取代，先套先贏）——
+// 當場把後面那條標紅，不要等到送出才講。
+function markVoiceDupes() {
+  const seen = new Set();
+  const rows = [...$('#voiceRows').children];
+  voiceRows.forEach((r, i) => {
+    const from = r.from.trim();
+    if (rows[i]) rows[i].classList.toggle('dup', !!from && seen.has(from));
+    if (from) seen.add(from);
+  });
+}
+
+/**
+ * 送出前檢查。回傳第一個問題（字串）或 null。
+ * 擋的都是「填了卻不會生效」的寫法 —— 以前這些全部被靜默丟掉，這正是要消滅的那件事。
+ * 整列空白不算問題：預設就有一列，多數工作不填。
+ */
+function voiceProblem() {
+  const seen = new Map();
+  for (let i = 0; i < voiceRows.length; i++) {
+    const from = voiceRows[i].from.trim();
+    const to = voiceRows[i].to.trim();
+    const at = `第 ${i + 1} 條唸法`;
+    if (!from && !to) continue;
+    if (!from) return `${at}只填了右邊。左邊要填腳本裡原本的那個詞。`;
+    if (!to) return `${at}只填了「${from}」。右邊要填怎麼寫它才唸得對（例如「收練」）。`;
+    if (/[→\n]/.test(from + to) || (from + to).includes('->'))
+      return `${at}裡不用自己打箭頭 —— 左右兩格各填一個詞就好。`;
+    if (from.startsWith('#')) return `${at}的「${from}」以 # 開頭，那在腳本裡是註解的意思，整條不會生效。`;
+    if (from === to) return `${at}左右兩格一模一樣（${from}），這樣等於沒有改。`;
+    if (seen.has(from)) return `${at}的「${from}」跟第 ${seen.get(from)} 條重複了。`
+      + '同一個詞只有前面那條會生效，請刪掉一條。';
+    seen.set(from, i + 1);
+  }
+  return null;
+}
+
 // ── 進階：現成講者影片 ──
 let heygenFile = null;
 $('#skipGenerate').onchange = (e) => {
@@ -282,6 +363,7 @@ async function boot() {
   }
   boot2();
   drawSlots();
+  drawVoiceRows();
   poll();
   setInterval(poll, 3000);
 }
@@ -406,6 +488,8 @@ $('#submit').onclick = async () => {
   const lines = titleLines();
   if (!$('#body').value.trim()) return alert('腳本是空的');
   if ($('#skipGenerate').checked && !heygenFile) return alert('勾了「用現成的講者影片」，請選擇 heygen.mp4');
+  const vp = voiceProblem();
+  if (vp) return alert(vp);
 
   const sig = formSig();
   const resume = !!(pending && pending.sig === sig);
@@ -471,7 +555,11 @@ $('#submit').onclick = async () => {
     $('#vdrop').classList.remove('ok');
     $('#heygenName').textContent = '支援 .mp4（會被存成 heygen.mp4）';
     $('#body').value = ''; titleVals = ['', ''];
-    drawSlots(); drawTitle();
+    // 唸法跟著腳本一起清掉（2026-09-14 使用者定案）。下一支是別的稿子，
+    // 留著上一支的詞很容易整批被沿用到不該用的地方；真的常出現的詞會被收進共用詞庫，
+    // 之後自動套用，不必再靠同事每次手填。
+    voiceRows = [{ from: '', to: '' }];
+    drawSlots(); drawTitle(); drawVoiceRows(); syncVoice();
     openJob = jobId; go('job');
   } catch (e) {
     alert('出錯了：' + e.message
@@ -1690,7 +1778,8 @@ function drawInbox(list) {
       m.by,
       new Date(m.at).toLocaleString('zh-TW', { hour12: false }).slice(5),
       m.job ? '工作 ' + m.job : null,
-      m.kind === 'pronounce' ? '唸法回報' : m.kind === 'page-pin' ? '📌 記下的頁' : '留言',
+      m.kind === 'pronounce' ? (m.auto ? '唸法・出片時帶上' : '唸法回報')
+        : m.kind === 'page-pin' ? '📌 記下的頁' : '留言',
     ].filter(Boolean).join('・');
     const body = m.kind === 'pronounce'
       ? el('div', { class: 'b' },

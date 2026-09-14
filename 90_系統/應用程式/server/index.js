@@ -1596,6 +1596,38 @@ function voiceRuleHits(text, rules) {
     .map((r) => ({ from: r.from, to: r.to, src: r.src || 'shared', times: times.get(r.from) }));
 }
 
+/**
+ * 同事在「唸法」填的詞，出片時順手送一份到收件匣
+ * （2026-09-14 使用者定案：「送出後可以當作『跟我說』那邊的『這個詞唸錯了』寄信給我，我統一收錄」）。
+ *
+ * 只送**沒看過**的，不然同一個詞每天出片就多一筆，收件匣會被自己灌爆：
+ *   ① 共用詞庫已經有那個原文就不送 —— 連**停用**的也算看過（停用＝看過而且決定不要，
+ *      再送一次等於一直來吵同一件事）。
+ *   ② 收件匣裡同一個原文還沒處理（status 不是 done）也不送。
+ * 標 auto:true —— 收件匣才分得出「同事特地回報的」跟「出片時順手帶上的」，
+ * 前者是他真的被唸錯困擾到，後者只是路過，處理的優先順序不一樣。
+ *
+ * ⚠️ 整支包在 try 裡：回報只是順手，壞掉也不能擋住出片。
+ */
+function reportOwnVoiceRules(job, own) {
+  if (!own || !own.length) return;
+  try {
+    const known = new Set(readPronounce().filter((r) => r && r.from).map((r) => r.from));
+    const seen = new Set(readMessages()
+      .filter((m) => m.kind === 'pronounce' && m.status !== 'done' && m.word)
+      .map((m) => m.word));
+    for (const r of own) {
+      if (known.has(r.from) || seen.has(r.from)) continue;
+      seen.add(r.from);   // 同一次送出裡填了兩條一樣的原文也只送一筆
+      appendMessage({
+        id: `${Date.now()}-${msgSeq++}`,
+        at: nowISO(), by: job.owner, kind: 'pronounce', job: job.id,
+        status: 'new', auto: true, word: r.from, suggest: r.to, why: '',
+      });
+    }
+  } catch (_) {}
+}
+
 function voiceSection(own, shared) {
   return [
     ...own.map((r) => `${r.from}→${r.to}`),
@@ -2480,6 +2512,7 @@ const server = http.createServer(async (req, res) => {
         buildScript({ voice: voiceSection(own, shared), title, body: body.body }));
       JOBS.unshift(job);
       saveJob(job);
+      reportOwnVoiceRules(job, own);
       return send(res, 200, { job: publicJob(job, admin) });
     }
 
