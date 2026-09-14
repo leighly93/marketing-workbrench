@@ -319,7 +319,7 @@ const HEYGEN_DUAL_VOICES = {
 
 // 大盤小報：固定單一 avatar（「每日固定主播」形式，不像投廣模板從池子隨機抽），
 // 2026-08-06 使用者定案。只在 TEMPLATE === "dapan" 時使用。
-const DAPAN_AVATAR = { id: "5bad6432678c4157aeaf245021a2326e", gender: "female" }; // 2026-09-11 使用者更換 avatar look（同日稍早 cf57d300…、更早 8032bdb6…／c2c2963b…）
+const DAPAN_AVATAR = { id: "77012ed52edb488bbf32587afc0ec288", gender: "female" }; // 2026-09-14 使用者更換 avatar look（原 5bad6432…；更早 cf57d300…／8032bdb6…／c2c2963b…）
 // ⚠️ 換 look 要順便確認上面 HEYGEN_ASPECT_RATIO 那條：大盤小報寫死 16:9 是因為舊主播素材是橫式。
 //    新 look 若是直式，16:9 會左右補白 —— 出片後看一眼，真的補白就把它改成 9:16。
 // 大盤小報：HeyGen 內建語音 voice_id（2026-08-07 使用者要求聲音改用 HeyGen 生、不經 MiniMax）。
@@ -348,7 +348,10 @@ const FOCUSSTOCK_HEYGEN_VOICE_ID = "65b04effe83f423dbb1f66317318c37f";
 // ⚠️ 只出直式（沒有橫式 composition），而且這支 photo 的原圖是**直式**（2026-08-31 使用者確認），
 //    所以 HEYGEN_ASPECT_RATIO 走非 dapan 的預設 9:16。別跟著大盤小報抄 16:9 —— 那是因為
 //    大盤主播的素材是橫式，抄過來會上下補白（見 HEYGEN_ASPECT_RATIO 那段註解）。
-const MIDDAY_AVATAR = { id: "b1be6a97186e4c49896f3eb503f8065f", gender: "female" }; // 2026-09-11 使用者更換 avatar look（原 0d84f2f5…）
+const MIDDAY_AVATAR = { id: "4105a6e911a24f3ab8741cdd8b13f2ba", gender: "female" }; // 2026-09-14 使用者更換 avatar look（原 b1be6a97…；更早 0d84f2f5…）
+// ⚠️ 上面那句「這支 photo 的原圖是直式」是 2026-08-31 對**當時那支 photo** 的確認，
+//    對 2026-09-14 這支新 look 還沒驗過。維持 9:16 不動；出片後看一眼 heygen.mp4，
+//    上下有黑白邊就代表新素材是橫式，那時才要跟大盤小報一樣改成 16:9。
 // ⚠️ 2026-09-11 起盤中焦點有自己的 HeyGen 聲音（9cb1516e…），不再等於大盤小報那一支 ——
 //    上面那段「voice id 一樣」是 2026-08-31 的舊定案，已被使用者這次的指定取代。
 //    這裡寫死字面值（不要再寫成 = DAPAN_HEYGEN_VOICE_ID），兩條線之後各換各的互不影響。
