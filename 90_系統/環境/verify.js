@@ -24,7 +24,7 @@ async function smoke() {
     const copy = (from, to) => { fs.mkdirSync(path.dirname(to), { recursive: true }); fs.cpSync(from, to, { recursive: true }); };
     copy(path.join(root, '.env.example'), path.join(scratch, '.env.example'));
     for (const name of ['paths.js', '工作儲存.js']) copy(path.join(root, '90_系統', name), path.join(scratch, '90_系統', name));
-    for (const name of ['server/index.js', 'server/start.js', 'server/public', 'scripts/shot-memory.js', 'scripts/script-utils.js']) copy(path.join(app, name), applicationPath(scratch, name));
+    for (const name of ['server/index.js', 'server/start.js', 'server/public', 'scripts/shot-memory.js', 'scripts/script-utils.js', 'scripts/image-size.js']) copy(path.join(app, name), applicationPath(scratch, name));
     fs.symlinkSync(path.join(app, 'node_modules'), applicationPath(scratch, 'node_modules'), 'dir');
     initialize(scratch);
     const bootstrap = applicationPath(scratch, 'smoke.cjs');

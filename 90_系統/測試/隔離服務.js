@@ -65,6 +65,7 @@ function loadServer(root, options = {}) {
     http: { createServer(handler) { route = handler; return { on() {}, listen: blocked }; } },
     child_process: options.childProcess || new Proxy({}, { get: () => blocked }),
     '../scripts/shot-memory': localRequire('../scripts/shot-memory'),
+    '../scripts/image-size': localRequire('../scripts/image-size'),
     '../scripts/script-utils': localRequire('../scripts/script-utils'),
     '../../paths': localRequire('../../paths'),
     '../../工作儲存': localRequire('../../工作儲存'),

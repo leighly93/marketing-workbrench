@@ -20,6 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 const { workspaceRoot, cliPath, dataPath } = require('../../paths');
+const { pickImageSize } = require('./image-size');
 const ROOT = path.resolve(__dirname, '..');
 const WORKSPACE_ROOT = workspaceRoot(ROOT);
 const { getBodyWithVoiceMap, cleanBodyWithIndex, resolveManualOverlaps } = require('./script-utils');
@@ -798,6 +799,7 @@ if (SUGGEST_PATH) {
       // 新格式：直接給清洗後的字元索引（前台拖選文字得到的），最精準
       if (typeof a.startCharIdx === 'number' && typeof a.endCharIdx === 'number') {
         const img0 = imgs.find((m) => m.file === a.src) || {};
+        const size0 = pickImageSize(img0, a);
         const hasCell0 = a.cell && a.cell.w > 0;
         const hasRegion0 = a.region && a.region.w > 0;
         manual.push({
@@ -811,9 +813,12 @@ if (SUGGEST_PATH) {
           //    使用者圈的框靜默失效。工作送出後才補上傳的截圖沒進 app-images.generated.json
           //    （那支分析是在 doPrepare 一開頭跟 HeyGen 平行跑的），所以退到標注自己
           //    量到的原圖尺寸（前台存的是 img.naturalWidth/Height）。2026-09-01
-          page: img0.page,
-          imageWidth: img0.width || a.imgW || undefined,
-          imageHeight: img0.height || a.imgH || undefined,
+          // ⚠️ 2026-09-14：補上傳的圖照 shot<N> 命名，很容易跟**上一支工作**的同名圖撞名 ——
+          //    那時 img0 查得到，尺寸卻是別張圖的，框會整塊位移＋縮放（使用者回報「8月營收／
+          //    大戶狂賣／散戶 顯示區域框錯」）。標注自帶的尺寸必定屬於這支工作，一律優先。
+          page: size0.stale ? undefined : img0.page,
+          imageWidth: size0.width,
+          imageHeight: size0.height,
           ...(hasCell0 ? { cell: a.cell, cellText: '人工黃框', isColumn: false } : {}),
           ...(hasRegion0 ? { region: a.region } : {}),
           ...(!hasCell0 && !hasRegion0 ? { wholePage: true } : {}),
@@ -835,6 +840,7 @@ if (SUGGEST_PATH) {
       const r = toCleaned(bodyStart, bodyEnd);
       if (!r) continue;
       const img = imgs.find((m) => m.file === a.src) || {};
+      const size = pickImageSize(img, a);
       const hasCell = a.cell && a.cell.w > 0;
       const hasRegion = a.region && a.region.w > 0;
       manual.push({
@@ -842,10 +848,11 @@ if (SUGGEST_PATH) {
         ...r,
         _manual: true,
         _annotated: true,
-        page: img.page,
-        // 同上：沒被分析過的圖退到標注自帶的尺寸（2026-09-01）
-        imageWidth: img.width || a.imgW || undefined,
-        imageHeight: img.height || a.imgH || undefined,
+        page: size.stale ? undefined : img.page,
+        // 同上：沒被分析過的圖退到標注自帶的尺寸（2026-09-01）；
+        // 撞到舊工作同名分析時也以標注為準（2026-09-14，見上一段說明）
+        imageWidth: size.width,
+        imageHeight: size.height,
         // ⚠️ cell（黃框）與 region（顯示區域）是兩件事，可以各自存在或都不存在。
         // 都沒給 → wholePage，整張顯示。
         ...(hasCell ? { cell: a.cell, cellText: '人工黃框', isColumn: false } : {}),

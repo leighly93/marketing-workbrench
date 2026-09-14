@@ -82,7 +82,7 @@ test('五種稿件解析沿用原 marker 契約，生成檔只寫 app/src', (t) 
 });
 
 test('auto-shot 從不同 CWD 解析相對 job/input/images，--out 指向系統產線暫存', (t) => {
-  const { root, app, run } = fixture(t, ['auto-shot.js', 'script-utils.js', 'shot-memory.js']);
+  const { root, app, run } = fixture(t, ['auto-shot.js', 'script-utils.js', 'shot-memory.js', 'image-size.js']);
   const images = { images: [{ file: 'fixture.png', width: 100, height: 100, words: [] }] };
   write(path.join(root, 'jobs', 'fixture', 'input', 'script.txt'), script);
   write(path.join(app, 'src', 'app-images.generated.json'), images);
@@ -123,7 +123,7 @@ test('備份跨 app/workspace 保存、重跑去重，舊兩參數介面保持�
 });
 
 test('OCR 腳本在鏡像目錄可載入共用路徑，沒有憑證且不呼叫外部 OCR', (t) => {
-  const { root, app, run } = fixture(t, ['analyze-app-images.js', 'ocr-engine.js', 'ocr-vision.swift']);
+  const { root, app, run } = fixture(t, ['analyze-app-images.js', 'ocr-engine.js', 'ocr-vision.swift', 'image-size.js']);
   run('analyze-app-images.js');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(app, 'src', 'app-images.generated.json'), 'utf8')), { images: [] });
   assert.equal(fs.existsSync(path.join(root, '.env')), false);

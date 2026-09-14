@@ -28,6 +28,7 @@ const ROOT = path.resolve(__dirname, '..');
 // 讓 PAGE_RULES 等開關在單獨執行時也讀得到 .env（run.js 已載過，重複載無害、不覆蓋既有值）
 try { require('dotenv').config({ path: path.join(workspaceRoot(ROOT), '.env'), quiet: true }); } catch (_) {}
 const OCR = require('./ocr-engine'); // OCR_ENGINE 開關在這個模組裡讀
+const { imageSize } = require('./image-size');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const OUT_PATH = path.join(ROOT, 'src', 'app-images.generated.json');
 
@@ -128,47 +129,7 @@ function ensureTesseract() {
   OCR.ensure();
 }
 
-/**
- * 讀圖片尺寸。PNG 讀 IHDR、JPEG 讀 SOF 標記（純 JS，不依賴外部工具）。
- * 都失敗才退回 ffprobe。
- * ⚠️ 一定要讀得到尺寸，否則聚焦效果算不出縮放比例、整個失效
- *（2026-08-12 踩到：使用者的截圖是 .jpeg，原本只支援 PNG 而全部回 null）。
- */
-function imageSize(file) {
-  const buf = fs.readFileSync(file);
-  // PNG
-  if (buf.length > 24 && buf.toString('ascii', 12, 16) === 'IHDR') {
-    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
-  }
-  // JPEG：掃 SOF0~SOF15（略過 SOF4/SOF8/SOF12 這些非影格標記）
-  if (buf.length > 4 && buf[0] === 0xff && buf[1] === 0xd8) {
-    let i = 2;
-    while (i < buf.length - 9) {
-      if (buf[i] !== 0xff) { i++; continue; }
-      const marker = buf[i + 1];
-      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; }
-      const len = buf.readUInt16BE(i + 2);
-      const isSOF =
-        marker >= 0xc0 && marker <= 0xcf &&
-        marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
-      if (isSOF) {
-        return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
-      }
-      i += 2 + len;
-    }
-  }
-  // 退路：ffprobe（流程本來就依賴 ffmpeg）
-  try {
-    const out = execFileSync(
-      'ffprobe',
-      ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0:s=x', file],
-      { encoding: 'utf-8' }
-    ).trim();
-    const m = /^(\d+)x(\d+)/.exec(out);
-    if (m) return { width: +m[1], height: +m[2] };
-  } catch (_) {}
-  return null;
-}
+// 讀圖片尺寸：實作在 scripts/image-size.js（伺服器的「事後補上傳」也要用同一套，2026-09-14 抽出）
 
 /** 整頁 OCR → 逐字框 + 以行為單位的文字（實作在 ocr-engine.js，tesseract 版原碼原封搬過去） */
 function ocrPage(imagePath) {

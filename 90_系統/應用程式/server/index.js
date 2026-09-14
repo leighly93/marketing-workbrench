@@ -34,6 +34,7 @@ const { spawn, execFileSync } = require('child_process');
 // 這裡負責寫、auto-shot 負責讀，鍵值算法漂掉的話學到的東西下次就對不上（2026-08-21）。
 const SHOT_MEMORY = require('../scripts/shot-memory');
 const { resolveManualOverlaps } = require('../scripts/script-utils');
+const { imageSize, pickImageSize } = require('../scripts/image-size');
 // 2026-08-27：自動唸法檢查（scripts/check-pronunciation.js）不再由伺服器跑。
 // 它算出來的東西大部分是錯的（兩份字幕的 words 會因為空字串而整段錯開；拼音又因為
 // nonZh:'consecutive' 把連續英數字併成一格而再錯開一次），而卡片同事也看得到，
@@ -969,11 +970,14 @@ function applyPlanEdits(job, edits) {
       //    ShotFocus.tsx 直接退成「整張顯示」，**使用者拉的框靜默失效**。
       //    退到前台量到的原圖尺寸（openEditor 存的 natW/natH），跟 FOCUS 那條分支同一個做法。
       //    2026-09-01（三大法人那邊 2026-08-21 就這樣做了，這裡一直沒補上）。
-      const eW = typeof e.imgW === 'number' && e.imgW > 0 ? e.imgW : undefined;
-      const eH = typeof e.imgH === 'number' && e.imgH > 0 ? e.imgH : undefined;
-      s.imageWidth = img ? img.width : eW;
-      s.imageHeight = img ? img.height : eH;
-      s.page = img ? img.page : undefined;
+      // ⚠️ 2026-09-14：更糟的是「查得到、但那筆是**上一支工作**的同名圖」（見
+      //    invalidateStaleAnalysis 的說明）—— 尺寸是別張圖的，框會整塊位移＋縮放。
+      //    前台量到的 natW/natH 必定屬於這支工作正在看的那張圖，所以它一律優先。
+      const picked = pickImageSize(img, e);
+      s.imageWidth = picked.width;
+      s.imageHeight = picked.height;
+      // 尺寸對不上＝這筆分析是別張圖的 → 連帶的頁型也不能用（它決定自動配圖怎麼框）。
+      s.page = img && !picked.stale ? img.page : undefined;
       // 換了圖一定要清掉舊圖的框 —— 框存的是「原圖像素座標」，套到另一張圖上一定是錯的位置。
       // ⚠️ 2026-08-26 使用者定案「**我故意不畫黃框就是不要，不要幫我加上去**」：
       //    這裡以前有一條退路，換圖又沒重畫框時就照 img.topicBox 框「頁面標題」。
@@ -1932,6 +1936,71 @@ function nextShotName(job, ext) {
  *      只寫 ROOT/public 的話，準備跑完之後補的圖會在還原那一刻被清掉 → remotion 找不到檔案。
  *      快照還不存在（還在準備中）就不用寫，doPrepare 結尾自己會把 ROOT/public 凍進去。
  */
+/**
+ * 事後補上傳的截圖，要把「別支工作留下的同名分析」作廢。
+ *
+ * ⚠️ 2026-09-14 使用者回報「8月營收／大戶狂賣／散戶 的顯示區域框錯」的根因：
+ *   `src/app-images.generated.json` 是**工作區共用**的產線檔，不是 per-job 的；那支分析在
+ *   doPrepare 一開頭就跑完了，**事後**補上傳的圖從來沒被它看過。偏偏補上傳一律照
+ *   `shot<N>` 依序命名（nextShotName 只看這支工作的 input/），很容易跟上一支工作的
+ *   同名圖撞名 —— 於是檔案裡查得到 `shot2.jpg`，寫的卻是**別張圖**的尺寸與 OCR 結果。
+ *   0914 那支：三張圖實際都是 869×1884，檔裡寫 shot2=1179×1066、shot3=1031×1589。
+ *   `region`（顯示區域）與 `cell`（黃框）存的是原圖像素座標，縮放比一錯整塊就位移＋縮放：
+ *   使用者圈的營收表格變成長條圖、圈的大戶賣超變成別的區塊。
+ *   （2026-09-01 只補了「查不到那一筆 → 退到標注自帶尺寸」，查得到但是別張圖擋不住。）
+ *
+ * 作法是把那一筆改成「只剩實際尺寸」的最小筆，不是整筆刪掉：
+ *   - 留 file/width/height → 下游拿得到正確縮放比，人工圈的框位置就對了。
+ *   - 頁型、股名、topicBox、逐字框全部清掉 → 那些是別張圖的 OCR，留著會讓自動配圖
+ *     照別張圖的座標亂框（比沒有更糟）。清成「未知頁面」＝這張沒被分析過，如實。
+ *   - 不整筆刪：auto-shot.js 在 `imgs` 空掉時會直接 fail，出片就掛了。
+ * 這張圖真正的分析結果要等下一次 analyze-app-images 才會有（重跑整支就會重算）。
+ */
+function invalidateStaleAnalysis(job, name, dest) {
+  const size = imageSize(dest);
+  if (!size) return;
+  const files = [
+    path.join(ROOT, 'src', 'app-images.generated.json'),
+    jobPath(job.id, 'state', 'src', 'app-images.generated.json'),
+  ];
+  let fixed = null;
+  for (const f of files) {
+    if (!fs.existsSync(f)) continue;
+    try {
+      const data = JSON.parse(fs.readFileSync(f, 'utf-8'));
+      const list = Array.isArray(data.images) ? data.images : null;
+      if (!list) continue;
+      const i = list.findIndex((m) => m.file === name);
+      if (i < 0) continue;   // 沒撞名＝沒有假資料，下游的「退到標注尺寸」本來就會處理
+      const was = list[i];
+      if (was.width === size.width && was.height === size.height
+          && was.page === 'unknown' && !was.topicBox) continue;   // 已經是最小筆，不用重寫
+      fixed = fixed || { w: was.width, h: was.height };
+      list[i] = {
+        file: name,
+        width: size.width,
+        height: size.height,
+        page: 'unknown',
+        pageLabel: '未知頁面',
+        isStockPage: false,
+        stockName: null,
+        stockNameAlts: [],
+        stockCode: null,
+        topic: null,
+        topicTerms: null,
+        topicBox: null,
+        words: [],
+        _staleCleared: true,   // 給人看的：這筆是被作廢的，不是分析出來的
+      };
+      fs.writeFileSync(f, JSON.stringify(data, null, 2));
+    } catch (_) {}
+  }
+  if (fixed) {
+    appendLog(job, `   ↳ ${name} 撞到舊工作留下的同名分析（${fixed.w}×${fixed.h}），`
+      + `已改回這張圖的實際尺寸 ${size.width}×${size.height} 並清掉舊的辨識結果`);
+  }
+}
+
 function publishLateUpload(job, name, dest) {
   try {
     if (!Array.isArray(job.files)) job.files = [];
@@ -1959,6 +2028,7 @@ function publishLateUpload(job, name, dest) {
     return;
   }
   appendLog(job, `➕ 事後補上傳截圖 ${name}${copies.length ? `（已同步到 ${copies.join('、')}）` : ''}`);
+  invalidateStaleAnalysis(job, name, dest);
 }
 
 function ensureUsableImage(dest) {

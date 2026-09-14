@@ -16,6 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const { dataPath } = require('../../paths');
+const { pickImageSize } = require('./image-size');
 
 const FILE = (root) => dataPath(root, 'shot-memory.json');
 
@@ -107,10 +108,18 @@ function learn(root, items, imgs, at) {
   const learnedNames = {};
 
   for (const it of items || []) {
-    const im = byFile[it.src];
-    if (!im) continue;
-    const W = im.width || it.imgW, H = im.height || it.imgH;
+    const im0 = byFile[it.src];
+    if (!im0) continue;
+    // ⚠️ 2026-09-14：分析檔裡查得到那個檔名，不代表那筆就是這張圖 —— 事後補上傳的截圖
+    //    照 shot<N> 命名，會撞到上一支工作的同名分析（詳見 image-size.js）。標注自己量到的
+    //    尺寸才屬於這支工作，所以以它為準；對不上就連頁型、代號、逐字框一起視為沒有 ——
+    //    那些是**別張圖**的 OCR，學進記憶庫等於把錯的框位掛在錯的頁型下，之後每支都套錯。
+    const size = pickImageSize(im0, it);
+    const W = size.width, H = size.height;
     if (!W || !H) continue;
+    const im = size.stale
+      ? { file: im0.file, width: W, height: H, page: 'unknown', stockCode: null, words: [] }
+      : im0;
 
     // ① 代號 ↔ 股名：這一段旁白點名的股票，就是這張圖那個代號的股票。
     //    ⚠️ 學錯一筆，之後每一支影片都會配錯圖，所以要**兩邊都對得上**才學：
