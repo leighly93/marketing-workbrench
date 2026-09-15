@@ -25,15 +25,15 @@ const tradToSimpConverter = OpenCC.Converter({ from: "t", to: "s" });
 // 最後跑的 parse-script / render 也是專用版本（parse-script:dapan / render:dapan）。
 const TEMPLATE_ARG = process.argv.find((a) => a.startsWith("--template="));
 const TEMPLATE = TEMPLATE_ARG ? TEMPLATE_ARG.split("=")[1] : "default";
-if (!["default", "dapan", "institution", "focusstock", "midday"].includes(TEMPLATE)) {
-  console.error(`❌ 不認得的 --template=${TEMPLATE}（目前支援：default / dapan / institution / focusstock / midday）`);
+if (!["default", "dapan", "institution", "focusstock", "midday", "usstock"].includes(TEMPLATE)) {
+  console.error(`❌ 不認得的 --template=${TEMPLATE}（目前支援：default / dapan / institution / focusstock / midday / usstock）`);
   process.exit(1);
 }
-// 大盤小報／三大法人／焦點股日報／盤中焦點是「同一個模子」的四條固定主播產線：固定 avatar、125% 加速。
+// 大盤小報／三大法人／焦點股日報／盤中焦點／美股焦點是「同一個模子」的五條固定主播產線：固定 avatar、125% 加速。
 // 配音 2026-08-24 起走 MiniMax + HeyGen 音訊驅動對嘴（原本是 HeyGen 文字驅動，--heygen-voice 可退回）。
 // 大盤小報／盤中焦點在 2026-09-11 當天曾短暫改回 HeyGen 內建語音，同日又改回 MiniMax（換了新 clone 聲音），
 // 所以現在**四條線一致走 MiniMax**（見 HEYGEN_VOICE_ONLY_TEMPLATES，那個集合現在是空的）。
-// 用這個集合統一判斷，避免每處都寫 (dapan || institution || focusstock || midday)。
+// 用這個集合統一判斷，避免每處都寫 (dapan || institution || focusstock || midday || usstock)。
 // ⚠️ 這個集合是「加速只跑一次」的守門依據：generateHeygenVideo() 末尾的加速用 !FIXED_ANCHOR_TEMPLATE
 //    擋掉，固定主播三條線一律只走 main() 內那一次。新增固定主播版型時只要加進這個集合即可，
 //    不要再另外寫 TEMPLATE !== "xxx" 的個別判斷（2026-08-17 的雙重加速 bug 就是這樣來的）。
@@ -41,7 +41,8 @@ const FIXED_ANCHOR_TEMPLATE =
   TEMPLATE === "dapan" ||
   TEMPLATE === "institution" ||
   TEMPLATE === "focusstock" ||
-  TEMPLATE === "midday";
+  TEMPLATE === "midday" ||
+  TEMPLATE === "usstock";
 
 // ── 跳過生成（2026-08-07 新增）──────────────
 // 用法：node run.js --template=dapan --skip-generate
@@ -361,6 +362,19 @@ const MIDDAY_AVATAR = { id: "4105a6e911a24f3ab8741cdd8b13f2ba", gender: "female"
 // ⚠️ 這個常數目前是**退路**，不是預設路徑 —— 現在走的是 MiniMax，只有 --heygen-voice 才會用到它。
 const MIDDAY_HEYGEN_VOICE_ID = "9cb1516ecebf4c06b668e03f7f6e91f7";
 
+// 美股焦點：2026-09-15 新增。使用者定案「基本上跟盤中焦點一樣，只是 HeyGen avatar id
+// 和 MiniMax voice id 不同」—— 版面、產線、加速、交付轉檔全部照盤中焦點那一套，
+// 差別只有素材（共用素材/美股焦點/）與下面這幾個 id。
+// ⚠️ 只出直式（沒有橫式 composition）。HEYGEN_ASPECT_RATIO 走非 dapan 的預設 9:16。
+//    前一支 avatar（d7fc9954…）2026-09-15 出片實測是直式、上下無黑白邊，所以 9:16 正確；
+//    **這支新 look 還沒驗過**。維持 9:16 不動，出片後看一眼 heygen.mp4，
+//    上下有黑白邊就代表新素材是橫式，那時才要跟大盤小報一樣改成 16:9（別預先改）。
+const USSTOCK_AVATAR = { id: "4a74ef949c524c17b762656d58f0c1ac", gender: "female" }; // 2026-09-15 使用者更換 avatar look（原 d7fc9954…）
+// ⚠️ 這個常數是**退路**，不是預設路徑 —— 現在走的是 MiniMax，只有 --heygen-voice 才會用到它。
+//    留空代表「這條線沒有備援的 HeyGen 內建語音」（2026-09-15 使用者只給了 MiniMax voice），
+//    加 --heygen-voice 會在生成前就擋下來並告訴你要填哪個常數。
+const USSTOCK_HEYGEN_VOICE_ID = "";
+
 // ── 固定主播線改用 MiniMax 配音（2026-08-24 使用者要求；大盤小報／盤中焦點已於 2026-09-11 改回）──
 // 使用者：「我要改成先把腳本送給 minimax 配音再給 HeyGen 做對嘴」。
 // 也就是這三條線從「HeyGen 文字驅動（script + voice_id，HeyGen 自己 TTS）」
@@ -382,6 +396,10 @@ const MINIMAX_FIXED_ANCHOR_VOICES = {
   institution: "moss_audio_ad826960-9f57-11f1-8aea-1268c6bb306c", // 三大法人
   focusstock: "moss_audio_3a75102e-54db-11f1-981b-8a143315d498",  // 焦點股日報（＝既有 MINIMAX_VOICE_ID）
   midday: "moss_audio_f85dc873-ada4-11f1-a626-8a59b47fb1f9",      // 盤中焦點（2026-09-11 換，原本與大盤小報共用 e9e9da93…）
+  usstock: "moss_audio_3a75102e-54db-11f1-981b-8a143315d498",     // 美股焦點（2026-09-15 使用者提供）
+  // ⚠️ 美股焦點與焦點股日報目前是**同一支 MiniMax 聲音**（使用者指定，不是複製貼上的失誤）。
+  //    兩行都寫死字面值、不互相引用 —— 跟大盤小報／盤中焦點 2026-09-11 拆開時同一個理由：
+  //    哪天其中一條換聲音，改自己那一行就好，不會靜默連動到另一條。
 };
 
 // 退路：固定主播四條線回到 HeyGen 內建語音（2026-08-07 ~ 2026-08-23 的行為）。
@@ -457,7 +475,7 @@ function startImageAnalysis() {
     //   regions 停在舊圖、composition 又找不到檔案 → render 404。）
     const fsx = require("fs");
     const pubDir = resolve(PROJECT_DIR, "public");
-    const ASSET = /^(dapan|focusstock|institution|midday)-|^(frame|logo)\.png$|^NotoSans/i;
+    const ASSET = /^(dapan|focusstock|institution|midday|usstock)-|^(frame|logo)\.png$|^NotoSans/i;
     const found = fsx.existsSync(pubDir)
       ? fsx
           .readdirSync(pubDir)
@@ -477,7 +495,7 @@ function startImageAnalysis() {
   const fs2 = require("fs");
   const pub = resolve(PROJECT_DIR, "public");
   // 截圖檔名不限（使用者常直接丟手機相機命名的檔），排除套版素材即可
-  const TEMPLATE_ASSET = /^(dapan|focusstock|institution|midday)-|^(frame|logo)\.png$|^NotoSans/i;
+  const TEMPLATE_ASSET = /^(dapan|focusstock|institution|midday|usstock)-|^(frame|logo)\.png$|^NotoSans/i;
   const shots = fs2.existsSync(pub)
     ? fs2.readdirSync(pub).filter(
         (f) => /\.(png|jpg|jpeg)$/i.test(f) && !TEMPLATE_ASSET.test(f)
@@ -801,8 +819,8 @@ const HEYGEN_EXPRESSIVENESS = "medium";
 // 大盤要「同一支檔案出直式＋橫式」，所以跟 8/21 之前一樣要 16:9 原生：
 //   橫式 DapanLandscapeComposition 直接吃（它本來就寫著「來源 16:9 人物置中」）
 //   直式 DapanComposition 用 objectFit:'cover' 裁掉左右填滿
-// 三大法人／焦點股／盤中焦點的 avatar 素材是直式，維持 9:16（實測 8/24 那支滿版無白邊；
-// 盤中焦點 2026-08-31 由使用者確認原圖是直式）。
+// 三大法人／焦點股／盤中焦點／美股焦點的 avatar 素材是直式，維持 9:16（實測 8/24 那支滿版無白邊；
+// 盤中焦點 2026-08-31 由使用者確認原圖是直式；美股焦點 2026-09-15 沿用同一個預設，出片後再核對）。
 const HEYGEN_ASPECT_RATIO = TEMPLATE === "dapan" ? "16:9" : "9:16";
 
 // fit：cover＝縮放填滿（可能裁邊）、contain＝完整塞進去（會露出背景）。
@@ -1399,6 +1417,7 @@ async function main() {
     : TEMPLATE === "institution" ? "🏦 三大法人"
     : TEMPLATE === "focusstock" ? "🔍 焦點股日報"
     : TEMPLATE === "midday" ? "⏱ 盤中焦點"
+    : TEMPLATE === "usstock" ? "🇺🇸 美股焦點"
     : "🎬 預設（起漲K線／籌碼K線投廣模板）";
   log(`版型：${templateLabel}${SKIP_GENERATE ? "（跳過生成，用現有 public/heygen.mp4）" : ""}`);
 
@@ -1415,6 +1434,9 @@ async function main() {
   } else if (TEMPLATE === "midday") {
     log("複製盤中焦點套版素材");
     run("npm run use-midday-assets");
+  } else if (TEMPLATE === "usstock") {
+    log("複製美股焦點套版素材");
+    run("npm run use-usstock-assets");
   } else if (TEMPLATE === "institution") {
     log("複製三大法人套版素材");
     run("npm run use-institution-assets");
@@ -1509,6 +1531,13 @@ function prepareShots() {
     } catch (e) {
       log("⚠️ 自動配圖失敗（不影響出片，只是這支不會插圖）：" + e.message);
     }
+  } else if (TEMPLATE === "usstock") {
+    run("npm run parse-script:usstock");
+    try {
+      run("npm run auto-shot:usstock");
+    } catch (e) {
+      log("⚠️ 自動配圖失敗（不影響出片，只是這支不會插圖）：" + e.message);
+    }
   } else if (TEMPLATE === "institution") {
     run("npm run parse-script:institution");
     // 自動聚焦：不用在 script.txt 標注，程式比對「旁白數字 ↔ 圖上數字」自己決定
@@ -1547,6 +1576,10 @@ function renderTemplate() {
     // 盤中焦點只出直式（2026-08-31 使用者定案「只出直式」），沒有橫式那一支
     run("npm run render:midday");
     log("✅ 完成！輸出影片在 90_系統/暫存/產線輸出/output-midday.mp4");
+  } else if (TEMPLATE === "usstock") {
+    // 美股焦點跟盤中焦點一樣只出直式
+    run("npm run render:usstock");
+    log("✅ 完成！輸出影片在 90_系統/暫存/產線輸出/output-usstock.mp4");
   } else if (TEMPLATE === "institution") {
     run("npm run render:institution");
     log("✅ 完成！輸出影片在 90_系統/暫存/產線輸出/output-institution.mp4");
@@ -1642,6 +1675,42 @@ async function generateHeygenVideo(heygenPath) {
       videoUrl = await generateTextDrivenVideo(cleanedScript, MIDDAY_AVATAR.id, MIDDAY_HEYGEN_VOICE_ID, "marketing-auto-midday");
     }
     await downloadVideo(videoUrl, heygenPath);
+  } else if (TEMPLATE === "usstock") {
+    // ── 美股焦點單人 path：跟盤中焦點同一套（預設 MiniMax 配音 + HeyGen 音訊驅動對嘴）──
+    //    avatar 與 MiniMax 聲音都是自己的，不跟任何一條線共用。
+    if (!USSTOCK_AVATAR.id) {
+      console.error("❌ 美股焦點還沒填 HeyGen avatar id（run.js 的 USSTOCK_AVATAR.id 是空值）。");
+      console.error("   去 HeyGen 後台複製這條線要用的 photo/avatar id，填進 run.js 的 USSTOCK_AVATAR 常數。");
+      process.exit(1);
+    }
+    if (FIXED_ANCHOR_USE_MINIMAX && !MINIMAX_FIXED_ANCHOR_VOICES.usstock) {
+      console.error("❌ 美股焦點還沒填 MiniMax voice id（run.js 的 MINIMAX_FIXED_ANCHOR_VOICES.usstock 是空值）。");
+      console.error("   填進去，或臨時加 --heygen-voice 改走 HeyGen 內建語音（那需要 USSTOCK_HEYGEN_VOICE_ID）。");
+      process.exit(1);
+    }
+    if (!FIXED_ANCHOR_USE_MINIMAX && !USSTOCK_HEYGEN_VOICE_ID) {
+      console.error("❌ 美股焦點要用 HeyGen 內建語音，但 USSTOCK_HEYGEN_VOICE_ID 還是空值。");
+      console.error("   去 HeyGen 後台「Voice Library」或呼叫 GET https://api.heygen.com/v3/voices 找一個中文女聲 voice_id，填進 run.js 的 USSTOCK_HEYGEN_VOICE_ID 常數。");
+      process.exit(1);
+    }
+    let cleanedScript = cleanScript(rawScript);
+    for (const rule of voiceRules) {
+      cleanedScript = cleanedScript.split(rule.from).join(rule.to);
+    }
+    log(`清洗後腳本（繁）：\n  ${cleanedScript}`);
+
+    log(`固定 avatar（美股焦點）：${USSTOCK_AVATAR.id}`);
+
+    let videoUrl;
+    if (FIXED_ANCHOR_USE_MINIMAX) {
+      log(`配音來源：MiniMax voice ${MINIMAX_FIXED_ANCHOR_VOICES.usstock}`);
+      videoUrl = await generateAudioDrivenVideo(cleanedScript, USSTOCK_AVATAR.id, MINIMAX_FIXED_ANCHOR_VOICES.usstock, "marketing-auto-usstock");
+    } else {
+      log("⏳ 正在呼叫 HeyGen（文字驅動），請勿重複執行此腳本...");
+      log("   預計等待 3-5 分鐘，請耐心等候 ☕");
+      videoUrl = await generateTextDrivenVideo(cleanedScript, USSTOCK_AVATAR.id, USSTOCK_HEYGEN_VOICE_ID, "marketing-auto-usstock");
+    }
+    await downloadVideo(videoUrl, heygenPath);
   } else if (TEMPLATE === "institution") {
     // ── 三大法人單人 path：跟大盤小報同一套（預設 MiniMax 配音 + HeyGen 音訊驅動對嘴）──
     if (!FIXED_ANCHOR_USE_MINIMAX && !INSTITUTION_HEYGEN_VOICE_ID) {
@@ -1732,7 +1801,7 @@ async function generateHeygenVideo(heygenPath) {
   }
 
   // 加速 heygen.mp4 125%（保持音調）── 既有投廣模板（default）專用
-  // 固定主播四條線（dapan／institution／focusstock／midday）在 main() 內統一加速，這裡一律擋掉，
+  // 固定主播五條線（dapan／institution／focusstock／midday／usstock）在 main() 內統一加速，這裡一律擋掉，
   // 避免同一支影片被加速兩次。2026-08-17 修正：原本只擋 dapan，institution／focusstock 漏網。
   if (!FIXED_ANCHOR_TEMPLATE && NO_SPEED) {
     log("⏩ 已指定 --no-speed，跳過 125% 加速（保留原始速度）");

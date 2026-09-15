@@ -78,6 +78,8 @@ const PRESETS = {
   institution: { avatar: "57d5790b64e34472a932d6c7d0b4f64b", voice: "e96f2834052f404c9c3725b4fd6ee55a" },
   focusstock: { avatar: "7765f68aaa6a4b658b95f4e5357c21d5", voice: "65b04effe83f423dbb1f66317318c37f" },
   midday: { avatar: "4105a6e911a24f3ab8741cdd8b13f2ba", voice: "9cb1516ecebf4c06b668e03f7f6e91f7" },
+  // 美股焦點 2026-09-15 新增；這條線沒有備援的 HeyGen 內建語音，所以 voice 留空（見 run.js）
+  usstock: { avatar: "4a74ef949c524c17b762656d58f0c1ac", voice: "" },
 };
 
 // 變因定義。engine = null 表示不送 engine 欄位（舊端點的行為）。
@@ -258,7 +260,7 @@ async function main() {
   }
   const preset = PRESETS[TEMPLATE];
   if (!preset) {
-    console.error(`❌ 不認得的 --template=${TEMPLATE}（支援 dapan / institution / focusstock / midday）`);
+    console.error(`❌ 不認得的 --template=${TEMPLATE}（支援 dapan / institution / focusstock / midday / usstock）`);
     process.exit(1);
   }
 

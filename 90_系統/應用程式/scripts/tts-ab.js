@@ -1,6 +1,6 @@
 // MiniMax 配音 A/B 測試 —— 獨立腳本，完全不碰 run.js、不覆蓋任何 public/ 或 src/ 產物。
 // 用法：node scripts/tts-ab.js [--voice=focusstock] [--model=speech-2.8-hd] [--dict]
-//   --voice= focusstock | dapan | midday | institution | male   （預設 focusstock）
+//   --voice= focusstock | dapan | midday | usstock | institution | male   （預設 focusstock）
 //   --voice-id= 直接給 moss_audio_… 原始 id（測還沒進 VOICES 表的新聲音；覆蓋 --voice）
 //   --voice-tag= 檔名標籤，只在用 --voice-id 時有意義（預設取 id 尾碼 8 碼）
 //   --text-file= 用外部檔案當稿子（覆蓋 --text；真實文案用這個，不要塞命令列）
@@ -48,6 +48,7 @@ const VOICES = {
   focusstock:  "moss_audio_3a75102e-54db-11f1-981b-8a143315d498",
   dapan:       "moss_audio_b47d71d2-ada4-11f1-8900-9edb4a3ef07d", // 2026-09-11 換，原 e9e9da93…
   midday:      "moss_audio_f85dc873-ada4-11f1-a626-8a59b47fb1f9", // 2026-09-11 換，原本與 dapan 共用 e9e9da93…
+  usstock:     "moss_audio_3a75102e-54db-11f1-981b-8a143315d498", // 2026-09-15 新增（與 focusstock 同一支，使用者指定）
   institution: "moss_audio_ad826960-9f57-11f1-8aea-1268c6bb306c",
   male:        "moss_audio_44ce6b04-5a39-11f1-981b-8a143315d498",
 };

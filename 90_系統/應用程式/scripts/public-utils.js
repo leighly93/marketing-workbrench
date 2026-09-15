@@ -18,7 +18,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 // 已知的版型前綴（帶前綴的檔案 = 該版型的套版素材，可安全清理/重建）
-const TEMPLATE_PREFIXES = ['dapan', 'focusstock', 'institution', 'midday'];
+const TEMPLATE_PREFIXES = ['dapan', 'focusstock', 'institution', 'midday', 'usstock'];
 // 備份保留幾份「重量級」快照（含 heygen.mp4），超過就刪最舊的
 const KEEP_HEAVY_BACKUPS = 15;
 

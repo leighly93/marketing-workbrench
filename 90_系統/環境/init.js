@@ -14,6 +14,7 @@ const generated = {
   'marketing-shots.generated.json': [],
   'DapanXiaobao/dapan-shots.generated.json': [],
   'MiddayFocus/midday-shots.generated.json': [],
+  'UsStock/usstock-shots.generated.json': [],
   'Focusstock/focusstock-shots.generated.json': [],
   'Focusstock/focusstock-assets.generated.json': { hasBgm: false, bgmFile: '' },
   'Institution/institution-shots.generated.json': [],

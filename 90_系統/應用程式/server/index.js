@@ -105,8 +105,10 @@ const ARCHIVE_DIR = JOBS_DIR;
 const TEMPLATES = {
   // ⚠️ 這個物件的「宣告順序＝前台版型清單的顯示順序」（index.html 用 Object.entries(TPLS) 畫）。
   // 2026-08-31 使用者要求：盤中焦點 → 大盤小報 → 三大法人 → 焦點股日報（焦點股日報放最後）。
+  // 2026-09-15 使用者指定美股焦點「放最右邊」＝可見項目的最後一個，所以排在大盤小報之後。
+  //（institution / focusstock / default 都標了 hidden、前台不畫，所以美股焦點就是最右邊那個。）
   // 要調順序就搬這裡的區塊，不要去 index.html 排序。
-  // ⚠️ 2026-09-11 起前台實際只看得到**盤中焦點與大盤小報**兩個 —— 三大法人、焦點股日報、
+  // ⚠️ 2026-09-11 起前台實際只看得到**盤中焦點與大盤小報**兩個（2026-09-15 起再加上美股焦點）—— 三大法人、焦點股日報、
   //    投廣模板都標了 hidden。宣告順序與內容全部保留，拿掉 hidden 就原地回來。
   //    /api/health 仍然回傳**全部**版型：工作列表要靠它顯示舊工作的版型名稱（見 public/app.js 的 pickable）。
   midday: {
@@ -132,6 +134,18 @@ const TEMPLATES = {
     outputs: ['out/output-dapan.mp4', 'out/output-dapan-landscape.mp4'],
     outputLabels: { 'output-dapan.mp4': '直式', 'output-dapan-landscape.mp4': '橫式' },
     plan: 'src/DapanXiaobao/dapan-shots.generated.json',
+    planKind: 'shots',
+    flags: [],
+  },
+  usstock: {
+    // 2026-09-15 新增。使用者定案「基本上跟盤中焦點一樣」，所以標題規格直接沿用盤中焦點
+    // （兩行、每行 10 字參考值；wrap 仍是 true，超過只是折行、字級不變）。
+    title: { lines: 2, per: 10, wrap: true, where: '開場第一秒' },
+    label: '美股焦點',
+    hint: '',
+    // 只出直式（同盤中焦點），所以只有一個輸出、不需要 outputLabels 標「直式／橫式」。
+    outputs: ['out/output-usstock.mp4'],
+    plan: 'src/UsStock/usstock-shots.generated.json',
     planKind: 'shots',
     flags: [],
   },
@@ -203,7 +217,7 @@ function listBrands() {
 
 // public/ 裡屬於「套版素材」的檔案，清場時不要動（run.js 會自己重新複製，
 // 但留著可以少複製一次；字型更是絕對不能刪）。跟 analyze-app-images.js 同一條規則。
-const TEMPLATE_ASSET = /^(dapan|focusstock|institution|midday)-|^(frame|logo)\.png$|^NotoSans|^outro\.mp4$|^\./i;
+const TEMPLATE_ASSET = /^(dapan|focusstock|institution|midday|usstock)-|^(frame|logo)\.png$|^NotoSans|^outro\.mp4$|^\./i;
 
 // 快照要保存哪些檔案：public/ 整包 ＋ src/ 底下的產出物。
 // 這些是「上一段跑完的成果」，後半段 render 完全靠它們。
@@ -401,6 +415,7 @@ function restoreWorkspace(job) {
 // ⚠️ 渲染流程一個字都沒動 —— run.js／remotion.config.ts／npm run render:* 全部原樣。
 //
 // 只有下面白名單裡的輸出會轉（2026-08-21 使用者點名的三個直式，2026-08-31 加上盤中焦點共四個）：
+//   （2026-09-15 起加上美股焦點共五個）
 //   橫式（output-dapan-landscape）過不了規格第 4 項「1080×1920 直式、不加黑邊」，硬套只會加黑邊或裁切；
 //   投廣版（output-focusstock-ad）與投廣模板（output.mp4）使用者定案不套。
 //   不在名單裡的照舊直接 copyFileSync。
@@ -408,6 +423,8 @@ const DELIVERY_SPEC_OUTPUTS = {
   dapan: ['output-dapan.mp4'],
   // 盤中焦點只出直式，整支都要照交付規格轉（2026-08-31 使用者：「輸出也要照轉檔規則」）
   midday: ['output-midday.mp4'],
+  // 美股焦點同樣只出直式，整支都要照交付規格轉（跟盤中焦點同一條規則）
+  usstock: ['output-usstock.mp4'],
   focusstock: ['output-focusstock.mp4'],
   institution: ['output-institution.mp4'],
 };

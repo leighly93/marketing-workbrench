@@ -20,6 +20,7 @@ const KNOWN = [
   { label: "大盤小報 dapan", id: "dc529e16819846b2a0ba986a7fc51a85" },
   // 2026-09-11 起盤中焦點有自己的聲音，不再跟大盤小報同一支（原本兩行是同一個 id）。
   { label: "盤中焦點 midday", id: "9cb1516ecebf4c06b668e03f7f6e91f7" },
+  // 美股焦點 2026-09-15 新增：這條線預設走 MiniMax，沒有備援的 HeyGen 內建語音，所以還沒有 id 可查。
   { label: "三大法人 institution", id: "e96f2834052f404c9c3725b4fd6ee55a" },
   { label: "焦點股日報 focusstock", id: "65b04effe83f423dbb1f66317318c37f" },
   { label: "投廣單人 女聲／雙人 A", id: "65b04effe83f423dbb1f66317318c37f" },

@@ -22,6 +22,8 @@ import { FOCUSSTOCK_TOTAL_DURATION_SEC } from './Focusstock/focusstock-timeline'
 import { FocusstockAdComposition } from './Focusstock/FocusstockAdComposition';
 import { MiddayFocusComposition } from './MiddayFocus/MiddayFocusComposition';
 import { MIDDAY_TOTAL_DURATION_SEC } from './MiddayFocus/midday-timeline';
+import { UsStockComposition } from './UsStock/UsStockComposition';
+import { USSTOCK_TOTAL_DURATION_SEC } from './UsStock/usstock-timeline';
 
 /**
  * Remotion Root：在此註冊所有 Composition
@@ -62,6 +64,16 @@ export const RemotionRoot: React.FC = () => {
         id="MiddayFocus"
         component={MiddayFocusComposition}
         durationInFrames={secToFrame(MIDDAY_TOTAL_DURATION_SEC)}
+        fps={VIDEO_FPS}
+        width={VIDEO_WIDTH}
+        height={VIDEO_HEIGHT}
+      />
+      {/* 美股焦點：獨立直式 composition（2026-09-15 新增，照盤中焦點複製一份、換自己的素材與座標）。
+          ⚠️ 只有直式 —— 跟盤中焦點一樣沒有橫式姊妹 composition。 */}
+      <Composition
+        id="UsStock"
+        component={UsStockComposition}
+        durationInFrames={secToFrame(USSTOCK_TOTAL_DURATION_SEC)}
         fps={VIDEO_FPS}
         width={VIDEO_WIDTH}
         height={VIDEO_HEIGHT}

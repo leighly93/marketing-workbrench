@@ -354,7 +354,7 @@ if (!fs.existsSync(PUBLIC_DIR)) {
 }
 // 使用者的截圖檔名不一定叫 image1.png（實際遇到 1000090084.jpeg 這種相機命名），
 // 所以改用「排除法」：public 裡的圖檔，只要不是套版素材就當成要分析的截圖。
-const TEMPLATE_ASSET = /^(dapan|focusstock|institution|midday)-|^(frame|logo)\.png$|^NotoSans/i;
+const TEMPLATE_ASSET = /^(dapan|focusstock|institution|midday|usstock)-|^(frame|logo)\.png$|^NotoSans/i;
 const files = fs
   .readdirSync(PUBLIC_DIR)
   .filter((f) => /\.(png|jpg|jpeg)$/i.test(f) && !TEMPLATE_ASSET.test(f))

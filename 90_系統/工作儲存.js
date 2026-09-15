@@ -14,7 +14,7 @@ function folderName(job) {
 function outputName(name) {
   if (/landscape/i.test(name)) return '橫式.mp4';
   if (/-ad\.mp4$/i.test(name) || name === 'output.mp4') return '投廣版.mp4';
-  if (/^output-(dapan|midday|institution|focusstock)\.mp4$/i.test(name)) return '直式.mp4';
+  if (/^output-(dapan|midday|usstock|institution|focusstock)\.mp4$/i.test(name)) return '直式.mp4';
   return path.basename(name);
 }
 
