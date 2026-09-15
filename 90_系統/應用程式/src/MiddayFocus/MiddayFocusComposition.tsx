@@ -57,9 +57,11 @@ export const MiddayFocusComposition: React.FC = () => {
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
           />
         </AbsoluteFill>
-        {/* 日期牌梯形在 intro-frame.jpg 與 header-overlay.png 上的 y 座標不同（差 371px），
-            兩張圖各自傳 top 值，不要共用一組座標（大盤小報 2026-08-07 踩過這個坑） */}
-        <DateBadge top={479} />
+        {/* 日期牌梯形在 intro-frame.jpg 與 header-overlay.png 上的 y 座標不同（差 381px），
+            兩張圖各自傳 top 值，不要共用一組座標（大盤小報 2026-08-07 踩過這個坑）。
+            2026-09-15 換圖後重量：header 的招牌位置沒變（金框內緣 y115-285，維持 top 108），
+            intro 的招牌下移了（金框內緣 y496-666），所以這裡從 479 調成 488 才回到置中。 */}
+        <DateBadge top={488} />
         <TitleCard topOffset={70} />
       </Sequence>
 
@@ -135,8 +137,20 @@ export const MiddayFocusComposition: React.FC = () => {
   );
 };
 
-// 日期牌空白區座標：沿用大盤小報實測值（藍色梯形 x:60-379；header-overlay.png y:108-293、
-// intro-frame.jpg y:479-664）。素材換成盤中焦點自己的美術之後，如果梯形位置變了要回來重量一次。
+// 日期牌空白區座標：2026-09-15 換圖後對著 共用素材/盤中焦點/ 重量過
+//（header-overlay.png 金框內緣 y115-285、intro-frame.jpg 金框內緣 y496-666，兩張的招牌差 381px；
+//  藍色梯形左緣 x≈59 起，右緣因為斜切由上而下從 x363 收到 x329）。
+// left 2026-09-15 定案 35（使用者在 55 / 45 / 25 / 35 四版對照後選「左右等距」這版）。
+// 四位數字在字級 106／italic／letterSpacing -2 下實測寬 246px（用瀏覽器量 getBoundingClientRect，
+// 不要用「字級 × 字數」估，那會多算 30px）。容器 319 寬、文字置中，所以文字左緣 = left + 36.5。
+// left 35 → 文字 x71..317，兩張圖都離金線有餘裕：
+//   開場 intro-frame（文字帶 y531-631）：梯形 x59-61 起、斜切線由 x363 收到 x329
+//                                        → 左留 10-12px、右留 12-46px
+//   主段 header-overlay（文字帶 y150-250）：梯形 x59-63 起、斜切線由 x367 收到 x332
+//                                          → 左留 8-12px、右留 14-48px
+// ⚠️ 兩側都不能再挪超過 ±10px：往左到 25 左緣只剩 0-2px，往右到 45 右緣會壓上斜切線。
+// 開場與主段共用同一個 left —— 兩張圖的梯形水平幾何一致（實測差 2px 內），所以一個值同時顧到。
+// 再換美術要回來重量一次（量法：ffmpeg 轉 rawvideo 掃金色外框與第一個白色字素的座標）。
 const DateBadge: React.FC<{ top: number }> = ({ top }) => {
   const headerDate = (videoMeta as any).headerDate ?? '';
   if (!headerDate) return null;
@@ -145,7 +159,7 @@ const DateBadge: React.FC<{ top: number }> = ({ top }) => {
       <div
         style={{
           position: 'absolute',
-          left: 55,
+          left: 35,
           top,
           width: 319,
           height: 185,
@@ -175,8 +189,13 @@ const DateBadge: React.FC<{ top: number }> = ({ top }) => {
 };
 
 // 標題卡：只在開場卡顯示，讀 video-meta.json.titleText
-//（parse-midday-script.js 從 script.txt 標題段寫入）。第一句白色、其餘黃色。
-const TITLE_COLORS = ['#ffffff', '#FFE600'];
+//（parse-midday-script.js 從 script.txt 標題段寫入）。第一句深灰、其餘深藍。
+// 2026-09-15 使用者換了開場底圖（改成淺藍天空背景）並指定這兩個色，取代原本的白＋黃
+//（白＋黃是深色底圖時代的配色，在新的淺底上會看不見）。
+// 同一次定案：描邊由黑改白、標題陰影整個拿掉 —— 深色字配黑描邊會把 #023c91 壓成近黑，
+// 白描邊則在淺底上給深色字一圈光暈。使用者看過三版對照（黑描邊／無描邊／白描邊）後選了白描邊。
+// ⚠️ 只有盤中焦點改 —— 大盤小報／三大法人／焦點股／美股焦點各自有自己的 TITLE_COLORS，維持不動。
+const TITLE_COLORS = ['#282828', '#023c91'];
 
 const TitleCard: React.FC<{ topOffset?: number }> = ({ topOffset = 0 }) => {
   const title = (videoMeta as any).titleText ?? '';
@@ -212,9 +231,11 @@ const TitleCard: React.FC<{ topOffset?: number }> = ({ topOffset = 0 }) => {
               color: i === 0 ? TITLE_COLORS[0] : TITLE_COLORS[1],
               lineHeight: 1.4,
               textAlign: 'center',
-              WebkitTextStroke: '3px #000000',
+              WebkitTextStroke: '3px #ffffff',
               paintOrder: 'stroke fill',
-              textShadow: '0 4px 12px rgba(0,0,0,0.5)',
+              // 2026-09-15 使用者要求在白描邊之外再加一層白色模糊陰影：
+              // 描邊是硬邊、只有 3px，光暈負責把深色字從淺藍底圖上「浮」起來。
+              textShadow: '0 0 18px rgba(255,255,255,0.9)',
             }}
           >
             {line}
