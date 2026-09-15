@@ -72,9 +72,9 @@ const GO = flag("go");
 
 // run.js 的固定主播四條線設定（改 run.js 時這裡要同步，否則測的不是同一組人聲）
 // dapan／midday 的 avatar 與 HeyGen 聲音於 2026-09-11 跟著 run.js 換掉（兩條線的聲音也從此各自獨立）；
-// 2026-09-14 兩條線的 avatar 又各換一次（聲音沒動）。
+// 2026-09-14 兩條線的 avatar 又各換一次（聲音沒動）；2026-09-15 大盤小報再換一次（同樣只動 avatar）。
 const PRESETS = {
-  dapan: { avatar: "77012ed52edb488bbf32587afc0ec288", voice: "dc529e16819846b2a0ba986a7fc51a85" },
+  dapan: { avatar: "484b6346f10f4e138b0ff4b14f47c31f", voice: "dc529e16819846b2a0ba986a7fc51a85" },
   institution: { avatar: "57d5790b64e34472a932d6c7d0b4f64b", voice: "e96f2834052f404c9c3725b4fd6ee55a" },
   focusstock: { avatar: "7765f68aaa6a4b658b95f4e5357c21d5", voice: "65b04effe83f423dbb1f66317318c37f" },
   midday: { avatar: "4105a6e911a24f3ab8741cdd8b13f2ba", voice: "9cb1516ecebf4c06b668e03f7f6e91f7" },
