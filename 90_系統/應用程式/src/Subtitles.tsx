@@ -208,10 +208,12 @@ export const Subtitles: React.FC<SubtitlesStyleProps> = ({
 };
 
 /**
- * 連字號個股名（世芯-KY／矽力-KY／貿聯-KY…）不准在減號處折行。
+ * 連字號個股名（世芯-KY／矽力-KY…）與斜線日期（9/16、2026/09/16）不准在符號處折行。
  *
  * 2026-09-01 使用者定案：「只要出現 XX-XX 這個 `-` 就要留在畫面上，
  * 不要被當標點符號處理，不要被當斷句處理。」
+ * 2026-09-15 使用者定案：「把 / 保留在字幕上，但是不要變成拆行依據，
+ * 目標是 9/16 可以完整顯示在字幕上。」→ 斜線套用同一套保護。
  *
  * ⚠️ 減號在「切句」那一層本來就不是標點 —— `script-utils.js` 的 `BREAK_RE`／`OTHER_PUNCT_RE`
  *    與本檔的 `PUNCT_RE` 都沒有 `-`，所以它一直都會顯示、也一直都不是斷句點。
@@ -221,24 +223,37 @@ export const Subtitles: React.FC<SubtitlesStyleProps> = ({
  *    修法是把整個 XX-XX 包成 `white-space: nowrap` 的 span（**保留減號字元本身**，
  *    不換成 U+2011 —— Noto Sans TC 不保證有那個字符，缺字會變成豆腐框）。
  *
+ * ⚠️ 斜線是兩層都要動，跟減號不一樣：`/` 本來連**顯示**都沒有（被 `OTHER_PUNCT_RE` 濾掉，
+ *    9/16 渲染成 916），2026-09-15 先在 `script-utils.js` 讓它進 cleaned chars，
+ *    這一層才輪得到管折行。只改一邊都達不到「9/16 完整顯示」。
+ *
  * 長度上限 12：nowrap 的 span 撐不下就會溢出字幕框，所以只保護「看起來像個股名」的短詞，
  * 真的很長的連字號字串還是讓它正常折行。
  */
-// 減號兩側各自：一串英數字（KY／ADR／3661）或**最多 4 個**中文字（台股名幾乎都 ≤4 字）。
-// 中文沒有詞邊界，所以左邊一定要設上限 —— 不設的話 `[中文]+` 會一路吃到句尾，
+// 符號兩側各自：一串英數字（KY／ADR／3661／2026）或**最多 4 個**中文字（台股名幾乎都 ≤4 字）。
+// 中文沒有詞邊界，所以一定要設上限 —— 不設的話 `[中文]+` 會一路吃到句尾，
 // 「矽力-KY與譜瑞-KY盤中也翻紅」會被整句包成 nowrap（實測過），那反而害整句不能折行。
-const HYPHEN_SIDE = '(?:[0-9A-Za-z]+|[\u4e00-\u9fff]{1,4})';
-const HYPHEN_TOKEN_RE = new RegExp(HYPHEN_SIDE + '-' + HYPHEN_SIDE, 'g');
-const HYPHEN_TOKEN_MAX = 12;
+const TOKEN_SIDE = '(?:[0-9A-Za-z]+|[\u4e00-\u9fff]{1,4})';
+// 斜線兩側只吃數字（9/16、08/10、2026/09/16）。不沿用上面那組寬鬆的側 ——
+// 那樣「9/16FOMC」會被整串黏成一個 nowrap（右側的 [0-9A-Za-z]+ 一路吃到 FOMC），
+// 連「16 和 FOMC 之間」這個本來合理的折行點都被關掉。日期是這次要救的情境，收窄剛好。
+const SLASH_SIDE = '[0-9]{1,4}';
+// `(?:符號 + 側)+` 而不是只吃一個符號：2026/09/16 要整串一起保護，
+// 只配一次的話會切成「2026/09」＋沒保護的「/16」，第二個斜線照樣可以折。
+const TOKEN_RE = new RegExp(
+  TOKEN_SIDE + '(?:-' + TOKEN_SIDE + ')+|' + SLASH_SIDE + '(?:[/／]' + SLASH_SIDE + ')+',
+  'g',
+);
+const TOKEN_MAX = 12;
 
-function keepHyphensTogether(text: string): React.ReactNode {
-  if (!text.includes('-')) return text;
+function keepTokensTogether(text: string): React.ReactNode {
+  if (!/[-/／]/.test(text)) return text;
   const out: React.ReactNode[] = [];
   let last = 0;
-  HYPHEN_TOKEN_RE.lastIndex = 0;
+  TOKEN_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = HYPHEN_TOKEN_RE.exec(text)) !== null) {
-    if (m[0].length > HYPHEN_TOKEN_MAX) continue;
+  while ((m = TOKEN_RE.exec(text)) !== null) {
+    if (m[0].length > TOKEN_MAX) continue;
     if (m.index > last) out.push(text.slice(last, m.index));
     out.push(
       <span key={`nb-${m.index}`} style={{ whiteSpace: 'nowrap' }}>
@@ -291,7 +306,7 @@ const SubtitleLine: React.FC<{ text: string } & SubtitlesStyleProps> = ({
           ...textStyle,
         }}
       >
-        {keepHyphensTogether(text)}
+        {keepTokensTogether(text)}
       </div>
     </AbsoluteFill>
   );
