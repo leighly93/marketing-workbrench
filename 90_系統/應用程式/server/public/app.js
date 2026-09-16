@@ -31,6 +31,99 @@ const api = async (u, o) => {
   return j;
 };
 const fmt = (s) => (s == null ? '—' : s.toFixed(1) + 's');
+
+// ── 箭頭（2026-09-16）────────────────────────────────────────────
+// ⚠️ 色票要跟成品端一致：src/ShotFocus.tsx 的 SHOT_FOCUS.arrow.palette。改這裡就要改那裡。
+const ARROW_COLORS = ['#FF3B30', '#00C853', '#2E9BFF', '#FF9500', '#FFFFFF', '#1A1A1A'];
+const ARROW_DEFAULT = ARROW_COLORS[0];
+/** 短到這個長度以下（佔圖片短邊的比例）就當誤點 —— 箭頭是線段，不能沿用框那組 w/h 門檻。 */
+const ARROW_MIN_RATIO = 0.04;
+// 成品端的尺寸（畫面 px，直式畫布 1080×1920）。⚠️ 要跟 src/ShotFocus.tsx 的 SHOT_FOCUS.arrow
+// 與各 composition 的 safeTop/safeBottom 一致；改那邊就要改這裡，不然預覽又會跟成品對不起來。
+const ARROW_CANVAS_W = 1080, ARROW_CANVAS_H = 1920;
+const ARROW_SAFE_H = 1120;                 // safeBottom 1430 − safeTop 310
+const ARROW_SHAFT = 11, ARROW_HEAD_RATIO = 30 / 11, ARROW_HEAD_W_RATIO = 38 / 11;
+const ARROW_STROKE_RATIO = 2 / 11;         // strokeWidth ÷ width
+const ARROW_ROUND_RATIO = 3 / 11;          // headRound ÷ width（箭鏃圓角）
+const ARROW_COVER_KEEP = 0.75;             // SHOT_FOCUS.wholePageCoverKeep
+
+/**
+ * 「這張圖在成品裡會被放多大」——回傳圖片在畫布上的顯示寬（畫面 px）。
+ *
+ * 為什麼需要它：成品的線寬是**固定的畫面 px**（跟截圖解析度無關，見 SHOT_FOCUS.arrow），
+ * 而預覽是把原圖縮到幾百 px 來畫。不換算的話，同一支箭頭在編輯器裡看起來比成品粗好幾倍
+ * （2026-09-16 使用者回報「成品的箭頭跟圈選的時候不一樣」）。
+ *
+ * ⚠️ 這是**近似**：照渲染端的三條擺放規則走（圈了 region 就放大到安全框、沒圈就看
+ *    coverKeep 門檻決定滿版或整張縮進去），但安全框高度用直式的固定值，
+ *    也不處理橫式的左右分割。預覽只要粗細看起來對，不需要像素級一致。
+ */
+function arrowShownWidth(natW, natH, region) {
+  if (!(natW > 0) || !(natH > 0)) return ARROW_CANVAS_W;
+  if (region && region.w > 0 && region.h > 0) {
+    return natW * Math.min(ARROW_CANVAS_W / region.w, ARROW_SAFE_H / region.h);
+  }
+  const ar = natW / natH, boxAr = ARROW_CANVAS_W / ARROW_CANVAS_H;
+  const keep = Math.min(ar, boxAr) / Math.max(ar, boxAr);
+  return keep >= ARROW_COVER_KEEP
+    ? natW * Math.max(ARROW_CANVAS_W / natW, ARROW_CANVAS_H / natH)   // 滿版
+    : natW * Math.min(ARROW_CANVAS_W / natW, ARROW_SAFE_H / natH);    // 整張縮進安全框
+}
+
+/**
+ * 在一個 position:relative 的容器上疊一支箭頭（SVG）。座標是**容器內的 px**，換算由呼叫端負責。
+ *
+ * 形狀跟成品（ShotFocus.tsx）同一套：桿子＋三角箭鏃＋半透明黑描邊。
+ * 但**尺寸不是成品尺寸** —— 成品的線寬是畫布 px、跟截圖解析度無關，預覽只能按容器寬度抓個
+ * 看得清楚的比例。預覽是用來確認「位置、方向、顏色」，不是用來量粗細的。
+ */
+function arrowSVG(w, h, x1, y1, x2, y2, color, shaft) {
+  const NS = 'http://www.w3.org/2000/svg';
+  // shaft＝呼叫端算好的線寬（見 arrowShaftPx）。沒給就退回舊的「容器寬 2.2%」。
+  const lw = Math.max(1.5, shaft || w * 0.022);
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  // 箭鏃相對線寬的比例跟成品同一組（ShotFocus.tsx：線寬 11、headLen 30、headWidth 38）
+  const k = Math.min(1, len / (lw * ARROW_HEAD_RATIO * 1.6));   // 太短的箭頭不要讓箭鏃吃掉整支
+  const hl = lw * ARROW_HEAD_RATIO * k;
+  const hw = lw * ARROW_HEAD_W_RATIO * k;
+  const ang = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+  // 深色箭頭配白描邊、不加陰影（成品同一條規則，見 ShotFocus.tsx 的 SHOT_FOCUS.arrow.stroke）
+  const rgb = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color || ARROW_DEFAULT);
+  const dark = rgb
+    && (0.2126 * parseInt(rgb[1], 16) + 0.7152 * parseInt(rgb[2], 16) + 0.0722 * parseInt(rgb[3], 16)) / 255 < 0.42;
+  const paint = (c, grow) =>
+    `<line x1="0" y1="0" x2="${(len - hl + 1).toFixed(1)}" y2="0" stroke="${c}"`
+    + ` stroke-width="${(lw + grow).toFixed(1)}" stroke-linecap="round"/>`
+    + `<polygon points="${len.toFixed(1)},0 ${(len - hl).toFixed(1)},${(-hw / 2).toFixed(1)}`
+    + ` ${(len - hl).toFixed(1)},${(hw / 2).toFixed(1)}" fill="${c}" stroke="${c}"`
+    + ` stroke-width="${(grow + lw * ARROW_ROUND_RATIO * 2 * k).toFixed(1)}" stroke-linejoin="round"/>`;
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'bx arrow');
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.style.cssText = `left:0;top:0;width:${w}px;height:${h}px`;
+  svg.innerHTML = `<g transform="translate(${x1.toFixed(1)} ${y1.toFixed(1)}) rotate(${ang.toFixed(2)})">`
+    // ⚠️ 描邊的加粗量也要照比例縮。寫死 2px 的話，細線上描邊比箭頭本身還粗，
+    //    看起來就是「一條包著黑邊的細線」，跟成品差很多。
+    + paint(dark ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.55)', lw * ARROW_STROKE_RATIO * 2)
+    + paint(color || ARROW_DEFAULT, 0)
+    + '</g>';
+  return svg;
+}
+
+/**
+ * 成品的線寬（8 畫面 px）換算成預覽上要畫幾 px。
+ * displayW＝這張圖在預覽裡的顯示寬，natW/natH＝原圖尺寸，region＝有沒有圈顯示區域。
+ */
+function arrowShaftPx(displayW, natW, natH, region) {
+  return displayW * ARROW_SHAFT / arrowShownWidth(natW, natH, region);
+}
+
+/** 箭頭是不是有效（有兩個端點、長度不是 0）。存進去的一律是原圖像素座標。 */
+function hasArrow(a) {
+  return !!(a && Number.isFinite(a.x1) && Number.isFinite(a.y1)
+    && Number.isFinite(a.x2) && Number.isFinite(a.y2)
+    && Math.hypot(a.x2 - a.x1, a.y2 - a.y1) > 0);
+}
 const STATUS_TEXT = { draft:'建立中', queued:'排隊中', preparing:'準備中', review:'待確認',
   approved:'等待出片', rendering:'出片中', done:'完成', failed:'失敗', cancelled:'已取消',
   // 伺服器重開前就開始跑的工作。run.js 是 detached 的，會自己跑完。
@@ -975,12 +1068,20 @@ function drawAnnots(job) {
       };
       put(a.region, 'bx region');
       put(a.cell, 'bx');
-      box.append(el('div', { class: 'hint' },
-        !a.region && !a.cell ? '整張顯示・點我改' : '點我改'));
+      // 箭頭：跟計畫頁的 preview() 同一套（伺服器縮圖畫不出箭頭，一律前台疊 SVG）
+      if (hasArrow(a.arrow) && a.imgW && a.imgH) {
+        const w = 120, h = (w * a.imgH) / a.imgW, k2 = w / a.imgW;
+        box.append(arrowSVG(w, h, a.arrow.x1 * k2, a.arrow.y1 * k2,
+          a.arrow.x2 * k2, a.arrow.y2 * k2, a.arrow.color,
+          arrowShaftPx(w, a.imgW, a.imgH, a.region)));
+      }
+      const bare = !a.region && !a.cell && !hasArrow(a.arrow);
+      box.append(el('div', { class: 'hint' }, bare ? '整張顯示・點我改' : '點我改'));
       return el('div', { class: 'an' }, box,
         el('div', { class: 's' },
           el('b', {}, '出現在：' + rangeText(a)),
-          el('span', {}, ([a.region ? '有顯示區域' : null, a.cell ? '有黃框' : null]
+          el('span', {}, ([a.region ? '有顯示區域' : null, a.cell ? '有黃框' : null,
+            hasArrow(a.arrow) ? '有箭頭' : null]
             .filter(Boolean).join('＋') || '整張顯示'))),
         el('button', { class: 'ghost danger', onclick: (ev) => {
           ev.stopPropagation();
@@ -1100,7 +1201,7 @@ function addAnnot(job, src) {
   // 開錯張也能當場換掉，不再是死路。
   const use = src || jobImages(job)[0];
   if (!use) return alert('這支工作沒有上傳截圖，沒有東西可以標注。');
-  ANNOTS.push({ src: use, startCharIdx: null, endCharIdx: null, region: null, cell: null });
+  ANNOTS.push({ src: use, startCharIdx: null, endCharIdx: null, region: null, cell: null, arrow: null });
   drawAnnots(job);
   editAnnot(job, ANNOTS.length - 1);
 }
@@ -1110,9 +1211,13 @@ function editAnnot(job, k) {
   edCtx = { job, mode: 'annot', k, drag: null, src: a.src, mode2: 'region',
     region: a.region ? { ...a.region } : null,
     cell: a.cell ? { ...a.cell } : null,
+    arrow: a.arrow ? { ...a.arrow } : null,
+    arrowColor: (a.arrow && a.arrow.color) || ARROW_DEFAULT,
     from: a.startCharIdx ?? null, to: a.endCharIdx ?? null };
   $('#edTitle').textContent = '標注　' + a.src;
   $('#edNote').textContent = '';
+  setEdArrow(job);
+  drawEdColors();
   setEdMode('region');
   // 縮圖列 2026-09-01 補回來（使用者：「按下去沒有出現給我全部上傳圖片的選項，導致我一直選不到我要的圖」）。
   // ⚠️ 2026-08-17 當初把它清空，是為了擋「第一張圖選好的範圍出現在第二張圖」。
@@ -1170,7 +1275,8 @@ function planCard(job) {
   let addSeq = 0;
   for (const r of pv.rows) {
     edits[r.i] = { i: r.i, src: r.src, deleted: false,
-      cell: r.cell || null, region: r.region || null, start: r.start, end: r.end, _manual: false,
+      cell: r.cell || null, region: r.region || null, arrow: r.arrow || null,
+      start: r.start, end: r.end, _manual: false,
       startCharIdx: r.startCharIdx, endCharIdx: r.endCharIdx,
       imgW: r.imageWidth, imgH: r.imageHeight,
       _autoPhrase: r.phrase || '', _autoCellText: r.cellText || '' };
@@ -1185,7 +1291,7 @@ function planCard(job) {
   for (const a of late) {
     const key = 'a' + (addSeq++);
     edits[key] = { i: key, _added: true, _manual: true, _late: true, deleted: false,
-      src: a.src, cell: a.cell || null, region: a.region || null,
+      src: a.src, cell: a.cell || null, region: a.region || null, arrow: a.arrow || null,
       startCharIdx: a.startCharIdx, endCharIdx: a.endCharIdx,
       imgW: a.imgW || null, imgH: a.imgH || null };
   }
@@ -1221,7 +1327,8 @@ function planCard(job) {
             : (e._added ? '人工新增' : (e._manual ? '人工調整過' : '自動：' + (e._autoCellText || '—')))));
       setTd.replaceChildren(
         el('div', { class: 'sec' }, e.src || '（未選圖）'),
-        el('div', { class: 'sec' }, [e.region ? '顯示區域' : null, e.cell ? '黃框' : null].filter(Boolean).join('＋') || '整張顯示'));
+        el('div', { class: 'sec' }, [e.region ? '顯示區域' : null, e.cell ? '黃框' : null,
+          hasArrow(e.arrow) ? '箭頭' : null].filter(Boolean).join('＋') || '整張顯示'));
     };
     paint();
     tr.append(cellTd, infoTd, setTd,
@@ -1254,7 +1361,7 @@ function planCard(job) {
     if (!use) return alert('這支工作沒有上傳截圖，沒有東西可以加 —— 請先上傳截圖。');
     const key = 'a' + (addSeq++);
     edits[key] = { i: key, _added: true, _manual: true, deleted: false,
-      src: use, cell: null, region: null,
+      src: use, cell: null, region: null, arrow: null,
       startCharIdx: null, endCharIdx: null, imgW: null, imgH: null };
     renderTable();
     openEditor(job, pv, { i: key, phrase: '新增的一段' }, () => renderTable());
@@ -1344,10 +1451,20 @@ function preview(job, e, onclick) {
   };
   put(e.region, 'bx region');
   put(e.cell, 'bx');
+  // 箭頭（2026-09-16）。伺服器的 ffmpeg 縮圖畫不出箭頭（drawbox 只能畫軸對齊矩形），
+  // 這一份是前台自己疊的 SVG —— 計畫頁看到的箭頭全部來自這裡。
+  // ⚠️ 縮圖是固定 120px 寬（.prev），高度要照原圖比例算，不能拿 offsetHeight（圖可能還沒載入）。
+  if (hasArrow(e.arrow) && e.imgW && e.imgH) {
+    const w = 120, h = (w * e.imgH) / e.imgW;
+    const k = w / e.imgW;
+    box.append(arrowSVG(w, h, e.arrow.x1 * k, e.arrow.y1 * k, e.arrow.x2 * k, e.arrow.y2 * k,
+      e.arrow.color, arrowShaftPx(w, e.imgW, e.imgH, e.region)));
+  }
   // 沒有框就什麼線都不要畫 —— 以前這裡畫一個包住整張圖的黃框當「整張顯示」的標示，
   // 結果被當成真的黃框，而且看不出怎麼刪（2026-08-17 使用者回報）。
+  const empty = !e.region && !e.cell && !hasArrow(e.arrow);
   box.append(el('div', { class: 'hint' },
-    !e.region && !e.cell ? '整張顯示・點我編輯' : (e._manual ? '已手動調整' : '點我編輯')));
+    empty ? '整張顯示・點我編輯' : (e._manual ? '已手動調整' : '點我編輯')));
   return box;
 }
 
@@ -1362,6 +1479,44 @@ function edMode() { return (edCtx && edCtx.mode2) || 'region'; }
 function setEdMode(m) {
   edCtx.mode2 = m;
   document.querySelectorAll('#edModes div').forEach((d) => d.classList.toggle('on', d.dataset.m === m));
+  // 色票只在箭頭模式出現 —— 另外兩種的顏色是固定的（顯示區域藍虛線、黃框黃實線）
+  const row = $('#edColorRow');
+  if (row) row.hidden = m !== 'arrow';
+}
+
+
+/**
+ * 箭頭只在「timeline 真的有把 arrow 交給渲染端」的版型出現。
+ *
+ * 哪些版型算數由伺服器的 TEMPLATES `arrow` 旗標決定（跟著 /api/health 一起送過來）。
+ * ⚠️ 不擋的話就是**靜默失效**：編輯器照樣讓人畫、存得進計畫，成品卻沒有箭頭 ——
+ *    2026-09-16 使用者在盤中焦點實際踩到（那次是 timeline 漏接，已補；焦點股日報、
+ *    三大法人、投廣是真的還沒接）。旗標與 timeline 的對應有回歸測試（測試/配圖箭頭）。
+ */
+function setEdArrow(job) {
+  const on = !!(TPLS[(job && job.template) || ''] || {}).arrow;
+  document.querySelectorAll('#ed [data-arrow]').forEach((n) => { n.hidden = !on; });
+  if (!on && edCtx) edCtx.arrow = null;
+  return on;
+}
+
+/** 六色色票。選色會同時套用到已經畫好的箭頭（不用重畫一次）。 */
+function drawEdColors() {
+  const box = $('#edColors');
+  if (!box || !edCtx) return;
+  box.replaceChildren(...ARROW_COLORS.map((c) =>
+    el('i', {
+      style: `background:${c}`, title: c,
+      class: c.toLowerCase() === String(edCtx.arrowColor).toLowerCase() ? 'on' : '',
+      onclick: () => {
+        edCtx.arrowColor = c;
+        if (edCtx.arrow) edCtx.arrow.color = c;
+        drawEdColors();
+        drawEdBox();
+      },
+    })));
+  const sw = $('#edArrowSw');
+  if (sw) sw.style.background = edCtx.arrowColor || ARROW_DEFAULT;
 }
 document.querySelectorAll('#edModes div').forEach((d) =>
   d.onclick = () => { if (edCtx) setEdMode(d.dataset.m); });
@@ -1386,13 +1541,29 @@ function drawEdBox() {
       `left:${ox + (r.x / edCtx.natW) * iw}px;top:${oy + (r.y / edCtx.natH) * ih}px;`
       + `width:${(r.w / edCtx.natW) * iw}px;height:${(r.h / edCtx.natH) * ih}px` }));
   }
+  // 箭頭：同樣拿圖片在容器裡的實際位置換算（理由跟上面那段一樣，不能用百分比）。
+  const hasA = hasArrow(edCtx.arrow);
+  if (hasA) {
+    const a = edCtx.arrow;
+    const kx = iw / edCtx.natW, ky = ih / edCtx.natH;
+    wrap.append(arrowSVG(
+      wrap.offsetWidth, wrap.offsetHeight,
+      ox + a.x1 * kx, oy + a.y1 * ky, ox + a.x2 * kx, oy + a.y2 * ky,
+      a.color || edCtx.arrowColor,
+      // ⚠️ 線寬要用**圖片**的顯示寬換算，不是容器寬 —— 容器會被上面那排縮圖撐寬
+      //    （drawEdBox 開頭那段註解講的同一件事）。
+      arrowShaftPx(iw, edCtx.natW, edCtx.natH, edCtx.region)));
+  }
   const hasR = !!(edCtx.region && edCtx.region.w > 0), hasC = !!(edCtx.cell && edCtx.cell.w > 0);
   $('#edRegionState').textContent = hasR ? '已畫' : '沒有';
   $('#edCellState').textContent = hasC ? '已畫' : '沒有';
+  $('#edArrowState').textContent = hasA ? '已畫' : '沒有';
   $('#edClearRegion').disabled = !hasR;
   $('#edClearCell').disabled = !hasC;
+  $('#edClearArrow').disabled = !hasA;
   $('#edClearRegion').style.opacity = hasR ? 1 : 0.35;
   $('#edClearCell').style.opacity = hasC ? 1 : 0.35;
+  $('#edClearArrow').style.opacity = hasA ? 1 : 0.35;
 }
 
 function loadEdImage(src) {
@@ -1404,8 +1575,10 @@ function loadEdImage(src) {
   if (swapped) {
     edCtx.region = null;
     edCtx.cell = null;
+    // 箭頭存的也是原圖像素座標 —— 留著就會原座標畫到另一張圖上（跟框同一個坑，2026-09-16）
+    edCtx.arrow = null;
     const note = $('#edNote');
-    if (note) note.textContent = '（換了截圖，原本的框已清掉 —— 請在新的圖上重新框）';
+    if (note) note.textContent = '（換了截圖，原本的框與箭頭已清掉 —— 請在新的圖上重畫）';
     // 「同一張圖的其他段」是虛線、別張圖是實線 —— 換了圖，這個判斷就變了，要重畫一次。
     // （開編輯器的第一次載入不算換圖，那條路本來就會在後面自己呼叫 drawRange。）
     drawRange();
@@ -1452,13 +1625,27 @@ window.addEventListener('mousemove', (ev) => {
   const { x0, y0, b, scX, scY } = edCtx.drag;
   const x1 = Math.max(0, Math.min(edCtx.natW, (ev.clientX - b.left) * scX));
   const y1 = Math.max(0, Math.min(edCtx.natH, (ev.clientY - b.top) * scY));
-  edCtx[edMode()] = { x: Math.min(x0, x1), y: Math.min(y0, y1),
-    w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+  if (edMode() === 'arrow') {
+    // 箭頭是線段不是矩形：按下的地方是尾、放開的地方是頭（箭鏃）。
+    edCtx.arrow = { x1: x0, y1: y0, x2: x1, y2: y1, color: edCtx.arrowColor || ARROW_DEFAULT };
+  } else {
+    edCtx[edMode()] = { x: Math.min(x0, x1), y: Math.min(y0, y1),
+      w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+  }
   drawEdBox();
 });
 window.addEventListener('mouseup', () => {
   if (!edCtx || !edCtx.drag) return;
   edCtx.drag = null;
+  if (edMode() === 'arrow') {
+    // 太短多半是誤點。⚠️ 不能沿用下面那組 w/h 門檻 —— 水平或垂直的箭頭一定有一軸是 0，
+    //    套下去每一支畫完就消失。線段只能用長度判斷。
+    const a = edCtx.arrow;
+    const min = Math.min(edCtx.natW, edCtx.natH) * ARROW_MIN_RATIO;
+    if (a && Math.hypot(a.x2 - a.x1, a.y2 - a.y1) < min) edCtx.arrow = null;
+    drawEdBox();
+    return;
+  }
   const r = edCtx[edMode()];
   // 太小多半是誤點
   if (r && (r.w < edCtx.natW * 0.02 || r.h < edCtx.natH * 0.008)) edCtx[edMode()] = null;
@@ -1468,6 +1655,7 @@ window.addEventListener('mouseup', () => {
 window.addEventListener('resize', () => { if (edCtx) drawEdBox(); });
 $('#edClearRegion').onclick = () => { edCtx.region = null; drawEdBox(); };
 $('#edClearCell').onclick = () => { edCtx.cell = null; drawEdBox(); };
+$('#edClearArrow').onclick = () => { edCtx.arrow = null; drawEdBox(); };
 $('#edCancel').onclick = () => { $('#ed').style.display = 'none'; edCtx = null; };
 
 function openEditor(job, pv, row, done) {
@@ -1475,10 +1663,14 @@ function openEditor(job, pv, row, done) {
   edCtx = { job, mode: 'shot', e, done, drag: null, src: e.src, mode2: 'cell',
     region: e.region ? { ...e.region } : null,
     cell: e.cell ? { ...e.cell } : null,
+    arrow: e.arrow ? { ...e.arrow } : null,
+    arrowColor: (e.arrow && e.arrow.color) || ARROW_DEFAULT,
     // 出現範圍用「在腳本上拖選」，不叫人填秒數
     from: e.startCharIdx ?? null, to: e.endCharIdx ?? null };
   $('#edTitle').textContent = row.phrase || '調整這一段';
   $('#edNote').textContent = '';
+  setEdArrow(job);
+  drawEdColors();
   setEdMode('cell');
   drawStrip(pv.images);
   loadEdImage(e.src);
@@ -1495,6 +1687,7 @@ $('#edOK').onclick = () => {
     a.startCharIdx = Math.min(edCtx.from, edCtx.to);
     a.endCharIdx = Math.max(edCtx.from, edCtx.to);
     a.region = edCtx.region; a.cell = edCtx.cell;
+    a.arrow = hasArrow(edCtx.arrow) ? edCtx.arrow : null;
     a.imgW = edCtx.natW; a.imgH = edCtx.natH;
     const job = edCtx.job;
     $('#ed').style.display = 'none'; edCtx = null;
@@ -1504,10 +1697,18 @@ $('#edOK').onclick = () => {
   const { e, done } = edCtx;
   if (edCtx.from == null) return alert('還沒選範圍 —— 在下面的腳本上點一下或拖選');
   const a0 = Math.min(edCtx.from, edCtx.to), b0 = Math.max(edCtx.from, edCtx.to);
-  const changed = JSON.stringify([edCtx.region, edCtx.cell]) !== JSON.stringify([e.region, e.cell])
+  // ⚠️ 箭頭也要進這個比對 —— 只動箭頭、沒動框的話 `_manual` 不會被標起來，
+  //    applyPlanEdits() 就不會把這一段當人工段寫回去，箭頭靜默消失（2026-09-16）。
+  const arrowOf = (a) => (hasArrow(a)
+    ? [Math.round(a.x1), Math.round(a.y1), Math.round(a.x2), Math.round(a.y2),
+      String(a.color || ARROW_DEFAULT).toLowerCase()]
+    : null);
+  const changed = JSON.stringify([edCtx.region, edCtx.cell, arrowOf(edCtx.arrow)])
+      !== JSON.stringify([e.region, e.cell, arrowOf(e.arrow)])
     || a0 !== e.startCharIdx || b0 !== e.endCharIdx
     || edCtx.src !== e.src;
   e.region = edCtx.region; e.cell = edCtx.cell;
+  e.arrow = hasArrow(edCtx.arrow) ? edCtx.arrow : null;
   e.imgW = edCtx.natW; e.imgH = edCtx.natH;
   e.startCharIdx = a0; e.endCharIdx = b0;
   e.src = edCtx.src;
@@ -1914,24 +2115,34 @@ async function loadFix() {
     : sz ? `${Math.round(c.x / sz.w * 100)},${Math.round(c.y / sz.h * 100)}% `
          + `${Math.round(c.w / sz.w * 100)}×${Math.round(c.h / sz.h * 100)}%`
          : `${Math.round(c.x)},${Math.round(c.y)} ${Math.round(c.w)}×${Math.round(c.h)}`;
+  // 箭頭：尾 → 頭，跟框一樣能換算成比例就用比例（換手機解析度也讀得懂）
+  const fmtArrow = (a, sz) => !a ? null
+    : '箭頭 ' + (sz
+      ? `${Math.round(a.x1 / sz.w * 100)},${Math.round(a.y1 / sz.h * 100)}%`
+        + `→${Math.round(a.x2 / sz.w * 100)},${Math.round(a.y2 / sz.h * 100)}%`
+      : `${Math.round(a.x1)},${Math.round(a.y1)}→${Math.round(a.x2)},${Math.round(a.y2)}`)
+      + (a.color ? ` ${a.color}` : '');
   for (const r of d.rows) {
     let before = r.from || '—', after = r.to || '—';
     if (r.type === '改框') {
-      // region（顯示區域）與 cell（黃框）分開顯示 —— 只畫顯示區域也是有效的修正
-      const pair = (cell, region) => [
+      // region（顯示區域）與 cell（黃框）分開顯示 —— 只畫顯示區域也是有效的修正。
+      // 箭頭（2026-09-16）同一格顯示；自動配圖不會產生箭頭，所以「原本」那欄一定是空的。
+      const pair = (cell, region, arrow) => [
         cell ? '黃框 ' + fmtCell(cell, r.size) : null,
         region ? '區域 ' + fmtCell(region, r.size) : null,
+        fmtArrow(arrow, r.size),
       ].filter(Boolean).join('　') || '整張顯示';
-      before = `${r.autoCellText || ''} ${pair(r.autoCell, r.autoRegion)}`;
-      after = pair(r.manualCell, r.manualRegion);
+      before = `${r.autoCellText || ''} ${pair(r.autoCell, r.autoRegion, r.autoArrow)}`;
+      after = pair(r.manualCell, r.manualRegion, r.manualArrow);
     }
     if (r.type === '改時間') { before = `${r.auto}　${r.autoPhrase || ''}`; after = `${r.manual}　${r.manualPhrase || ''}`; }
     if (r.type === '新增一段') { before = (r.autoCoveredBy || []).join('、') || '（原本沒有圖）'; after = `${r.from}　${r.manual || ''}`; }
     // 人工標記：「原本」是對照組（假裝沒人標注、讓 AI 自己排一次）的結果
     if (r.type === '人工標記') {
-      const pair = (cell, region) => [
+      const pair = (cell, region, arrow) => [
         cell ? '黃框 ' + fmtCell(cell, r.size) : null,
         region ? '區域 ' + fmtCell(region, r.size) : null,
+        fmtArrow(arrow, r.size),
       ].filter(Boolean).join('　') || '整張顯示';
       // 「原本」是空的有三種：AI 真的不配圖、這一支對照組整份沒排出來、
       // 舊紀錄比對用錯欄位（focus 版型，autoKind 由伺服器補）。只有第一種能說「AI 不配圖」。
@@ -1940,9 +2151,9 @@ async function loadFix() {
         legacyNoSrc: '（比不出來：舊紀錄沒記到 AI 配了哪張圖）',
       }[r.autoKind] || '（AI 本來不配圖）';
       before = r.from
-        ? `${r.from}　${r.autoCellText || ''} ${pair(r.autoCell, r.autoRegion)}`.trim()
+        ? `${r.from}　${r.autoCellText || ''} ${pair(r.autoCell, r.autoRegion, null)}`.trim()
         : blank;
-      after = `${r.to}　${pair(r.manualCell, r.manualRegion)}`;
+      after = `${r.to}　${pair(r.manualCell, r.manualRegion, r.manualArrow)}`;
     }
     const reason = [...((r.reason && r.reason.tags) || []), (r.reason && r.reason.note) || '']
       .filter(Boolean).join('／');

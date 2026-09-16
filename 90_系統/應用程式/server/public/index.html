@@ -264,15 +264,24 @@
       <div class="modes" id="edModes">
         <div data-m="region">顯示區域</div>
         <div data-m="cell">黃框</div>
+        <div data-m="arrow" data-arrow="1">箭頭</div>
       </div>
       <div class="rects">
         <div><i class="sw region"></i>顯示區域<span id="edRegionState">沒有</span>
           <button class="ghost tiny" id="edClearRegion">刪掉</button></div>
         <div><i class="sw cell"></i>黃框<span id="edCellState">沒有</span>
           <button class="ghost tiny" id="edClearCell">刪掉</button></div>
+        <div data-arrow="1"><i class="sw arrow" id="edArrowSw"></i>箭頭<span id="edArrowState">沒有</span>
+          <button class="ghost tiny" id="edClearArrow">刪掉</button></div>
+      </div>
+      <div id="edColorRow" data-arrow="1" hidden>
+        <label>箭頭顏色</label>
+        <div class="colors" id="edColors"></div>
       </div>
       <div class="tip">在左圖拖曳就會畫出「現在要畫的那一種」。<br>
-        兩種可以只有一種、也可以都有；都沒有就是整張顯示。</div>
+        顯示區域與黃框可以只有一種、也可以都有；都沒有就是整張顯示。<br>
+        <span data-arrow="1">箭頭是<b>從尾拖到頭</b>（放開的那一端是箭鏃），一段一支；
+        成品裡它會沿著自己的方向前後微微晃動。</span></div>
 
       <!-- 2026-09-11 使用者定案「長圖捲動其實可以整個刪掉」：原本這裡是「往下滑動」勾選框。
            整條 pan 路徑（前台勾選 → annotations → auto-shot → ShotFocus 渲染）都已移除，

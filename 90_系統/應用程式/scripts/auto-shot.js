@@ -793,6 +793,15 @@ if (SUGGEST_PATH) {
   if (!NO_ANNOTS && fs.existsSync(AP)) {
     let ann = [];
     try { ann = JSON.parse(fs.readFileSync(AP, 'utf-8')).shots || []; } catch (_) {}
+    /**
+     * 標注帶來的箭頭（2026-09-16）：兩個端點都要是數字、長度不能是 0。
+     * ⚠️ 只有箭頭、沒框沒區域的標注仍舊是 `wholePage: true`（圖片擺法不變）——
+     *    渲染端 src/ShotFocus.tsx 對「wholePage ＋ 有箭頭」的段落特別放行。
+     */
+    const arrowOf = (a) => (a && a.arrow
+      && [a.arrow.x1, a.arrow.y1, a.arrow.x2, a.arrow.y2]
+        .every((n) => typeof n === 'number' && Number.isFinite(n))
+      && Math.hypot(a.arrow.x2 - a.arrow.x1, a.arrow.y2 - a.arrow.y1) > 0 ? a.arrow : null);
     for (const a of ann) {
       if (!a.src) continue;
       // 範圍：新格式用 from/to 指子句範圍；舊格式 sentence 指整句（往後相容）
@@ -821,6 +830,7 @@ if (SUGGEST_PATH) {
           imageHeight: size0.height,
           ...(hasCell0 ? { cell: a.cell, cellText: '人工黃框', isColumn: false } : {}),
           ...(hasRegion0 ? { region: a.region } : {}),
+          ...(arrowOf(a) ? { arrow: arrowOf(a) } : {}),
           ...(!hasCell0 && !hasRegion0 ? { wholePage: true } : {}),
         });
         continue;
@@ -857,6 +867,7 @@ if (SUGGEST_PATH) {
         // 都沒給 → wholePage，整張顯示。
         ...(hasCell ? { cell: a.cell, cellText: '人工黃框', isColumn: false } : {}),
         ...(hasRegion ? { region: a.region } : {}),
+        ...(arrowOf(a) ? { arrow: arrowOf(a) } : {}),
         ...(!hasCell && !hasRegion ? { wholePage: true } : {}),
       });
     }

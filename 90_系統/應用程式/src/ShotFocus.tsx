@@ -33,6 +33,21 @@ import { AbsoluteFill, Img, interpolate, staticFile, useCurrentFrame } from 'rem
 
 export type ShotBox = { x: number; y: number; w: number; h: number };
 
+/**
+ * 箭頭：人工在截圖上拖出來的指示標記（2026-09-16 使用者定案）。
+ *
+ * 存的是**頭尾兩點的原圖像素座標**，跟 cell／region 同一套座標系 —— 不存「矩形＋旋轉角度」：
+ *   - 拖曳行為天然就是「從尾拖到頭」，旋轉由兩點決定，前台不必另做旋轉手把。
+ *   - 換算只有一條（乘當下的縮放倍率），region／滿版／整張縮小三條擺法共用。
+ * 角度與長度是渲染時從兩點算出來的，見下面 arrowGeom()。
+ */
+export type ShotArrow = {
+  x1: number; y1: number;   // 尾（起點）
+  x2: number; y2: number;   // 頭（箭鏃那端）
+  /** 六色色票之一（見 SHOT_FOCUS.arrow.palette）。沒給就用預設色。 */
+  color?: string;
+};
+
 export type ShotCellSpec = {
   startSec: number;
   endSec: number;
@@ -47,6 +62,8 @@ export type ShotCellSpec = {
   /** 顯示區域：決定圖要捲到哪裡、放大多少。不畫任何框線。 */
   region?: ShotBox;
   cellText?: string;
+  /** 箭頭：一段最多一支，跟句子走（跟黃框同一個節奏）。可以只有箭頭、沒有框。 */
+  arrow?: ShotArrow;
   /**
    * true = 這個框是**人工拖出來的**。
    * 2026-09-07 起留白不再分人工／自動（見 SHOT_FOCUS.pad），這個欄位渲染端已經不看，
@@ -109,6 +126,58 @@ export const SHOT_FOCUS = {
    */
   pad: 10,
   highlight: '#FFE600',
+  /**
+   * 箭頭（2026-09-16 使用者定案）。所有尺寸都是**畫面座標 px、不乘 sc** ——
+   * 跟黃框的 pad 同一個教訓（2026-09-07）：吃圖片座標的話，同一支箭頭在 720 寬截圖上
+   * 又粗又大、在 1206 寬上細得看不見，胖瘦跟截圖解析度綁在一起。
+   * 端點**位置**還是跟著圖走（乘 sc），只有粗細與箭鏃大小是固定的。
+   */
+  arrow: {
+    /**
+     * 桿子粗細。⚠️ 跟 headLen／headWidth 是一組，不能只改一個 ——
+     * 2026-09-16 使用者嫌箭鏃太大，要求縮成一半（30×26 → 15×13）。但桿子維持原本的 10，
+     * 箭鏃就只比桿子寬 3px，整支渲出來是一條斜線、看不出是箭頭（三個版本並排實渲確認過）。
+     * 2026-09-16 第二輪使用者又要「線再粗一點、三角形兩邊尖端往外、整體等比放大一點」，
+     * 於是收到現在這組：桿子 11、箭鏃 30×38。頭寬／線寬 3.45 倍是「張開」的關鍵 ——
+     * 只放大不加寬的話，箭鏃仍舊是窄窄的一根尖刺。
+     */
+    width: 11,
+    /** 箭鏃：長（沿軸向）× 寬（垂直軸向的底邊）。2026-09-16 幾輪調整後收在這一組。 */
+    headLen: 30,
+    headWidth: 38,
+    /**
+     * 描邊：截圖有淺底也有深底，不描邊的話某些底色上整支會糊掉。
+     * ⚠️ 描邊色與陰影**跟著箭頭自己的明暗走**（2026-09-16 使用者：「黑色的箭頭不要有黑陰影」）：
+     *   淺色箭頭（紅／綠／藍／橘／白）→ 黑描邊 ＋ 黑陰影，跟以前一樣。
+     *   深色箭頭（#1A1A1A）→ 白描邊、**不加陰影** —— 黑描邊加黑陰影疊在黑箭頭上，
+     *     整支糊成一團暈開的黑影，反而比不描邊還難看。
+     * 門檻用感知亮度（0.2126R+0.7152G+0.0722B）；換段換色時顏色是插值的，
+     * 描邊會在跨過門檻的那一格切換，實務上只有「一深一淺相接」才遇得到。
+     */
+    stroke: 'rgba(0,0,0,0.55)',
+    strokeDark: 'rgba(255,255,255,0.8)',
+    /** 亮度低於這個值就當成深色箭頭（0~1） */
+    darkAt: 0.42,
+    shadow: 'drop-shadow(0 2px 6px rgba(0,0,0,0.35))',
+    strokeWidth: 2,
+    /**
+     * 箭鏃的圓角（2026-09-16 使用者要「帶一點圓角」）。
+     * 做法是給箭鏃加一圈同色、linejoin=round 的描邊 —— 所以實際輪廓會比 headLen／headWidth
+     * 各大約 2×這個值。桿子兩端本來就是圓的（stroke-linecap="round"）。
+     */
+    headRound: 3,
+    /**
+     * 晃動（使用者選的是「沿自身軸向前後平移，像在戳」）：
+     * 位移 = sin(2π·hz·t) × px，方向就是箭頭自己的指向。
+     * 6px 是「看得出來但不像故障」的幅度；1.5Hz 約 0.67 秒一個來回，比呼吸快一點。
+     * ⚠️ 換段移動中的那 0.35 秒照樣晃 —— 幅度只有 6px，不會跟位移打架。
+     */
+    wobblePx: 6,
+    wobbleHz: 1.5,
+    /** 前台色票（server/public/index.html 的 #edColors 要跟這裡一致） */
+    palette: ['#FF3B30', '#00C853', '#2E9BFF', '#FF9500', '#FFFFFF', '#1A1A1A'],
+    defaultColor: '#FF3B30',
+  },
   /** 整欄模式下，欄位頂端離聚焦線的距離 */
   columnTopOffset: 70,
   /** 換格時的移動時間（秒） */
@@ -124,6 +193,34 @@ export const SHOT_FOCUS = {
    */
   cutGapSec: 0.4,
 };
+
+/**
+ * 箭頭在畫面上的幾何：中心、長度、角度。
+ *
+ * ⚠️ 換段時**不能拿兩個端點各自插值** —— 前一句朝右下、後一句朝左上的話，中途會經過
+ *    「箭頭縮短甚至反折」的畫面。拆成中心／長度／角度三組分開插值，箭頭才是「轉過去指向
+ *    新目標」（2026-09-16 使用者選「平滑轉過去，跟黃框一樣」）。
+ * 角度的最短路徑在呼叫端做（unwrap，見 targets 裡的 lastArrowAng）。
+ */
+function arrowGeom(a: ShotArrow, sc2: number, ox: number, oy: number) {
+  const x1 = ox + a.x1 * sc2;
+  const y1 = oy + a.y1 * sc2;
+  const x2 = ox + a.x2 * sc2;
+  const y2 = oy + a.y2 * sc2;
+  return {
+    cx: (x1 + x2) / 2,
+    cy: (y1 + y2) / 2,
+    len: Math.hypot(x2 - x1, y2 - y1),
+    ang: Math.atan2(y2 - y1, x2 - x1),
+  };
+}
+
+/** '#RRGGBB' → [r, g, b]。換段換色時三個分量各自插值，才不會在移動中途硬切顏色。 */
+function hexRGB(hex?: string): [number, number, number] {
+  const h = /^#([0-9a-f]{6})$/i.exec((hex || '').trim());
+  const v = parseInt(h ? h[1] : SHOT_FOCUS.arrow.defaultColor.slice(1), 16);
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
 
 /** 一個 run＝連續使用同一張圖的整段時間。fps/畫布尺寸由呼叫端傳入，各版型可不同。 */
 export const ShotFocusImage: React.FC<{
@@ -181,8 +278,13 @@ export const ShotFocusImage: React.FC<{
       })
     : 1;
 
-  // 有 cell（要畫黃框）或有 region（只是要捲到某處）都算有目標
-  const withCell = run.cells.filter((c) => (c.cell || c.region) && !c.wholePage);
+  // 有 cell（要畫黃框）、有 region（只是要捲到某處）或有箭頭都算有目標。
+  // ⚠️ 只有箭頭、沒框沒區域的段，`wholePage` 是 true（server 的 applyPlanEdits：兩個都沒有
+  //    ＝整張顯示）—— 照舊條件會被濾掉，整支箭頭靜默消失。有箭頭就放行，圖片怎麼擺仍舊走
+  //    下面的 wholePageCoverKeep 那條（跟整張顯示同一套判斷），箭頭只是畫上去。
+  const withCell = run.cells.filter(
+    (c) => (c.cell || c.region || c.arrow) && !(c.wholePage && !c.arrow)
+  );
 
   // 沒有要框的東西，或只是「看一下 App」→ 整張顯示
   if (!run.imageWidth || !run.imageHeight || withCell.length === 0) {
@@ -297,6 +399,31 @@ export const ShotFocusImage: React.FC<{
   // 兩者都會把圖捲到 focusY，差別在「畫不畫框」與「壓多黑」。
   let lastGeom: { left: number; top: number; width: number; height: number } | null = null;
   let lastBand: { bandTop: number; bandBot: number; bandLeft: number; bandRight: number } | null = null;
+  // 箭頭（2026-09-16）。跟黃框一樣「沒有的那一格沿用上一格的幾何、只把透明度關掉」——
+  // 插值序列必須每一格都有值，中斷就會跳。
+  let lastArrow: { cx: number; cy: number; len: number; ang: number } | null = null;
+  let lastArrowRGB: [number, number, number] = hexRGB(SHOT_FOCUS.arrow.defaultColor);
+  /** 只有箭頭、沒有黃框的那些格子沿用上一格的垂直位移，圖才不會在段落之間跳。 */
+  let lastYoff: number | null = null;
+  const arrowSeries = (a: ShotArrow | undefined, sc2: number, ox: number, oy: number) => {
+    if (a) {
+      const g0 = arrowGeom(a, sc2, ox, oy);
+      let ang = g0.ang;
+      // 最短路徑：相鄰兩格的角度差不超過 180°，不然箭頭會繞遠路轉一大圈。
+      if (lastArrow) {
+        while (ang - lastArrow.ang > Math.PI) ang -= Math.PI * 2;
+        while (ang - lastArrow.ang < -Math.PI) ang += Math.PI * 2;
+      }
+      lastArrow = { cx: g0.cx, cy: g0.cy, len: g0.len, ang };
+      lastArrowRGB = hexRGB(a.color);
+    }
+    const g = lastArrow || { cx: 0, cy: 0, len: 0, ang: 0 };
+    const [ar, ag, ab] = lastArrowRGB;
+    return {
+      arrowCx: g.cx, arrowCy: g.cy, arrowLen: g.len, arrowAng: g.ang,
+      arrowA: a ? 1 : 0, arrowR: ar, arrowG: ag, arrowB: ab,
+    };
+  };
   const targets = withCell.map((c) => {
     // ── 有 region：圈的那塊等比縮放後置中放進安全框（2026-09-11 使用者定案）──
     // 縮放、水平位移、亮區四個邊全部由 region 決定，不走下面那套 focusY／夾取邏輯 ——
@@ -332,13 +459,22 @@ export const ShotFocusImage: React.FC<{
         dimA: SHOT_FOCUS.regionDim,
         ...geomR,
         ...bandR,
+        ...arrowSeries(c.arrow, s2, imgLeft, imgTop),
       };
     }
-    const anchor = c.cell as ShotBox;
-    const anchorY = c.isColumn
-      ? anchor.y * sc + SHOT_FOCUS.columnTopOffset
-      : (anchor.y + anchor.h / 2) * sc;
-    let yoff = focusY - anchorY;
+    // ⚠️ 只有箭頭、沒有黃框的段（2026-09-16）沒有可以對齊的錨點 —— 不要捲動，沿用上一格的
+    //    位移；整個 run 都沒有黃框時就垂直置中（跟上面 early return 的 cover 置中一致）。
+    //    在這之前這裡是 `c.cell as ShotBox`，`c.cell` 真的不存在時會讀 undefined.y 直接爆掉。
+    const anchor = c.cell;
+    let yoff: number;
+    if (anchor) {
+      const anchorY = c.isColumn
+        ? anchor.y * sc + SHOT_FOCUS.columnTopOffset
+        : (anchor.y + anchor.h / 2) * sc;
+      yoff = focusY - anchorY;
+    } else {
+      yoff = lastYoff ?? Math.min(0, (height - run.imageHeight! * sc) / 2);
+    }
     // 黃框留白：畫面 px，人工／自動同值（2026-09-07 起不再看 cellManual，見 SHOT_FOCUS.pad）。
     const padX = SHOT_FOCUS.pad;
     const padY = SHOT_FOCUS.pad;
@@ -378,6 +514,7 @@ export const ShotFocusImage: React.FC<{
       const imgH = run.imageHeight! * sc;
       yoff = Math.min(0, Math.max(height - imgH, yoff));
     }
+    lastYoff = yoff;
     // 黃框幾何（只有 cell 才有）
     const geom = c.cell
       ? {
@@ -410,6 +547,7 @@ export const ShotFocusImage: React.FC<{
       hasBox: c.cell ? 1 : 0,
       dimA,
       ...geom, ...band,
+      ...arrowSeries(c.arrow, sc, imgLeft0, yoff),
     };
   });
 
@@ -431,7 +569,9 @@ export const ShotFocusImage: React.FC<{
     | 'imgLeft' | 'imgTop' | 'imgWidth'
     | 'left' | 'top' | 'width' | 'height'
     | 'hasBox' | 'dimA'
-    | 'bandTop' | 'bandBot' | 'bandLeft' | 'bandRight';
+    | 'bandTop' | 'bandBot' | 'bandLeft' | 'bandRight'
+    | 'arrowCx' | 'arrowCy' | 'arrowLen' | 'arrowAng' | 'arrowA'
+    | 'arrowR' | 'arrowG' | 'arrowB';
   const seriesOf = (key: SeriesKey) => {
     const vals: number[] = [];
     targets.forEach((tg, i) => {
@@ -474,6 +614,44 @@ export const ShotFocusImage: React.FC<{
     bandBot = box.top + box.height + SHOT_FOCUS.margin;
   }
   const dimColor = `rgba(11,13,18,${dimA})`;
+
+  // ── 箭頭（2026-09-16 使用者定案）────────────────────────────
+  // 位置跟著圖走（上面已經乘過當下的縮放倍率），粗細與箭鏃是固定的畫面 px。
+  const A = SHOT_FOCUS.arrow;
+  const arrowA = at('arrowA');
+  const arrowLen = at('arrowLen');
+  const arrowAng = at('arrowAng');
+  // 晃動：沿自身軸向前後平移（使用者：「頭尾線條方向前後微微晃動」＝像在戳）。
+  // 用 frame 算，所以每一格都是純函式、重算幾次都一樣 —— Remotion 分散式渲染不會抖。
+  const wobble = Math.sin((frame / fps) * A.wobbleHz * Math.PI * 2) * A.wobblePx;
+  const arrowX = at('arrowCx') + Math.cos(arrowAng) * wobble;
+  const arrowY = at('arrowCy') + Math.sin(arrowAng) * wobble;
+  const arrowR = Math.round(at('arrowR'));
+  const arrowG = Math.round(at('arrowG'));
+  const arrowB = Math.round(at('arrowB'));
+  const arrowColor = `rgb(${arrowR},${arrowG},${arrowB})`;
+  // 深色箭頭改白描邊、不加陰影（見 SHOT_FOCUS.arrow.stroke 的說明）
+  const arrowDark = (0.2126 * arrowR + 0.7152 * arrowG + 0.0722 * arrowB) / 255 < A.darkAt;
+  // 短箭頭不能讓箭鏃吃掉整支 —— 前台有最短長度限制，這裡是保險（插值中途也可能很短）。
+  const headScale = Math.min(1, arrowLen / (A.headLen * 1.6));
+  const headLen = A.headLen * headScale;
+  const headWidth = A.headWidth * headScale;
+  const half = arrowLen / 2;
+  const shaftEnd = half - headLen + 1;   // ＋1 是讓桿子鑽進箭鏃一點，避免接縫透出底色
+  /** 同一支箭頭畫兩層：底層是加粗的半透明黑（描邊），上層才是顏色。 */
+  const arrowLayer = (paint: string, grow: number) => (
+    <g>
+      <line
+        x1={-half} y1={0} x2={shaftEnd} y2={0}
+        stroke={paint} strokeWidth={A.width + grow} strokeLinecap="round"
+      />
+      <polygon
+        points={`${half},0 ${half - headLen},${-headWidth / 2} ${half - headLen},${headWidth / 2}`}
+        fill={paint} stroke={paint} strokeWidth={grow + A.headRound * 2 * headScale}
+        strokeLinejoin="round"
+      />
+    </g>
+  );
 
   return (
     <AbsoluteFill style={{ opacity: appear }}>
@@ -529,6 +707,25 @@ export const ShotFocusImage: React.FC<{
           opacity: boxOpacity,
         }}
       />
+
+      {/* 箭頭畫在最上層（壓暗與黃框之後）。整個 run 都沒有箭頭時 arrowLen 是 0，不畫。 */}
+      {arrowLen > 0 && arrowA > 0.001 && (
+        <svg
+          width={width}
+          height={height}
+          viewBox={`0 0 ${width} ${height}`}
+          style={{
+            position: 'absolute', left: 0, top: 0,
+            opacity: arrowA,
+            ...(arrowDark ? {} : { filter: A.shadow }),
+          }}
+        >
+          <g transform={`translate(${arrowX} ${arrowY}) rotate(${(arrowAng * 180) / Math.PI})`}>
+            {arrowLayer(arrowDark ? A.strokeDark : A.stroke, A.strokeWidth * 2)}
+            {arrowLayer(arrowColor, 0)}
+          </g>
+        </svg>
+      )}
     </AbsoluteFill>
   );
 };
@@ -541,6 +738,7 @@ export function buildShotRuns<
     endSec: number;
     cell?: ShotBox;
     region?: ShotBox;
+    arrow?: ShotArrow;
     cellText?: string;
     cellManual?: boolean;
     isColumn?: boolean;
@@ -556,6 +754,7 @@ export function buildShotRuns<
       endSec: s.endSec,
       cell: s.cell,
       region: s.region,
+      arrow: s.arrow,
       cellText: s.cellText,
       cellManual: s.cellManual,
       isColumn: s.isColumn,

@@ -118,6 +118,9 @@ const TEMPLATES = {
     //    這是使用者看過成品截圖後拍板的。wrap 仍是 true，超過只是折行、字級不變。
     title: { lines: 2, per: 10, wrap: true, where: '開場第一秒' },
     label: '盤中焦點',
+    // 這支的 timeline 有把 arrow 傳給渲染端 → 前台才給畫箭頭（2026-09-16）。
+    // ⚠️ 沒接的模板不要加這個旗標：畫得出來、成品卻沒有，就是靜默失效。
+    arrow: true,
     hint: '',
     // 只出直式（使用者定案「只出直式」），所以只有一個輸出、不需要 outputLabels 標「直式／橫式」。
     outputs: ['out/output-midday.mp4'],
@@ -130,6 +133,9 @@ const TEMPLATES = {
     // 橫式的標題在右側面板，可用寬 706px ÷ 字級 68 ≈ 10.4 字 —— 兩邊都是「剛好塞得下、很靠邊」。
     title: { lines: 2, per: 10, wrap: true, where: '直式：開場第一秒　／　橫式：右側面板全程顯示' },
     label: '大盤小報',
+    // 這支的 timeline 有把 arrow 傳給渲染端 → 前台才給畫箭頭（2026-09-16）。
+    // ⚠️ 沒接的模板不要加這個旗標：畫得出來、成品卻沒有，就是靜默失效。
+    arrow: true,
     hint: '',
     outputs: ['out/output-dapan.mp4', 'out/output-dapan-landscape.mp4'],
     outputLabels: { 'output-dapan.mp4': '直式', 'output-dapan-landscape.mp4': '橫式' },
@@ -142,6 +148,9 @@ const TEMPLATES = {
     // （兩行、每行 10 字參考值；wrap 仍是 true，超過只是折行、字級不變）。
     title: { lines: 2, per: 10, wrap: true, where: '開場第一秒' },
     label: '美股焦點',
+    // 這支的 timeline 有把 arrow 傳給渲染端 → 前台才給畫箭頭（2026-09-16）。
+    // ⚠️ 沒接的模板不要加這個旗標：畫得出來、成品卻沒有，就是靜默失效。
+    arrow: true,
     hint: '',
     // 只出直式（同盤中焦點），所以只有一個輸出、不需要 outputLabels 標「直式／橫式」。
     outputs: ['out/output-usstock.mp4'],
@@ -757,7 +766,7 @@ function pendingAnnotsOf(job, rows) {
       src: a.src,
       startCharIdx: Math.min(a.startCharIdx, a.endCharIdx),
       endCharIdx: Math.max(a.startCharIdx, a.endCharIdx),
-      region: a.region || null, cell: a.cell || null,
+      region: a.region || null, cell: a.cell || null, arrow: a.arrow || null,
       imgW: a.imgW || null, imgH: a.imgH || null,
     }))
     .filter((a) => !(rows || []).some((r) => r.src === a.src && r.startCharIdx != null
@@ -798,7 +807,7 @@ function appendMissingAnnots(job, edits) {
     if (overlaps(item, dropped)) return;   // 同事刻意刪掉的，不要復活
     added.push({
       i: `ann${i}`, _added: true, _manual: true, _late: true, deleted: false,
-      src: a.src, cell: a.cell || null, region: a.region || null,
+      src: a.src, cell: a.cell || null, region: a.region || null, arrow: a.arrow || null,
       startCharIdx: item.lo, endCharIdx: item.hi,
       imgW: a.imgW || null, imgH: a.imgH || null,
     });
@@ -857,6 +866,9 @@ function buildPlanView(job) {
       //（2026-08-17 使用者：「我認為你可以看我手動來學習」）
       cell: s.cell || null,
       region: s.region || null,
+      // 箭頭（2026-09-16）。ffmpeg 縮圖畫不出箭頭（drawbox 只能畫軸對齊矩形），
+      // 前台的 preview() 是自己用 SVG 疊的，所以這個欄位一定要跟著送過去。
+      arrow: s.arrow || null,
       // 前台在腳本上拖選，存的就是字元索引（比叫人填秒數直觀得多）
       startCharIdx: s.startCharIdx,
       endCharIdx: s.endCharIdx,
@@ -1011,6 +1023,8 @@ function applyPlanEdits(job, edits) {
       //    不寫進計畫檔 —— 跟 2026-08-25「人工沒標就不要出現、自動判定只進修正紀錄」同一條規則，
       //    只是層級從「段落」下到「框」。
       delete s.cell; delete s.cellText;
+      // 箭頭跟框一樣存原圖像素座標 —— 換了圖就是錯的位置，一起清掉（2026-09-16）。
+      delete s.arrow;
       s.isColumn = false;
     }
     // 人工拖出來的框：完全照使用者給的，不再套任何自動推算。
@@ -1025,6 +1039,23 @@ function applyPlanEdits(job, edits) {
       if (hasRegion) s.region = R(e.region); else delete s.region;
       s.wholePage = !hasCell && !hasRegion;   // 都沒有 → 整張顯示
       s._manualCell = hasCell || hasRegion;
+    }
+    // ── 箭頭（2026-09-16 使用者定案）────────────────────────────
+    // 跟 cell／region 完全獨立：可以只有箭頭、沒有任何框（那時 wholePage 仍是 true ——
+    // 箭頭不改變圖片怎麼擺，渲染端 ShotFocus.tsx 對「wholePage ＋ 有箭頭」的段落特別放行）。
+    // 存兩個端點的原圖像素座標；長度 0 或座標不是數字就當成沒畫。
+    if (e.arrow !== undefined) {
+      const a = e.arrow;
+      const nums = a && [a.x1, a.y1, a.x2, a.y2].every((n) => typeof n === 'number' && Number.isFinite(n));
+      if (nums && Math.hypot(a.x2 - a.x1, a.y2 - a.y1) > 0) {
+        s.arrow = {
+          x1: Math.round(a.x1), y1: Math.round(a.y1),
+          x2: Math.round(a.x2), y2: Math.round(a.y2),
+        };
+        if (typeof a.color === 'string' && /^#[0-9a-f]{6}$/i.test(a.color)) s.arrow.color = a.color;
+      } else {
+        delete s.arrow;
+      }
     }
     // 出現範圍：優先用「子句範圍」（前台拉的），秒數只是退路。
     // 子句 → 字元索引的對位是 auto-shot 算好附在 units 裡的，這裡只取頭尾。
@@ -1290,6 +1321,12 @@ function recordCorrections(job, before, edits) {
   const box = (x) => (x && x.w > 0 && x.h > 0
     ? { x: Math.round(x.x), y: Math.round(x.y), w: Math.round(x.w), h: Math.round(x.h) } : null);
   const same = (x, y) => JSON.stringify(box(x)) === JSON.stringify(box(y));
+  // 箭頭（2026-09-16）：兩個端點＋顏色，長度 0 當成沒畫。
+  const arw = (a) => (a && [a.x1, a.y1, a.x2, a.y2].every((n) => typeof n === 'number' && Number.isFinite(n))
+    && Math.hypot(a.x2 - a.x1, a.y2 - a.y1) > 0
+    ? { x1: Math.round(a.x1), y1: Math.round(a.y1), x2: Math.round(a.x2), y2: Math.round(a.y2),
+      color: String(a.color || '').toLowerCase() || null } : null);
+  const sameArw = (x, y) => JSON.stringify(arw(x)) === JSON.stringify(arw(y));
   // 使用者在編輯器選的原因（快選標籤 + 補充文字）。一列可能產生多筆 diff，都掛同一份原因。
   // ⚠️ 2026-08-21 起前台不再送這兩個欄位（編輯器的「為什麼要改」已移除），所以新紀錄的
   //    `reason` 一律是 null，修正紀錄頁那一欄會顯示「—」。**故意留著不拆**：
@@ -1362,7 +1399,7 @@ function recordCorrections(job, before, edits) {
         autoCoveredBy: coveredBy.map((r) => r.src + (r.cellText ? `（${r.cellText}）` : '')),
         manual: secOf(e.startCharIdx, e.endCharIdx),
         manualChars: `${e.startCharIdx}~${e.endCharIdx}`,
-        manualCell: box(e.cell), manualRegion: box(e.region),
+        manualCell: box(e.cell), manualRegion: box(e.region), manualArrow: arw(e.arrow),
         size: e.imgW && e.imgH ? { w: e.imgW, h: e.imgH } : null,
         reason,
       });
@@ -1382,7 +1419,9 @@ function recordCorrections(job, before, edits) {
     // 完全記不到；而且 region（顯示區域）從頭到尾沒進紀錄 —— 只畫顯示區域是最常見的操作。
     const cellChanged = !same(e.cell, b.cell);
     const regionChanged = !same(e.region, b.region);
-    if (cellChanged || regionChanged) {
+    // 只加了箭頭、框一個都沒動也是一次人工修正 —— 不記的話這一列在紀錄裡完全看不到（2026-09-16）
+    const arrowChanged = !sameArw(e.arrow, b.arrow);
+    if (cellChanged || regionChanged || arrowChanged) {
       const hadAuto = !!(box(b.cell) || box(b.region));
       const hasManual = !!(box(e.cell) || box(e.region));
       const sug = sugOf(e.src || b.src, e.startCharIdx ?? b.startCharIdx, e.endCharIdx ?? b.endCharIdx);
@@ -1392,17 +1431,22 @@ function recordCorrections(job, before, edits) {
         from: b.src,
         autoCell: box(b.cell), manualCell: box(e.cell),
         autoRegion: box(b.region), manualRegion: box(e.region),
+        autoArrow: arw(b.arrow), manualArrow: arw(e.arrow),
         autoCellText: b.cellText,
         systemCell: sug ? box(sug.cell) : null,
         systemCellText: sug ? sug.cellText : null,
         systemPage: sug ? sug.page : null,   // 2026-09-03：記下系統當時判的頁型（cell-suggest 本來就帶 page），給 page-types / memKey 用
         systemWhy: sug ? sug.why : null,
-        autoWhy: (!hadAuto
-          ? 'AI 原本沒框（整張顯示），人自己框了 → 自動判定沒抓到重點'
-          : !hasManual
-            ? '人把 AI 的框整個拿掉，改成整張顯示'
-            : `AI 框了「${b.cellText || '—'}」，人改了位置或大小`) + sugNote(sug, e.cell),
-        changed: [cellChanged ? '黃框' : null, regionChanged ? '顯示區域' : null].filter(Boolean).join('＋'),
+        autoWhy: (!cellChanged && !regionChanged
+          // 框一個都沒動、只動了箭頭 —— 不要套下面那幾句（會變成「人自己框了」這種假話）
+          ? '框沒有動，人只加／改了箭頭 → 自動配圖沒有箭頭這回事，一律是人工標的'
+          : !hadAuto
+            ? 'AI 原本沒框（整張顯示），人自己框了 → 自動判定沒抓到重點'
+            : !hasManual
+              ? '人把 AI 的框整個拿掉，改成整張顯示'
+              : `AI 框了「${b.cellText || '—'}」，人改了位置或大小`) + sugNote(sug, e.cell),
+        changed: [cellChanged ? '黃框' : null, regionChanged ? '顯示區域' : null,
+          arrowChanged ? '箭頭' : null].filter(Boolean).join('＋'),
         size: b.imageWidth && b.imageHeight ? { w: b.imageWidth, h: b.imageHeight } : null,
         reason,
       });
@@ -1485,7 +1529,7 @@ function recordCorrections(job, before, edits) {
         autoCellText: first ? (first.cellText || (first.wholePage ? '整張顯示' : '')) : '',
         manual: secOf(lo, hi),
         manualChars: `${lo}~${hi}`,
-        manualCell: box(a.cell), manualRegion: box(a.region),
+        manualCell: box(a.cell), manualRegion: box(a.region), manualArrow: arw(a.arrow),
         autoWhy: (noCf
           ? '這一支的對照組一段都沒排出來（多半是頁型沒認出來），所以比不出 AI 本來會怎麼配'
           : !hit.length

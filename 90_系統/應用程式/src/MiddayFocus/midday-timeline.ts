@@ -12,7 +12,7 @@
  */
 
 import subtitleData from '../subtitles.json';
-import { buildShotRuns, markRunCuts, type ShotBox } from '../ShotFocus';
+import { buildShotRuns, markRunCuts, type ShotArrow, type ShotBox } from '../ShotFocus';
 import generatedShots from './midday-shots.generated.json';
 import {
   VIDEO_FPS,
@@ -70,6 +70,8 @@ type GeneratedShot = {
   cell?: ShotBox;
   /** 人工圈的「顯示區域」：只顯示這塊、其餘壓黑（跟 cell 是兩件事） */
   region?: ShotBox;
+  /** 人工拖的箭頭：頭尾兩點的原圖像素座標＋顏色（跟 cell／region 各自獨立） */
+  arrow?: ShotArrow;
   cellText?: string;
   /** 伺服器標記：這個框是人工拖的／伺服器已經留過白的 → 渲染端不要再加自動留白 */
   _manualCell?: boolean;
@@ -85,6 +87,7 @@ export type MiddayShot = {
   endSec: number;
   cell?: ShotBox;
   region?: ShotBox;
+  arrow?: ShotArrow;
   cellText?: string;
   /** 人工框：渲染時只留一點視覺呼吸，不套 OCR 用的自動留白 */
   cellManual?: boolean;
@@ -105,6 +108,7 @@ export const MIDDAY_SHOTS: MiddayShot[] = (generatedShots as GeneratedShot[])
         endSec: t.end,
         cell: g.cell,
         region: g.region,
+        arrow: g.arrow,
         cellText: g.cellText,
         cellManual: g._manualCell,
         isColumn: g.isColumn,
