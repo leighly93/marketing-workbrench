@@ -75,10 +75,10 @@ export const DapanComposition: React.FC = () => {
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
           />
         </AbsoluteFill>
-        {/* 2026-08-07 修正：intro-frame.jpg 的日期牌梯形跟 header-overlay.png 不同 y 座標
-            （量到 top≈479，header-overlay.png 是 top≈108），之前誤用同一組座標疊在兩張圖上、
-            intro 那張因此歪掉。兩張圖分開傳 top 值 */}
-        <DateBadge top={479} />
+        {/* 2026-08-07 修正：intro-frame.jpg 的日期牌槽跟 header-overlay.png 不同 y 座標，
+            之前誤用同一組座標疊在兩張圖上、intro 那張因此歪掉。兩張圖分開傳 top 值。
+            2026-09-16 使用者換素材後重量：intro 的槽是 y489–660（舊素材是 y479–664）。 */}
+        <DateBadge top={489} />
         <TitleCard topOffset={70} />
       </Sequence>
 
@@ -152,7 +152,7 @@ export const DapanComposition: React.FC = () => {
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
           />
         </AbsoluteFill>
-        <DateBadge top={108} />
+        <DateBadge top={129} />
       </Sequence>
 
       {/* === BGM：跨整支影片墊底，頭尾淡入淡出 === */}
@@ -182,10 +182,19 @@ export const DapanComposition: React.FC = () => {
  */
 
 
-// 日期牌空白區座標（分別實測 intro-frame.jpg 與 header-overlay.png 兩張圖的實際像素，2026-08-07）：
-// 藍色梯形 x:60-379 兩張圖一致，但 y 不同——header-overlay.png 是 y:108-293，
-// intro-frame.jpg 是 y:479-664（低了 371px，兩張圖的版面設計不是同一個基準）。
+// 日期牌空白區座標（分別實測 intro-frame.jpg 與 header-overlay.png 兩張圖的實際像素）：
+// 兩張圖的招牌是同一套美術、只差 y（intro 整體比 header 低 360px），
 // 呼叫端要各自傳對的 top 值，不能共用一組座標（2026-08-06 版本的 bug 就是共用同一組）。
+//
+// 2026-09-16 使用者換掉素材後重量（舊素材是「無外框的青色平行四邊形 x60–379 /
+// header y108–293 / intro y479–664」，那組數字已失效）：
+//   新素材是「銀色外框膠囊」，量法＝掃銀白外框（R,G,B>160 且低彩度）取內緣：
+//   外框 header y124–306、intro y484–666（兩張都是 h183）→ 內緣藍色槽高 172
+//     header-overlay.png：y129–300     intro-frame.jpg：y489–660
+//   左緣：外框 x73–78 → 內緣 x79（兩張一致）
+//   右緣：是斜切分隔線、上寬下窄，y 每降 20px 約左移 7px；取槽垂直中央約 x357
+//   → 可用槽 x79–357（寬 279）、中心 x218.5
+// ⚠️ 這兩張圖再換一次就要照上面的量法重量一遍，不能沿用。
 const DateBadge: React.FC<{ top: number }> = ({ top }) => {
   const headerDate = (videoMeta as any).headerDate ?? '';
   if (!headerDate) return null;
@@ -194,10 +203,12 @@ const DateBadge: React.FC<{ top: number }> = ({ top }) => {
       <div
         style={{
           position: 'absolute',
-          left: 55, // 2026-08-07 使用者要求再往左移 5px（原本 60）
+          // 這個框＝槽本身（left/width 是槽的左內緣與寬，top 由呼叫端傳、height 是槽高），
+          // 視覺置中靠下面那層的 transform 修，座標本身不再手動偏移
+          left: 79,
           top,
-          width: 319,
-          height: 185,
+          width: 279,
+          height: 172,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -214,6 +225,10 @@ const DateBadge: React.FC<{ top: number }> = ({ top }) => {
             letterSpacing: -2,
             lineHeight: 1,
             textShadow: '3px 3px 6px rgba(0,0,0,0.45)', // 2026-08-10 使用者要求右下方向加一點陰影
+            // 光學置中修正：flex 置中對齊的是「字的前進寬度＋em 框」，不是實際墨跡。
+            // 斜體讓墨跡整體偏右、數字基線讓墨跡偏下，2026-09-16 實測（fontSize 106）
+            // 墨跡中心比框中心右 12px、下 7px → 用 em 表示才會跟著字級縮放。
+            transform: 'translate(-0.113em, -0.066em)',
           }}
         >
           {headerDate}

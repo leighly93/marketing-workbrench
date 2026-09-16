@@ -189,8 +189,12 @@ export const DapanLandscapeComposition: React.FC = () => {
 /** 截圖段全螢幕圖片（橫式：擺在左側講者可見區、淡入淡出） */
 
 
-// 日期牌：讀 video-meta.json.headerDate（MMDD），擺在右側面板藍色梯形槽內。
-// 藍色梯形實測約 x1240–1425 / y255–390（量自 intro-frame_Horizontal.png）。第一版預設值。
+// 日期牌：讀 video-meta.json.headerDate（MMDD），擺在右側面板的藍色槽內。
+// 2026-09-16 使用者換素材後重量（量自 intro-frame_Horizontal.png，量法同直式：掃銀白外框取內緣）：
+//   外框 y253–383 → 內緣藍色槽 y256–379（高 124）、中心 y317.5
+//   左緣外框 x1225–1227 → 內緣 x1228；右緣是斜切分隔線、槽垂直中央約 x1430
+//   → 可用槽 x1228–1430（寬 202）、中心 x1329
+// ⚠️ 這張圖再換一次就要重量一遍（舊素材量到的 x1240–1425 / y255–390 已失效）。
 const LandscapeDateBadge: React.FC = () => {
   const headerDate = (videoMeta as any).headerDate ?? '';
   if (!headerDate) return null;
@@ -199,10 +203,10 @@ const LandscapeDateBadge: React.FC = () => {
       <div
         style={{
           position: 'absolute',
-          left: 1244, // 2026-08-10 依實測校正置中（1240→1258 偏右、又偏低 → 回 1244）
-          top: 240, // 實測 0810 略偏低，往上挪 10px 對準梯形中心
-          width: 185,
-          height: 140,
+          left: 1228, // 槽左內緣（框＝槽本身，視覺置中靠下面那層的 transform 修）
+          top: 256, // 槽上內緣
+          width: 202,
+          height: 124,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -219,6 +223,8 @@ const LandscapeDateBadge: React.FC = () => {
             letterSpacing: -2,
             lineHeight: 1,
             textShadow: '3px 3px 6px rgba(0,0,0,0.45)',
+            // 光學置中修正，跟直式同一組 em 值（見 DapanComposition.tsx 的說明）
+            transform: 'translate(-0.113em, -0.066em)',
           }}
         >
           {headerDate}
