@@ -146,20 +146,11 @@ export const SHOT_FOCUS = {
     headLen: 30,
     headWidth: 38,
     /**
-     * 描邊：截圖有淺底也有深底，不描邊的話某些底色上整支會糊掉。
-     * ⚠️ 描邊色與陰影**跟著箭頭自己的明暗走**（2026-09-16 使用者：「黑色的箭頭不要有黑陰影」）：
-     *   淺色箭頭（紅／綠／藍／橘／白）→ 黑描邊 ＋ 黑陰影，跟以前一樣。
-     *   深色箭頭（#1A1A1A）→ 白描邊、**不加陰影** —— 黑描邊加黑陰影疊在黑箭頭上，
-     *     整支糊成一團暈開的黑影，反而比不描邊還難看。
-     * 門檻用感知亮度（0.2126R+0.7152G+0.0722B）；換段換色時顏色是插值的，
-     * 描邊會在跨過門檻的那一格切換，實務上只有「一深一淺相接」才遇得到。
+     * ⚠️ 2026-09-16 使用者定案：**箭頭是純色，不要描邊、不要陰影**（「偏醜」）。
+     * 在這之前是「淺色箭頭黑描邊＋黑陰影、深色箭頭白描邊」那一套，已整組移除。
+     * 代價是同色底上會看不見（白箭頭放淺底、深灰箭頭放深底）—— 換一個顏色就好，
+     * 色票給了六色正是為此。不要為了這個把描邊加回來。
      */
-    stroke: 'rgba(0,0,0,0.55)',
-    strokeDark: 'rgba(255,255,255,0.8)',
-    /** 亮度低於這個值就當成深色箭頭（0~1） */
-    darkAt: 0.42,
-    shadow: 'drop-shadow(0 2px 6px rgba(0,0,0,0.35))',
-    strokeWidth: 2,
     /**
      * 箭鏃的圓角（2026-09-16 使用者要「帶一點圓角」）。
      * 做法是給箭鏃加一圈同色、linejoin=round 的描邊 —— 所以實際輪廓會比 headLen／headWidth
@@ -630,8 +621,6 @@ export const ShotFocusImage: React.FC<{
   const arrowG = Math.round(at('arrowG'));
   const arrowB = Math.round(at('arrowB'));
   const arrowColor = `rgb(${arrowR},${arrowG},${arrowB})`;
-  // 深色箭頭改白描邊、不加陰影（見 SHOT_FOCUS.arrow.stroke 的說明）
-  const arrowDark = (0.2126 * arrowR + 0.7152 * arrowG + 0.0722 * arrowB) / 255 < A.darkAt;
   // 短箭頭不能讓箭鏃吃掉整支 —— 前台有最短長度限制，這裡是保險（插值中途也可能很短）。
   const headScale = Math.min(1, arrowLen / (A.headLen * 1.6));
   const headLen = A.headLen * headScale;
@@ -639,15 +628,16 @@ export const ShotFocusImage: React.FC<{
   const half = arrowLen / 2;
   const shaftEnd = half - headLen + 1;   // ＋1 是讓桿子鑽進箭鏃一點，避免接縫透出底色
   /** 同一支箭頭畫兩層：底層是加粗的半透明黑（描邊），上層才是顏色。 */
-  const arrowLayer = (paint: string, grow: number) => (
+  // 純色一層。箭鏃的 stroke 跟 fill 同色，只是拿來做圓角（linejoin=round），不是描邊。
+  const arrowShape = (paint: string) => (
     <g>
       <line
         x1={-half} y1={0} x2={shaftEnd} y2={0}
-        stroke={paint} strokeWidth={A.width + grow} strokeLinecap="round"
+        stroke={paint} strokeWidth={A.width} strokeLinecap="round"
       />
       <polygon
         points={`${half},0 ${half - headLen},${-headWidth / 2} ${half - headLen},${headWidth / 2}`}
-        fill={paint} stroke={paint} strokeWidth={grow + A.headRound * 2 * headScale}
+        fill={paint} stroke={paint} strokeWidth={A.headRound * 2 * headScale}
         strokeLinejoin="round"
       />
     </g>
@@ -717,12 +707,10 @@ export const ShotFocusImage: React.FC<{
           style={{
             position: 'absolute', left: 0, top: 0,
             opacity: arrowA,
-            ...(arrowDark ? {} : { filter: A.shadow }),
           }}
         >
           <g transform={`translate(${arrowX} ${arrowY}) rotate(${(arrowAng * 180) / Math.PI})`}>
-            {arrowLayer(arrowDark ? A.strokeDark : A.stroke, A.strokeWidth * 2)}
-            {arrowLayer(arrowColor, 0)}
+            {arrowShape(arrowColor)}
           </g>
         </svg>
       )}

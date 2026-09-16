@@ -150,8 +150,7 @@ test('前台預覽的箭頭比例，要跟成品端的常數一致', () => {
     return Number(m[1]);
   };
   const width = 取('width'), headLen = 取('headLen');
-  const headWidth = 取('headWidth'), strokeWidth = 取('strokeWidth');
-  const headRound = 取('headRound');
+  const headWidth = 取('headWidth'), headRound = 取('headRound');
 
   const 前台 = 讀('server/public/app.js');
   const 比例 = (名稱) => {
@@ -164,7 +163,6 @@ test('前台預覽的箭頭比例，要跟成品端的常數一致', () => {
   assert.equal(Number(shaft[1]), width, '線寬對不上');
   assert.deepEqual(比例('ARROW_HEAD_RATIO'), [headLen, width], '箭鏃長度比例對不上');
   assert.deepEqual(比例('ARROW_HEAD_W_RATIO'), [headWidth, width], '箭鏃寬度比例對不上');
-  assert.deepEqual(比例('ARROW_STROKE_RATIO'), [strokeWidth, width], '描邊比例對不上');
   assert.deepEqual(比例('ARROW_ROUND_RATIO'), [headRound, width], '箭鏃圓角比例對不上');
 });
 

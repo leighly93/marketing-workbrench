@@ -43,7 +43,6 @@ const ARROW_MIN_RATIO = 0.04;
 const ARROW_CANVAS_W = 1080, ARROW_CANVAS_H = 1920;
 const ARROW_SAFE_H = 1120;                 // safeBottom 1430 − safeTop 310
 const ARROW_SHAFT = 11, ARROW_HEAD_RATIO = 30 / 11, ARROW_HEAD_W_RATIO = 38 / 11;
-const ARROW_STROKE_RATIO = 2 / 11;         // strokeWidth ÷ width
 const ARROW_ROUND_RATIO = 3 / 11;          // headRound ÷ width（箭鏃圓角）
 const ARROW_COVER_KEEP = 0.75;             // SHOT_FOCUS.wholePageCoverKeep
 
@@ -87,25 +86,20 @@ function arrowSVG(w, h, x1, y1, x2, y2, color, shaft) {
   const hl = lw * ARROW_HEAD_RATIO * k;
   const hw = lw * ARROW_HEAD_W_RATIO * k;
   const ang = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
-  // 深色箭頭配白描邊、不加陰影（成品同一條規則，見 ShotFocus.tsx 的 SHOT_FOCUS.arrow.stroke）
-  const rgb = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color || ARROW_DEFAULT);
-  const dark = rgb
-    && (0.2126 * parseInt(rgb[1], 16) + 0.7152 * parseInt(rgb[2], 16) + 0.0722 * parseInt(rgb[3], 16)) / 255 < 0.42;
-  const paint = (c, grow) =>
+  // 純色一層，不描邊也不加陰影（成品同一條規則，見 ShotFocus.tsx 的 SHOT_FOCUS.arrow）。
+  // 箭鏃的 stroke 跟 fill 同色，只是拿來把角磨圓。
+  const paint = (c) =>
     `<line x1="0" y1="0" x2="${(len - hl + 1).toFixed(1)}" y2="0" stroke="${c}"`
-    + ` stroke-width="${(lw + grow).toFixed(1)}" stroke-linecap="round"/>`
+    + ` stroke-width="${lw.toFixed(1)}" stroke-linecap="round"/>`
     + `<polygon points="${len.toFixed(1)},0 ${(len - hl).toFixed(1)},${(-hw / 2).toFixed(1)}`
     + ` ${(len - hl).toFixed(1)},${(hw / 2).toFixed(1)}" fill="${c}" stroke="${c}"`
-    + ` stroke-width="${(grow + lw * ARROW_ROUND_RATIO * 2 * k).toFixed(1)}" stroke-linejoin="round"/>`;
+    + ` stroke-width="${(lw * ARROW_ROUND_RATIO * 2 * k).toFixed(1)}" stroke-linejoin="round"/>`;
   const svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('class', 'bx arrow');
   svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
   svg.style.cssText = `left:0;top:0;width:${w}px;height:${h}px`;
   svg.innerHTML = `<g transform="translate(${x1.toFixed(1)} ${y1.toFixed(1)}) rotate(${ang.toFixed(2)})">`
-    // ⚠️ 描邊的加粗量也要照比例縮。寫死 2px 的話，細線上描邊比箭頭本身還粗，
-    //    看起來就是「一條包著黑邊的細線」，跟成品差很多。
-    + paint(dark ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.55)', lw * ARROW_STROKE_RATIO * 2)
-    + paint(color || ARROW_DEFAULT, 0)
+    + paint(color || ARROW_DEFAULT)
     + '</g>';
   return svg;
 }
