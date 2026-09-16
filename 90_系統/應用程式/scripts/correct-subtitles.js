@@ -224,12 +224,20 @@ if (midWordCuts > 0) {
   console.log(`✂️  ${midWordCuts} 個斷句點原本落在 whisper word 中間，已把該 word 切開`);
 }
 
-// ─── 7. _scriptBreaks（強制換幕點）─────────────────────
+// ─── 7. 強制換幕點：直接標在 word 上（breakAfter），另存 _scriptBreaks 當相容欄位 ──
+//
+// ⚠️ 2026-09-15：這裡本來只輸出時間（`_scriptBreaks`），Subtitles.tsx 再拿時間去「猜」是哪顆 word
+//    （0.05 秒容差）。這一步是資訊遺失 —— 這裡明明知道斷點屬於 `scriptCharToWord[i]` 那顆 word，
+//    存成 float 之後就分不出來了。三次同樣的 bug（0903 再創歷史新／高、0911 DRA／M、
+//    0915 靜／待週四）全都是那個容差在相鄰兩顆 word 之間誤判，每次只能再補一條判斷規則。
+//    現在直接把「這顆 word 之後要換幕」標在 word 上，渲染端不必再比時間，這一類就不會再出現。
+//    `_scriptBreaks` 保留：舊的 subtitles.json 沒有 breakAfter，渲染端要靠它走舊路。
 const breakSet = new Set();
 for (let i = 0; i < scriptChars.length; i++) {
   if (!scriptChars[i].breakAfter) continue;
   const w = scriptCharToWord[i];
   if (!w) continue;
+  w.breakAfter = true;
   breakSet.add(Number(w.end.toFixed(3)));
 }
 subs._scriptBreaks = [...breakSet].sort((a, b) => a - b);

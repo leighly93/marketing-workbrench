@@ -10,6 +10,12 @@ type WhisperWord = {
   word: string;
   start: number;
   end: number;
+  /**
+   * 「這顆字之後要換幕」—— correct-subtitles.js 第 7 步直接標上來的權威斷點
+   * （2026-09-15）。有這個欄位就不必再拿 `_scriptBreaks` 的時間去猜是哪顆字。
+   * 舊的 subtitles.json 沒有這個欄位 → 整份都沒有 → 退回時間比對那條路。
+   */
+  breakAfter?: boolean;
 };
 
 type WhisperSegment = {
@@ -38,7 +44,8 @@ const data = subtitleData as WhisperOutput;
  * 把 Whisper 的長 segment 切成多個短句以利顯示。
  *
  * 切點優先順序（2026-05-28 改：嚴格跟 script.txt 標點，不再用字數硬斷）：
- *   1. ⭐ script.txt 推算出來的「強制換幕時間」（_scriptBreaks，最優先）
+ *   1. ⭐ script.txt 的強制換幕點（最優先）：word 自己帶的 breakAfter 標記，
+ *      舊檔沒有標記才退回 _scriptBreaks 的時間比對
  *   2. 上一字結尾為 ，。？！ 等標點
  *   3. 與下個字之間停頓 > GAP_THRESHOLD（換氣，safety net）
  *
@@ -63,9 +70,23 @@ const PUNCT_RE = /[，。、！？：；]/;
 // 字幕變成「但晶豪科主攻利基型DRA」＋只有 1 frame 的「M」（使用者回報：DRAM 變成 DRA／M）。
 // 改成 > 之後：A 不切（0 > 0 不成立）、M 切（下一個字「8」結尾 14.84，距離 0.32 > 0）。
 // 0903 那個案子不受影響（0.047 vs 0，> 與 >= 同樣不切）。
-function isAtScriptBreak(endTime: number, breaks: number[], nextEnd?: number): boolean {
-  return breaks.some(
-    (t) =>
+//
+// 2026-09-15：**一個斷點只能切一刀**（used）。上面那個「離它最近」只往後看一個字，看不到
+// 「這個斷點剛剛已經切過了」。0915 大盤：「第二、靜待週四」的、斷點在 37.12，第二(–37.12)
+// 距離 0 → 切（正確）；下一個字 靜(37.12–37.13) 距離 0.01 也還在容差內，而再下一個字
+// 待(–37.34) 距離 0.22 更遠 → 前向比較成立，同一個斷點又切了第二刀，「靜」變成 0.01 秒的
+// 獨立字幕（使用者：「『靜待』字幕被切斷了，應該要連在一起」）。同一支片還有「千／萬別亂接刀」
+// 「與／外本比排行榜」兩處。斷點用掉就劃掉，後面的字再近也不能重複使用。
+// 回傳用掉的斷點索引（−1 ＝ 沒有），真的切下去才標記 —— midNumber 擋掉的那次不算用掉。
+function findScriptBreak(
+  endTime: number,
+  breaks: number[],
+  used: boolean[],
+  nextEnd?: number
+): number {
+  return breaks.findIndex(
+    (t, i) =>
+      !used[i] &&
       Math.abs(endTime - t) < BREAK_TOLERANCE &&
       (nextEnd == null || Math.abs(nextEnd - t) > Math.abs(endTime - t))
   );
@@ -91,6 +112,16 @@ function splitIntoPhrases(
     for (const w of seg.words) allWords.push(w);
   }
 
+  // 斷點來源二選一（2026-09-15）：
+  //   ① word 自己帶 breakAfter（correct-subtitles.js 標的）→ 直接切，不比時間、不會誤判。
+  //   ② 舊的 subtitles.json 沒有標記 → 退回 `_scriptBreaks` 時間比對（容差＋用過就劃掉）。
+  // 整份有沒有標記是一次判定，不逐字混用 —— 混用的話「沒被標到的字」會再走一次時間比對，
+  // 等於把剛拿掉的誤判又放回來。
+  const hasBreakMarks = allWords.some((w) => w.breakAfter);
+  // 每個斷點只能用一次（見 findScriptBreak）。只有走時間比對那條路才需要。
+  const usedBreaks: boolean[] = breaks.map(() => false);
+  // current 結尾是哪一顆 word —— 判斷「這顆之後要不要換幕」用。
+  let lastWord: WhisperWord | null = null;
   let current: Phrase | null = null;
   for (let wi = 0; wi < allWords.length; wi++) {
     const w = allWords[wi];
@@ -110,6 +141,7 @@ function splitIntoPhrases(
     if (!wordText) continue;
     if (current === null) {
       current = { start: w.start, end: w.end, text: wordText };
+      lastWord = w;
       continue;
     }
     const gap = w.start - current.end;
@@ -117,7 +149,10 @@ function splitIntoPhrases(
     // 只有全形標點才算斷句點（PUNCT_RE 已不含半形），所以半形 . , 結尾（1.95 / 44,396）自然不斷，
     // 不再需要「小數點兩側是數字」的特例。
     const prevEndsWithPunct = PUNCT_RE.test(lastChar);
-    const atScriptBreak = isAtScriptBreak(current.end, breaks, w.end);
+    const breakIdx = hasBreakMarks
+      ? -1
+      : findScriptBreak(current.end, breaks, usedBreaks, w.end);
+    const atScriptBreak = hasBreakMarks ? !!(lastWord && lastWord.breakAfter) : breakIdx >= 0;
     // 嚴格跟 script.txt 標點切：script break / Whisper word-end 標點 / 換氣停頓。不再用字數硬斷。
     // 數字中間絕不斷開：Whisper 唸「零點八八」時常在 0. 與 88 之間留停頓，
     // 只看 gap 就會把 0.88% 拆成「0.」「88%」兩行（2026-08-12 使用者回報）。
@@ -127,18 +162,22 @@ function splitIntoPhrases(
     //    結果 0904 那支的「PCB、ABF」變成「PCBABF」—— 中間那個、本來就該斷，
     //    而 whisper 給 ABF 的 token 沒有 leading space，分不出「同一個字」還是「兩個字」。
     //    真正的斷點資訊在 _scriptBreaks（、有、DRAM 中間沒有），所以那一刀本來就該由
-    //    isAtScriptBreak 判掉，不要在這裡加英文特例。DRAM 那個 bug 修在 isAtScriptBreak 的平手處理。
+    //    斷點判斷那邊判掉，不要在這裡加英文特例。DRAM 那個 bug 修在斷點的平手處理。
     const shouldSplit =
       !midNumber && (atScriptBreak || prevEndsWithPunct || gap > GAP_THRESHOLD);
 
     if (shouldSplit) {
+      // 真的切下去才把斷點劃掉：被 midNumber 擋掉的那次不算用過。
+      if (breakIdx >= 0) usedBreaks[breakIdx] = true;
       raw.push({
         ...current,
         text: current.text.replace(/[，。、]+$/, '').trim(),
       });
       current = { start: w.start, end: w.end, text: wordText };
+      lastWord = w;
     } else {
       current.end = w.end;
+      lastWord = w;
       const isAlnumEdge =
         /[0-9A-Za-z]$/.test(current.text) && /^[0-9A-Za-z]/.test(wordText);
       current.text += (hasLeadingSpace && isAlnumEdge ? ' ' : '') + wordText;
@@ -152,7 +191,23 @@ function splitIntoPhrases(
   }
 
   // 2026-05-28 起：不再合併太短句、嚴格跟 script.txt 結構（用戶要求）
-  return raw.filter((p) => p.text.length > 0);
+  // 2026-09-15 唯一的例外：**編號**（第一、第二、第三…）跟後面那句接起來。
+  // 「第一、資金動向由買轉賣」的頓號是真的斷點，但唸「第一」只花 0.08 秒 ——
+  //  字幕等於閃一下就沒了（使用者定案「只合併編號那三個」，其餘短句照舊各自一段）。
+  // 只有「整段就是一個編號」才合併；「第一季營收」這種不符合，不受影響。
+  // 頓號補回去是為了讀得順（「第一資金動向…」會黏在一起）；其餘字幕仍然沒有標點。
+  const ORDINAL_RE = /^第[一二三四五六七八九十百零兩\d]+$/;
+  const merged: Phrase[] = [];
+  for (const p of raw) {
+    const prev = merged[merged.length - 1];
+    if (prev && ORDINAL_RE.test(prev.text)) {
+      prev.text += '、' + p.text;
+      prev.end = p.end;
+      continue;
+    }
+    merged.push({ ...p });
+  }
+  return merged.filter((p) => p.text.length > 0);
 }
 
 const PHRASES = splitIntoPhrases(data.segments, data._scriptBreaks ?? []);

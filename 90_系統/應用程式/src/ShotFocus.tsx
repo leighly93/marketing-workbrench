@@ -18,7 +18,14 @@ import { AbsoluteFill, Img, interpolate, staticFile, useCurrentFrame } from 'rem
  *   → 圈的範圍比安全框大就**縮小塞進去**（使用者：「我就是在圈選差不多範圍了」），
  *     不再像以前那樣維持原尺寸、任由上下被 BAR 與字幕切掉。
  *   → 縮放因此變成**逐格**的（同一張圖不同段可以圈不同範圍），不再是整個 run 一個常數。
- *   沒有 region、只有黃框的段落**行為完全不變**（維持滿寬 + 上下亮帶）。
+ *   沒有 region、只有黃框的段落當時行為不變（維持滿寬 + 上下亮帶）。
+ *
+ * ⚠️ 2026-09-15 使用者定案：**黃框不影響圖片怎麼放**
+ *   （「沒有圈選顯示範圍的圖片要整張圖完整顯示，就算有框黃框」）。
+ *   → 圖片怎麼放只看有沒有圈顯示區域，跟有沒有黃框無關：沒圈就走跟 wholePage 完全同一套
+ *     （wholePageCoverKeep：手機截圖滿版、其餘整張縮進安全框），黃框只是畫上去。
+ *   → **沒圈顯示區域就一律不壓暗**（使用者：「不要再壓上下黑色塊」）。壓暗只剩 region 那條路，
+ *     而那條的亮區本來就緊貼圈選範圍。
  *
  * 座標來源是 OCR（scripts/analyze-app-images.js）＋規則庫（scripts/app-locators.json），
  * 全部相對於圖片本身，不寫死螢幕座標，所以換手機／解析度都適用。
@@ -88,6 +95,7 @@ export const SHOT_FOCUS = {
    *   869×1200 裁過的截圖 0.724 → 留 78% ✅ 滿版        777×155 橫幅 5.01   → 留 11% ❌ 縮進安全框
    * 換算成比例區間就是 0.422 ~ 0.75 之間算「跟畫布差不多」；手機直式截圖全部都在裡面，
    * iPad 直式（0.75）剛好壓線。要放寬就把這個數字調小，收緊就調大。
+   * 2026-09-15 起**有黃框的段落也用同一個門檻**（使用者：黃框不該影響圖片怎麼放）。
    */
   wholePageCoverKeep: 0.75,
   /**
@@ -239,8 +247,6 @@ export const ShotFocusImage: React.FC<{
     );
   }
 
-  // 滿寬縮放：沒有 region 的段落沿用這個（＝改寫前的行為）。
-  const sc = imgW / run.imageWidth;
   const T = SHOT_FOCUS.transitionSec;
 
   // 安全框：region 要被塞進這一塊。水平用已經扣過 margin 的可用寬，
@@ -249,6 +255,38 @@ export const ShotFocusImage: React.FC<{
   const boxW = imgW;
   const boxY = safeTop != null && safeBottom != null && safeBottom > safeTop ? safeTop : 0;
   const boxH = safeTop != null && safeBottom != null && safeBottom > safeTop ? safeBottom - safeTop : height;
+
+  // ── 沒圈顯示區域 ＝ 黃框不影響圖片怎麼放（2026-09-15 使用者定案）──
+  // 使用者：「沒有圈選顯示範圍的圖片要整張圖完整顯示，就算有框黃框。」
+  // 所以圖片的放法**只看有沒有圈顯示區域**，跟有沒有黃框無關：
+  //   沒圈 → 跟「沒有黃框的整張顯示」走同一個 wholePageCoverKeep 門檻（滿版／整張縮進去），
+  //          黃框只是畫上去，不再壓暗、不再只亮一帶。
+  //          ⚠️ 只有一處跟 early return 那條不一樣：縮小那條**橫式也放進安全框**（20~880），
+  //             early return 的橫式是放進整個畫布高。有黃框時放安全框才不會被字幕壓到，
+  //             0915 那支橫式排行榜實測過（放整個畫布高的話第 10 名會被字幕蓋住）。
+  //   有圈 → 圈的那塊放大到安全框（2026-09-11 那條，沒變）。
+  // 兩條路的差別只有「圖多大、擺哪裡」，壓暗一律取消（dimA = 0，見下面）。
+  //
+  // 滿版那條（手機直式截圖，使用者 2026-09-15 再次確認要留著滿版、只是不要壓黑）：
+  //   縮放用 cover ＝ max(可用寬/w, 可用高/h)，水平置中，垂直照舊捲到黃框再夾回圖內
+  //   （夾回去才不會露出黑帶 —— 滿版就該滿版）。手機截圖 cover 一定是寬度那邊勝出，
+  //   等於沿用改版前的滿寬倍率，位置也照舊，唯一的差別就是不壓暗了。
+  //   ⚠️ 比例落在 0.5625~0.75（比畫布寬、但還算滿版）的圖，cover 是高度勝出 → 左右會各裁一點，
+  //      黃框剛好框在最邊邊時可能被裁到。水平不做捲動（同一個 run 只有一個水平位置，
+  //      捲了反而會讓圖左右跳）。真的遇到就圈顯示區域，那條路一定看得到。
+  const fullH = height - margin * 2;
+  const imgAR = run.imageWidth / run.imageHeight;
+  const boxAR = fullH > 0 ? imgW / fullH : 0;
+  const coverKeep =
+    imgAR > 0 && boxAR > 0 ? Math.min(imgAR, boxAR) / Math.max(imgAR, boxAR) : 0;
+  const fullBleed = margin === 0 && coverKeep >= SHOT_FOCUS.wholePageCoverKeep;
+  // 不滿版就是「整張圖當成 region」→ 等比縮小置中放進安全框，一個像素都不裁。
+  const wholeRegion: ShotBox | null = fullBleed
+    ? null
+    : { x: 0, y: 0, w: run.imageWidth, h: run.imageHeight };
+  // 滿版那條的縮放與水平位置（wholeRegion 那條不會用到 sc，它走 region 的 s2）。
+  const sc = fullBleed ? Math.max(imgW / run.imageWidth, fullH / run.imageHeight) : imgW / run.imageWidth;
+  const imgLeft0 = imgX + (imgW - run.imageWidth * sc) / 2;
 
   // 定位以 region 為準（沒指定 region 才用黃框的位置 —— 也就是以前的行為）。
   // 黃框的幾何只在「這一格有 cell」時才有意義；沒有 cell 的格子 hasBox=false，
@@ -263,14 +301,16 @@ export const ShotFocusImage: React.FC<{
     // ── 有 region：圈的那塊等比縮放後置中放進安全框（2026-09-11 使用者定案）──
     // 縮放、水平位移、亮區四個邊全部由 region 決定，不走下面那套 focusY／夾取邏輯 ——
     // 位置是「算出來剛好在框裡」，不是「先擺再修」，所以那些夾取在這條路上是多餘的。
-    if (c.region) {
-      const s2 = Math.min(boxW / c.region.w, boxH / c.region.h);
-      const rw2 = c.region.w * s2;
-      const rh2 = c.region.h * s2;
+    // 沒圈 region 但整張放得進去（wholeRegion）的也走這條 —— 差別只在「region 是整張圖」。
+    const reg = c.region || wholeRegion;
+    if (reg) {
+      const s2 = Math.min(boxW / reg.w, boxH / reg.h);
+      const rw2 = reg.w * s2;
+      const rh2 = reg.h * s2;
       const bandLeft = boxX + (boxW - rw2) / 2;
       const bandTop = boxY + (boxH - rh2) / 2;
-      const imgLeft = bandLeft - c.region.x * s2;
-      const imgTop = bandTop - c.region.y * s2;
+      const imgLeft = bandLeft - reg.x * s2;
+      const imgTop = bandTop - reg.y * s2;
       const pad = SHOT_FOCUS.pad;
       const geomR = c.cell
         ? {
@@ -332,15 +372,21 @@ export const ShotFocusImage: React.FC<{
         }
       }
     }
+    // 滿版就要真的滿版：把圖夾在畫面內，上下不露黑帶（2026-09-15）。
+    // 圖比畫面高才夾得動；剛好等高時上下界都是 0，等於不動。
+    if (fullBleed) {
+      const imgH = run.imageHeight! * sc;
+      yoff = Math.min(0, Math.max(height - imgH, yoff));
+    }
     // 黃框幾何（只有 cell 才有）
     const geom = c.cell
       ? {
-          left: imgX + c.cell.x * sc - padX,
+          left: imgLeft0 + c.cell.x * sc - padX,
           top: c.cell.y * sc - padY + yoff,
           width: c.cell.w * sc + padX * 2,
           height: c.cell.h * sc + padY * 2,
         }
-      : lastGeom || { left: imgX, top: focusY, width: 0, height: 0 };
+      : lastGeom || { left: imgLeft0, top: focusY, width: 0, height: 0 };
     if (c.cell) lastGeom = geom;
     // 亮帶＝黃框範圍＋margin，上下壓暗。左右滿寬（bandLeft/bandRight 撐滿可用區）——
     // 這兩個欄位是 2026-09-11 為 region 的四邊裁切加的，在這條路上等於沒作用。
@@ -350,15 +396,17 @@ export const ShotFocusImage: React.FC<{
           bandLeft: rx, bandRight: rx + rw }
       : lastBand || { bandTop: 0, bandBot: height, bandLeft: rx, bandRight: rx + rw };
     lastBand = band;
-    // 壓多黑：顯示區域壓全黑（裁掉其餘）；只有黃框時壓半透明（保留脈絡）。
-    // 同樣 region 優先 —— 使用者圈了顯示區域就是「其餘不要露」。
-    const dimA = c.cell ? SHOT_FOCUS.dim : 0;
+    // 不壓暗（2026-09-15 使用者定案）：這條路＝沒圈顯示區域，整張圖就是要完整看到，
+    // 只亮黃框那一帶會把圖的上下壓成兩塊黑（使用者：「不要再壓上下黑色塊」）。
+    // 上面那些 band 值留著只是為了讓插值序列連續，dimA = 0 之後四塊壓暗都是透明的。
+    const dimA = 0;
     return {
       t: c.startSec - run.startSec,
-      // 沒有 region 的段落：圖一律滿寬、貼左，只有垂直位移會變（＝改寫前的行為）。
-      imgLeft: imgX,
+      // 沒有 region 的段落：整張圖照 wholePageCoverKeep 那條判斷放（滿版＝cover 倍率、水平置中），
+      // 只有垂直位移會變。
+      imgLeft: imgLeft0,
       imgTop: yoff,
-      imgWidth: imgW,
+      imgWidth: run.imageWidth! * sc,
       hasBox: c.cell ? 1 : 0,
       dimA,
       ...geom, ...band,
@@ -421,7 +469,7 @@ export const ShotFocusImage: React.FC<{
   const dimA = at('dimA');
   // 滑動出場時黃框那條帶也跟著移。單格 run 才會命中，而且只在「沒有 region」時 ——
   // 有 region 的話這裡會把算好的裁切框重新蓋成黃框範圍（0826 的 shot2 就是這樣被蓋掉的）。
-  if (targets.length === 1 && withCell[0] && withCell[0].cell && !withCell[0].region) {
+  if (targets.length === 1 && withCell[0] && withCell[0].cell && !withCell[0].region && !wholeRegion) {
     bandTop = box.top - SHOT_FOCUS.margin;
     bandBot = box.top + box.height + SHOT_FOCUS.margin;
   }
