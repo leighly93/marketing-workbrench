@@ -793,12 +793,13 @@ async function loadJob() {
   // 排隊等出片 → 還來得及反悔（2026-08-19 使用者要求的「反悔鍵」）。
   // 一旦 status 轉成 rendering 就退不回來了，那時只能取消重跑。
   if (job.status === 'approved') {
-    parts.push(el('div', { class: 'card' },
+    const card = el('div', { class: 'card' },
       el('h2', {}, '排隊等出片'),
       el('div', { class: 'note', html:
         (job.approvedBy === '（自動出片）'
           ? '你設定了「標好了，直接出片」，所以準備一跑完就自動排進出片佇列。<br>' : '')
-        + '還沒開始出片，現在退回去還可以改配圖／標注。<b>開始出片之後就退不回來了</b>。' }),
+        + '還沒開始出片，現在退回去還可以改配圖／標注。<b>開始出片之後就退不回來了</b>。<br>'
+        + '下面的<b>字幕重點詞還可以直接改</b>，不用退回 —— 真的開始出片才會定案。' }),
       el('div', { style: 'margin-top:14px' },
         el('button', { class: 'ghost', onclick: async () => {
           try {
@@ -806,7 +807,19 @@ async function loadJob() {
             jobSig = null;
             loadJob();
           } catch (e) { alert('退不回來：' + e.message); }
-        } }, '↩ 退回確認'))));
+        } }, '↩ 退回確認')));
+    // 還沒真的 render，重點詞仍然進得了這支成品（伺服器的 EMPHASIS_EDITABLE 同一條界線）。
+    // 藍底線看已確認的計畫；「直接出片」那條路沒有計畫頁，就退回看手動標注。
+    card.append(emphasisBox(job, () => (job.planView && job.planView.rows) || ANNOTS));
+    if (emphLoadedFor !== job.id) {
+      emphLoadedFor = job.id;
+      CHARS = []; EMPH = [];
+      loadEmph(job, () => {
+        const box = $('.emph');
+        if (box && EMPH.length) box.open = true;
+      });
+    }
+    parts.push(card);
   }
 
   if (job.status === 'review' && job.planView) parts.push(planCard(job));
@@ -1046,6 +1059,9 @@ async function savePronounce(job, from, to, why) {
 let ANNOTS = [];
 let UNITS = [];        // 子句清單（拉範圍用）
 let annotJobId = null;
+// 排隊等出片那張卡片自己載重點詞（那個階段沒有標注頁也沒有計畫頁可以順便帶）。
+// 記住載過誰，免得每次輪詢重畫都重打一次 API、把人正在拖的選取蓋掉。
+let emphLoadedFor = null;
 
 function annotCard(job) {
   const c = el('div', { class: 'card' },
@@ -1061,21 +1077,32 @@ function annotCard(job) {
       el('button', { class: 'ghost', onclick: () => pickMoreShots(job) }, '＋ 上傳更多截圖'),
       el('span', { id: 'annotUpMsg', style: 'font-size:12.5px;color:var(--dim)' }),
       el('span', { id: 'annotSaved', style: 'font-size:12.5px;color:var(--dim)' })),
+    // ⚠️ 排在 autoGoRow 上面 —— 「標好了，直接出片」按下去就進出片佇列，
+    //    擺在它下面等於沒機會被看到（跟計畫頁那顆確認鍵同一個坑）。
+    emphasisBox(job, () => ANNOTS),
     autoGoRow(job));
 
   if (annotJobId !== job.id) {
     annotJobId = job.id;
-    ANNOTS = []; UNITS = []; CHARS = [];
+    ANNOTS = []; UNITS = []; CHARS = []; EMPH = [];
     Promise.all([
       api(`/api/jobs/${job.id}/sentences`).catch(() => ({ units: [] })),
       api(`/api/jobs/${job.id}/annotations`).catch(() => ({ shots: [] })),
-    ]).then(([sv, av]) => {
+      api(`/api/jobs/${job.id}/emphasis`).catch(() => ({ marks: [] })),
+    ]).then(([sv, av, ev]) => {
       UNITS = sv.units || [];
       CHARS = sv.chars || [];
       ANNOTS = av.shots || [];
+      EMPH = (ev.marks || [])
+        .filter((m) => Number.isInteger(m.startCharIdx) && Number.isInteger(m.endCharIdx))
+        .map((m) => ({ startCharIdx: m.startCharIdx, endCharIdx: m.endCharIdx }));
       drawAnnots(job);
+      // 標過的就展開 —— 建卡片那一刻還沒讀完，收合列上的「已標 N 處」看起來會像沒標。
+      const box = $('.emph');
+      if (box && EMPH.length) box.open = true;
+      drawEmph();
     });
-  } else setTimeout(() => drawAnnots(job), 0);
+  } else setTimeout(() => { drawAnnots(job); drawEmph(); }, 0);
   return c;
 }
 
@@ -1489,24 +1516,7 @@ function planCard(job) {
           `全部截圖 ${pv.images.length} 張，已經用了 ${used} 張　—　`
           + '點一下就加一段用它；同一張可以點多次、各自標不同區塊。'),
         upload, upMsg),
-      el('div', { class: 'shots' }, ...pv.images.map((n) => {
-        const c = count[n] || 0;
-        // 2026-09-07 系統判定的頁型（來自 app-images.generated.json，server 放進 planView.pages）。
-        // 認不出來（unknown）或只認得出「是個股頁但不知道哪個 tab」（stock-other）→ 給一顆 📌，
-        // 按了只存指紋與截圖、不命名；之後 `node scripts/page-pins.js` 批次分群命名（使用者定案：不要當場手打）。
-        const pg = (pv.pages || {})[n] || {};
-        const unknown = !pg.page || pg.page === 'unknown' || pg.page === 'stock-other';
-        const fig = el('figure', { class: c ? 'used' : '', title: `點一下＝加一段用 ${n}`,
-          onclick: () => addSeg(n) },
-          el('img', { src: `/api/jobs/${job.id}/file/${n}`, alt: '' }),
-          el('div', { class: 'tag' }, c ? `已用 ${c} 次` : '還沒用'),
-          el('div', { class: 'pg' + (unknown ? ' unk' : ''), title: '系統判定的頁型' }, pg.pageLabel || '未知頁面'),
-          el('div', { class: 'nm' }, n));
-        // 2026-09-07 使用者定案：📌 只給管理者（本機連進來的人）看；同事那邊只看到頁型標籤、沒有按鈕。
-        if (unknown && ADMIN) fig.append(el('button', { class: 'pin', title: '記下這種頁：系統認不出來，先存指紋與截圖，之後批次命名',
-          onclick: (ev) => { ev.stopPropagation(); pinPage(n, fig); } }, '📌'));
-        return fig;
-      })));
+      el('div', { class: 'shots' }, ...shotFigures(job, pv.images, count, pv.pages, addSeg)));
   }
 
   // 先建好再 renderTable() —— drawUnused() 會依「有沒有截圖」決定要不要藏它，
@@ -1514,30 +1524,70 @@ function planCard(job) {
   const addSegBtn = el('button', { class: 'ghost', onclick: () => addSeg() }, '＋ 加一段');
   renderTable();
   c.append(t, gallery);
+
+  // ⚠️ 重點詞要排在「確認，開始出片」**上面**（2026-09-17 使用者回報）。
+  //    原本擺在按鈕下面，人滑到按鈕就以為到底了，一按就跳去「排隊等出片」那張卡片，
+  //    整個功能等於看不到。按鈕永遠是這張卡片的最後一個東西。
+  c.append(emphasisBox(job, () => Object.values(edits || {})));
+
   c.append(el('div', { style: 'margin-top:20px;display:flex;gap:12px;align-items:center' },
     addSegBtn,
     el('button', { class: 'go', onclick: () => approve(job, Object.values(edits)) }, '確認，開始出片')));
+  return c;
+}
 
-  // ── 字幕重點詞（2026-09-17 使用者要求）──────────────────────
-  // 收合起來不佔版面（使用者：「希望這功能可以收合」）。
-  // 同一塊裡同時看得到「哪些字已經有配圖」（藍底線）跟「標了哪些重點詞」——
-  // 使用者要的就是這個：畫面太單一的地方可以用字幕補強。
-  c.append(el('details', { class: 'emph' },
+/**
+ * 字幕重點詞區塊（2026-09-17）。**共用** —— 準備中、待確認、排隊等出片都要有這一塊。
+ *
+ * ⚠️ 只開在配圖計畫頁是不夠的（使用者回報兩次）：
+ *      ① 勾「標好了，直接出片」的工作根本不經過計畫頁
+ *      ② 按完「確認，開始出片」就換成另一張卡片，想補標只能退回
+ *    標注頁才是大家實際待的地方，所以三個階段一律給同一塊。
+ *
+ * 收合起來不佔版面（使用者：「希望這功能可以收合」）；已經標過就預設展開，
+ * 不然「已標 N 處」藏在收合列裡，看起來跟沒標一樣。
+ *
+ * covered：回傳「哪些段落佔了哪些字」的陣列，用來畫藍底線。各階段來源不同，見 charsCoveredBy()。
+ */
+function emphasisBox(job, covered) {
+  EMPH_JOB = job;
+  EMPH_COVERED = covered || (() => []);
+  const box = el('details', { class: 'emph' },
     el('summary', {},
       '字幕重點詞（選填）　',
-      el('span', { id: 'emphCount', class: 'sec' }, '尚未標記')),
+      el('span', { id: 'emphCount', class: 'sec' }, '尚未標記'),
+      el('span', { id: 'emphSaved', class: 'sec', style: 'margin-left:10px' }, '')),
     el('div', { class: 'tip' },
       '在下面的腳本上拖選要強調的詞 —— 成品裡那幾個字會放大變黃，同一句其餘維持白字一般大小。'
-      + '點一下已標的地方就取消。'),
+      + '點一下已標的地方就取消。改了就會自動存，不用按任何按鈕。'),
     el('div', { class: 'tip' },
       '字底下有藍線＝那一段已經有配圖；沒有線的地方畫面上只有講者。'),
     el('div', { class: 'range', id: 'emphRange' }),
     el('div', { style: 'margin-top:8px' },
       el('button', { class: 'ghost tiny', id: 'emphClear',
-        onclick: () => { EMPH = []; drawEmph(); } }, '全部清除'))));
+        onclick: () => { EMPH = []; drawEmph(); saveEmph(); } }, '全部清除')));
+  if (EMPH.length) box.open = true;
   // DOM 要等呼叫端 append 之後才找得到，所以繞一圈再畫。
   setTimeout(drawEmph, 0);
-  return c;
+  return box;
+}
+
+/**
+ * 重點詞與腳本字元讀進來（標注頁／排隊階段用；計畫頁的 planView 本來就帶了這兩份）。
+ * 讀完才畫 —— CHARS 是空的話 drawEmph() 只會顯示「腳本還在讀…」。
+ */
+function loadEmph(job, after) {
+  Promise.all([
+    CHARS.length ? Promise.resolve(null) : api(`/api/jobs/${job.id}/sentences`).catch(() => null),
+    api(`/api/jobs/${job.id}/emphasis`).catch(() => ({ marks: [] })),
+  ]).then(([sv, ev]) => {
+    if (sv) { UNITS = sv.units || UNITS; CHARS = sv.chars || CHARS; }
+    EMPH = (ev.marks || [])
+      .filter((m) => Number.isInteger(m.startCharIdx) && Number.isInteger(m.endCharIdx))
+      .map((m) => ({ startCharIdx: m.startCharIdx, endCharIdx: m.endCharIdx }));
+    if (after) after();
+    drawEmph();
+  });
 }
 
 /** 一列的預覽：原圖 ＋ 用比例畫上去的黃框（改完立刻反映，不用等伺服器重畫） */
@@ -1862,23 +1912,55 @@ function toggleEmph(lo, hi) {
   EMPH.sort((x, y) => x.startCharIdx - y.startCharIdx);
 }
 
-/** 這些字元被哪一段配圖用到了（藍底線的來源）。跟編輯器的 usedRanges 不同：這裡看全部的段。 */
-function shotCoveredChars() {
+/**
+ * 這些字元被哪一段配圖用到了（藍底線的來源）。跟編輯器的 usedRanges 不同：這裡看全部的段。
+ * ⚠️ 來源由呼叫端給，不要在這裡猜 —— 三個階段手上有的東西不一樣：
+ *    計畫頁是 `edits`（含還沒送出的修改）、標注頁是 ANNOTS、排隊階段只剩 planView.rows。
+ *    以前這裡寫死讀 `edits`，換到別的階段就會拿到上一支工作的殘留。
+ */
+function charsCoveredBy(list) {
   const set = new Set();
-  Object.values(edits || {}).forEach((e) => {
-    if (e.deleted) return;
+  for (const e of list || []) {
+    if (!e || e.deleted) continue;
     const a = e.startCharIdx, b = e.endCharIdx;
-    if (typeof a !== 'number' || typeof b !== 'number') return;
+    if (typeof a !== 'number' || typeof b !== 'number') continue;
     for (let i = Math.min(a, b); i <= Math.max(a, b); i++) set.add(i);
-  });
+  }
   return set;
+}
+
+// 目前這一頁的重點詞區塊是掛在哪支工作上、藍底線要看誰。emphasisBox() 建的時候設定。
+let EMPH_JOB = null;
+let EMPH_COVERED = () => [];
+let emphSaveSeq = 0;
+
+/**
+ * 存重點詞。跟標注一樣是「改了就存」，不再只靠按「確認，開始出片」那一下 ——
+ * 準備中與排隊階段根本沒有那顆按鈕可以按。
+ * ⚠️ 連續拖選會連續觸發，用序號擋掉亂序回來的舊回應（慢的那筆覆蓋快的那筆＝數字跳回去）。
+ */
+async function saveEmph() {
+  if (!EMPH_JOB) return;
+  const seq = ++emphSaveSeq;
+  const note = $('#emphSaved');
+  try {
+    const r = await api(`/api/jobs/${EMPH_JOB.id}/emphasis`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ marks: EMPH }),
+    });
+    if (seq !== emphSaveSeq) return;
+    if (note) note.textContent = r.count ? `已存 ${r.count} 處` : '已清除';
+  } catch (e) {
+    if (seq !== emphSaveSeq) return;
+    if (note) note.textContent = '存不進去：' + e.message;
+  }
 }
 
 function drawEmph() {
   const wrap = $('#emphRange');
   if (!wrap) return;
   if (!CHARS.length) return wrap.replaceChildren(el('span', {}, '（腳本還在讀…）'));
-  const covered = shotCoveredChars();
+  const covered = charsCoveredBy(EMPH_COVERED());
   const nodes = [];
   CHARS.forEach((c) => {
     const cls = [];
@@ -1917,6 +1999,7 @@ function drawEmph() {
     dragging = false;
     toggleEmph(anchor, last);
     drawEmph();
+    saveEmph();
   });
 }
 

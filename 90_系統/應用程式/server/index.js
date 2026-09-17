@@ -390,6 +390,15 @@ const LOCK = path.join(WORKSPACE_ROOT, '.run.lock');
 /** 字幕重點詞的存放位置（2026-09-17）。所有版型共用一份 —— 字幕本身就只有一份。 */
 const EMPHASIS_FILE = 'src/emphasis.generated.json';
 
+/**
+ * 還來得及標重點詞的狀態（2026-09-17）。界線是「這支還沒開始 render」——
+ * 只要 doRender 還沒跑，標記就進得了成品。
+ * 跟標注頁開放的那一組（draft/queued/preparing/detached）一致，再加上確認關卡
+ * 前後的 review 與 approved：使用者在計畫頁按了「確認，開始出片」之後還沒真的
+ * 開始 render，那段時間本來就有「↩ 退回確認」可以反悔，重點詞沒道理反而改不了。
+ */
+const EMPHASIS_EDITABLE = ['draft', 'queued', 'preparing', 'detached', 'review', 'approved'];
+
 function clearWorkspaceInputs() {
   // ⚠️ 字幕重點詞是**唯一一個不會被重新產生**的 generated 檔（2026-09-17）：
   //    shots／subtitles／video-meta 每支工作都重算一次覆蓋掉，只有它是人工標的，
@@ -854,12 +863,10 @@ function emphasisOf(baseDir) {
 }
 
 /**
- * 把前台送來的重點詞寫進 ROOT。
- * ⚠️ 跟 applyPlanEdits 一樣要寫 **ROOT** 不是快照 —— run.js --render-only 只讀 ROOT
- *（2026-08-18 那個「人工框選一直不見」的坑，同一條路）。
- * 正規化：排序、去重、合併重疊，順便丟掉負數與頭尾相反的。
+ * 正規化重點詞：排序、去重、合併重疊與相鄰，順便丟掉負數與頭尾相反的。
+ * ⚠️ 前台 toggleEmph() 用的是同一條規則 —— 兩邊不一致的話，「已標 N 處」在送出前後會跳號。
  */
-function writeEmphasis(marks) {
+function normalizeEmphasis(marks) {
   const clean = [];
   for (const m of Array.isArray(marks) ? marks : []) {
     const a = Number(m?.startCharIdx), b = Number(m?.endCharIdx);
@@ -874,7 +881,44 @@ function writeEmphasis(marks) {
       last.endCharIdx = Math.max(last.endCharIdx, m.endCharIdx);
     } else merged.push({ ...m });
   }
+  return merged;
+}
+
+/**
+ * 把重點詞寫進 ROOT。
+ * ⚠️ 跟 applyPlanEdits 一樣要寫 **ROOT** 不是快照 —— run.js --render-only 只讀 ROOT
+ *（2026-08-18 那個「人工框選一直不見」的坑，同一條路）。
+ */
+function writeEmphasis(marks) {
+  const merged = normalizeEmphasis(marks);
   const f = path.join(ROOT, EMPHASIS_FILE);
+  ensureDir(path.dirname(f));
+  fs.writeFileSync(f, JSON.stringify({ marks: merged }, null, 2) + '\n');
+  return merged;
+}
+
+/**
+ * 每支工作自己的重點詞（2026-09-17）。
+ *
+ * ⚠️ 為什麼不存 ROOT：ROOT 是**共用**工作區，同一時間只屬於正在跑的那一支。
+ *    重點詞要能在「準備中」「待確認」「排隊等出片」三個階段都標，那幾個階段 ROOT
+ *    可能正被別支佔著 —— 寫進去會污染別人。放 input/ 跟 annotations.json 同一層：
+ *      ① backupJobArtifacts 備份 input/ 全部，它跟著被保住
+ *      ② 重新出片（redo）整包帶走 input/，標記自動跟著新工作走
+ *    真正寫進 ROOT 的時機只有一個：doRender 的 restoreWorkspace 之後。
+ */
+function jobEmphasisFile(job) { return jobPath(job.id, 'input', 'emphasis.json'); }
+
+function readJobEmphasis(job) {
+  try {
+    const j = JSON.parse(fs.readFileSync(jobEmphasisFile(job), 'utf-8'));
+    return normalizeEmphasis(j.marks);
+  } catch (_) { return []; }
+}
+
+function saveJobEmphasis(job, marks) {
+  const merged = normalizeEmphasis(marks);
+  const f = jobEmphasisFile(job);
   ensureDir(path.dirname(f));
   fs.writeFileSync(f, JSON.stringify({ marks: merged }, null, 2) + '\n');
   return merged;
@@ -943,8 +987,13 @@ function buildPlanView(job) {
     // 三大法人的聚焦是「捲到區塊帶 + 壓暗其餘」，沒有「往下滑動」這回事 ——
     // 勾了也不會有任何效果，所以前台不要畫那個勾選框（靜默失效比沒有更糟）。
     rows, images, totalSec,
-    // 字幕重點詞（2026-09-17）：前台在計畫頁底部那一區標的，存腳本字元範圍
-    emphasis: emphasisOf(state),
+    // 字幕重點詞（2026-09-17）：存腳本字元範圍。
+    // 以工作自己的 input/emphasis.json 為準；沒有才退回快照 —— 快照那份是這個功能
+    // 剛上線、還沒有獨立儲存端點時留下的，只為了讓那幾支舊工作不要平白少掉標記。
+    emphasis: (() => {
+      const own = readJobEmphasis(job);
+      return own.length ? own : emphasisOf(state);
+    })(),
     // 2026-09-07 每張圖系統判定的頁型，給審核頁顯示＋決定要不要給 📌（認不出來才給）。
     pages: pagesOf(state),
     pendingAnnots: pendingAnnotsOf(job, rows),
@@ -1899,9 +1948,10 @@ async function doRender(job) {
 
   restoreWorkspace(job);
   // ⚠️ 要在 restoreWorkspace 之後（ROOT 才是 render 讀的那一份），跟 applyPlanEdits 同一時機。
-  //    null＝這條路沒有經過計畫頁（例如「直接出片」），不要動既有的檔。
-  if (job.pendingEmphasis) {
-    const marks = writeEmphasis(job.pendingEmphasis);
+  //    來源是工作自己的 input/emphasis.json，不分是在標注頁、計畫頁還是排隊階段標的
+  //    ——「直接出片」那條路不經過計畫頁，以前就是在這裡整個漏掉。
+  {
+    const marks = writeEmphasis(readJobEmphasis(job));
     if (marks.length) appendLog(job, `\n🖍 字幕重點詞 ${marks.length} 處\n`);
   }
   if (job.pendingEdits && job.pendingEdits.length) {
@@ -2864,6 +2914,52 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /**
+     * 字幕重點詞（2026-09-17）。跟 /annotations 同一個形狀：GET 讀、PUT 存，存的是
+     * 工作自己的 input/emphasis.json。
+     *
+     * ⚠️ 這裡**不**寫 ROOT —— 跟 annotations 不同。annotations 要趕在 run.js 最後的
+     *    auto-shot 之前補進 ROOT/public 才生效；重點詞是 render 階段才讀的，doRender
+     *    會在 restoreWorkspace 之後統一寫進去。提早寫只會污染別支正在跑的工作。
+     *
+     * 能不能標的界線就是「還沒開始 render」。rendering 之後改了也進不了這支成品，
+     * 與其讓人白標，不如擋下來說清楚（前台也不會在那些狀態畫出這一區）。
+     */
+    if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'emphasis') {
+      const job = getJob(seg[2]);
+      if (!job) return send(res, 404, { error: '找不到工作' });
+      if (req.method === 'GET') {
+        const own = readJobEmphasis(job);
+        const marks = own.length ? own : emphasisOf(jobPath(job.id, 'state'));
+        return send(res, 200, { marks });
+      }
+      if (req.method === 'PUT') {
+        if (!EMPHASIS_EDITABLE.includes(job.status))
+          return send(res, 400, { error: '這支已經開始出片了，重點詞改了也進不去' });
+        const body = JSON.parse((await readBody(req)).toString() || '{}');
+        const marks = saveJobEmphasis(job, body.marks);
+        job.emphasisCount = marks.length;
+        saveJob(job);
+        return send(res, 200, { ok: true, marks, count: marks.length });
+      }
+    }
+
+    /**
+     * 系統判定的頁型（2026-09-17）。配圖計畫頁本來就有（planView.pages），
+     * 這支是給**手動標記頁**用的 —— 準備中還沒有 planView，但截圖分析
+     *（analyze:app-images）是在準備階段跟 HeyGen 平行跑的，那時候就有結果了。
+     *
+     * ⚠️ 讀哪一份要看狀態：正在跑的那支，ROOT 就是它的工作區；已經跑完的看自己的快照。
+     *    不能一律讀 ROOT —— 那會把**別支正在跑的工作**的頁型秀給這支看。
+     */
+    if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'pages' && req.method === 'GET') {
+      const job = getJob(seg[2]);
+      if (!job) return send(res, 404, { error: '找不到工作' });
+      const mine = ['preparing', 'detached'].includes(job.status) && isRunJs(job.pid);
+      const pages = pagesOf(mine ? ROOT : jobPath(job.id, 'state'));
+      return send(res, 200, { pages });
+    }
+
     if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'log') {
       const job = getJob(seg[2]);
       if (!job) return send(res, 404, { error: '找不到工作' });
@@ -2885,8 +2981,11 @@ const server = http.createServer(async (req, res) => {
       learnFromEdits(job, edits);
       job.pendingEdits = edits;
       // 字幕重點詞跟 edits 是兩份資料（它不屬於任何一段配圖，可能落在完全沒配圖的地方），
-      // 所以分開帶、分開寫。這裡只存起來，真正寫進 ROOT 是在 doRender（見 pendingEmphasis）。
-      job.pendingEmphasis = Array.isArray(body.emphasis) ? body.emphasis : null;
+      // 所以分開帶、分開寫。計畫頁送上來就存進工作自己的檔，真正寫進 ROOT 是在 doRender。
+      // ⚠️ 沒帶 emphasis 欄位（舊前台）不等於「清空」—— 那會把人在準備階段標好的抹掉。
+      if (Array.isArray(body.emphasis)) {
+        job.emphasisCount = saveJobEmphasis(job, body.emphasis).length;
+      }
       job.status = 'approved';
       saveJob(job);
       tick();
@@ -2918,7 +3017,8 @@ const server = http.createServer(async (req, res) => {
       job.status = 'review';
       job.autoApprove = false;
       job.pendingEdits = [];
-      job.pendingEmphasis = null;
+      // ⚠️ 不要清掉重點詞 —— 退回確認是「我還要再改」，不是「我要重標」。
+      //    以前這裡把它歸零，人在計畫頁標完、按確認、再按退回，標記就無聲消失。
       delete job.approvedAt;
       delete job.approvedBy;
       appendLog(job, '\n↩️ 已退回「等你確認」\n');
