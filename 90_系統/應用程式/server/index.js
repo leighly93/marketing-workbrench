@@ -2639,6 +2639,102 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { job: publicJob(job, admin) });
     }
 
+    /**
+     * 重新出片：拿一支既有工作的全部輸入，原封不動再跑一次。
+     *
+     * 為什麼要有（2026-09-16）：那天字幕時間軸壞掉，同事只能手動重來一次 ——
+     * 重貼稿件、重傳兩張截圖、**重畫一次顯示範圍與黃框**。重畫的結果跟原本不一樣
+     * （兩份 annotations.json 一個 1128 bytes、一個 936 bytes），等於白做還做走樣。
+     * 這些東西每一樣都已經存在工作資料夾裡了，沒有理由要人重做。
+     *
+     * 帶過去的東西：
+     *   稿件.txt（已含當時實際套用的發音詞庫段）／素材全部（截圖 ＋ annotations.json）
+     *   ／講者影片（優先用素材裡的，沒有就用製作快照那份）／版型、語氣、品牌等旗標。
+     *
+     * ⚠️ 一律 skipGenerate：不呼叫 HeyGen、不呼叫 MiniMax，**不會重新扣點數**。
+     * ⚠️ 新工作停在 draft，不自動送出 —— 使用者要先進標注頁確認框還在、可以微調，
+     *    按「確認，開始出片」才排進佇列。
+     * ⚠️ 稿件不給改：annotations.json 是用字元索引（startCharIdx／endCharIdx）定位的，
+     *    稿件改一個字，後面的標注就會整段錯位而且不會報錯。要改稿就得開新工作重畫。
+     */
+    if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'redo' && req.method === 'POST') {
+      const src = getJob(seg[2]);
+      if (!src) return send(res, 404, { error: '找不到工作' });
+      // 正在跑的不給重跑：它的製作快照這一刻正在被寫，複製過去的可能是半份。
+      // detached 也算 —— 那是「伺服器重開過，但 run.js 還活著在背景跑」。
+      if (['preparing', 'rendering', 'detached'].includes(src.status))
+        return send(res, 400, { error: '這支還在跑，等它結束再重新出片' });
+      // 版型整個被移除 → 複製出來的工作一送出就會失敗，在這裡就講清楚。
+      // 只是「關閉中」的版型照樣放行 —— 舊工作本來就還能重跑，只是開不了新的（見上面 TEMPLATES 的註解）。
+      if (!TEMPLATES[src.template])
+        return send(res, 400, { error: `這支用的版型「${src.template}」已經不在了，沒辦法重跑。` });
+
+      const scriptFrom = jobPath(src.id, 'input', 'script.txt');
+      const materialDir = path.dirname(jobPath(src.id, 'input', '_'));
+      // 講者影片：素材裡那份是「當初送進去的」，快照那份是「這支實際用來出片的」。
+      // 兩份都帶著加速記號判斷（run.js alreadySpedUp），不會被重複加速。
+      const heygenFrom = [
+        jobPath(src.id, 'input', 'heygen.mp4'),
+        jobPath(src.id, 'state', 'public', 'heygen.mp4'),
+      ].find((p) => fs.existsSync(p));
+
+      const missing = [];
+      if (!fs.existsSync(scriptFrom)) missing.push('稿件.txt');
+      if (!heygenFrom) missing.push('講者影片（素材/heygen.mp4 或製作快照）');
+      if (missing.length) {
+        return send(res, 400, {
+          error: `這支工作缺少重跑需要的檔案：${missing.join('、')}。`
+            + '（功能上線前的舊工作可能沒有留製作快照，只能重新建立一支。）',
+        });
+      }
+
+      const job = {
+        id: newId(),
+        template: src.template,
+        owner: src.owner,
+        title: src.title,
+        status: 'draft',
+        createdAt: nowISO(),
+        ip: clientIp(req),
+        skipGenerate: true,
+        noSpeed: !!src.noSpeed,
+        withAd: !!src.withAd,
+        emotion: normalizeEmotion(src.emotion),
+        brand: src.brand ? String(src.brand) : null,
+        autoApprove: !!src.autoApprove,
+        // 稿件整份照抄，所以當時算出來的命中清單也照抄 —— 不重算，免得詞庫改過之後
+        // 記錄跟 script.txt 的實際內容對不起來。
+        voiceRules: src.voiceRules || { own: [], shared: [], hit: [] },
+        redoOf: src.id,
+      };
+
+      STORE.directory(job.id, job);
+      ensureDir(jobPath(job.id, 'input'));
+      fs.writeFileSync(jobPath(job.id, 'input', 'script.txt'), fs.readFileSync(scriptFrom, 'utf-8'));
+      if (fs.existsSync(materialDir)) {
+        for (const name of fs.readdirSync(materialDir)) {
+          if (name.startsWith('.')) continue;
+          const from = path.join(materialDir, name);
+          if (!fs.statSync(from).isFile()) continue;
+          fs.copyFileSync(from, jobPath(job.id, 'input', name));
+        }
+      }
+      // 素材裡沒有 heygen.mp4（原本是 HeyGen 現生的）→ 從製作快照補一份進去。
+      if (!fs.existsSync(jobPath(job.id, 'input', 'heygen.mp4'))) {
+        fs.copyFileSync(heygenFrom, jobPath(job.id, 'input', 'heygen.mp4'));
+      }
+      job.files = fs.readdirSync(jobPath(job.id, 'input')).filter((n) => !n.startsWith('.'));
+      job.files.push('script.txt');
+      job.annotationCount = src.annotationCount || 0;
+
+      JOBS.unshift(job);
+      saveJob(job);
+      appendLog(job, `♻️ 重新出片：沿用工作 ${src.id} 的稿件、截圖、標注與講者影片。\n`
+        + '   不會重新呼叫 HeyGen／MiniMax，也不會重新扣點數。\n'
+        + `   帶過來的檔案：${job.files.join('、')}\n`);
+      return send(res, 200, { job: publicJob(job, admin) });
+    }
+
     if (seg[0] === 'api' && seg[1] === 'jobs' && seg[2] && seg.length === 3 && req.method === 'GET') {
       const job = getJob(seg[2]);
       if (!job) return send(res, 404, { error: '找不到工作' });
@@ -2705,7 +2801,10 @@ const server = http.createServer(async (req, res) => {
         // 這支的配圖計畫已經算完了 → 這次存的標注不會進計畫。以前這裡照樣回 ok，
         // 前台顯示「已儲存」，使用者到配圖計畫才發現圖不見（2026-08-21 回報）。
         // 真的沒吃到的那幾筆，buildPlanView 的 pendingAnnots 會讓前台自動補回去。
-        const applied = ['queued', 'preparing', 'detached'].includes(job.status);
+        // 'draft' 也算吃得到：重新出片複製出來的工作停在 draft 等人確認，它根本還沒開始跑，
+        // submit 之後 doPrepare 會把 input/ 整包複製過去。少了它，使用者在確認關卡改完框會看到
+        // 紅字「這支的配圖計畫已經算完，這筆不會自動進去」—— 完全相反，而且會讓人以為白改了。
+        const applied = ['draft', 'queued', 'preparing', 'detached'].includes(job.status);
         return send(res, 200, { ok: true, count: data.shots.length, applied });
       }
     }

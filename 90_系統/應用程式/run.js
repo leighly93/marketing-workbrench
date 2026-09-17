@@ -452,6 +452,50 @@ function run(cmd) {
   execSync(cmd, { cwd: PROJECT_DIR, stdio: "inherit" });
 }
 
+// ── 字幕：轉完要檢查時間軸，壞掉就墊靜音重轉 ────────────
+//
+// 2026-09-16 出片事故：whisper 把某句的結束時間報成 11.8 秒（那句只有 22 個字），
+// 之後整條字幕落後語音 8 秒，結尾 49 個字全擠在最後 0.19 秒 —— 成品是「字幕上到一半就
+// 不動了，最後一瞬間閃過」，而 pipeline 一聲不吭照樣出片。
+//
+// 重轉為什麼要墊靜音：whisper.cpp 在這裡是**確定性的**（同一個音檔跑三次結果完全相同），
+// 原樣重轉保證再壞一次。實測改 beam-size／threads／max-len 都救不回來，
+// 只有「音檔前面墊靜音」有效 —— 它把 whisper 的 30 秒 window 邊界挪開，避開那個解碼失敗點
+// （0.5 秒與 1.2 秒都試過，都把 11.8 秒的壞 segment 修回 4.2 秒）。
+// 墊進去的時間由 Adapter 自己減回來，字幕不會整體變慢。
+// 秒。第一次不墊＝維持原本行為；沒救回來就只再賭一次，failed 之後由人決定要不要按「重新出片」。
+// （2026-09-17 使用者定案：不要自動跑第三次 —— 連兩次都壞多半不是換個 window 邊界能解決的，
+//  與其讓機器一直重試，不如早點把畫面交回給人。）
+const SUBTITLE_PAD_LADDER = [0, 0.5];
+
+function transcribeWithRetry() {
+  for (let i = 0; i < SUBTITLE_PAD_LADDER.length; i++) {
+    const pad = SUBTITLE_PAD_LADDER[i];
+    run(pad ? `npm run transcribe -- --pad=${pad}` : "npm run transcribe");
+    try {
+      run("npm run correct-subtitles");
+      if (i > 0) log(`✅ 墊 ${pad} 秒靜音之後時間軸正常了（第 ${i + 1} 次轉字幕）`);
+      return;
+    } catch (e) {
+      // 只有 correct-subtitles 的「時間軸判定失敗」(exit 3) 才重試；
+      // 其他錯誤是真的壞了（缺檔、腳本讀不到…），照舊往上丟，不要浪費時間空轉。
+      if (e.status !== 3) throw e;
+      const next = SUBTITLE_PAD_LADDER[i + 1];
+      if (next === undefined) {
+        throw new Error(
+          `字幕時間軸連續 ${SUBTITLE_PAD_LADDER.length} 次都判定壞掉（墊了 `
+          + `${SUBTITLE_PAD_LADDER.slice(1).join("、")} 秒靜音都沒救回來），已停在出片前。\n`
+          + "   壞掉的細節看上面 correct-subtitles 印的訊息。\n"
+          + "   這支需要人工介入：可以在工作頁按「重新出片」再賭一次（不會重新扣 HeyGen 點數），\n"
+          + "   或是改一下稿件的斷句讓配音節奏不同，再出一支。"
+        );
+      }
+      log(`🔁 字幕時間軸判定失敗（第 ${i + 1} 次，${pad ? `墊了 ${pad} 秒` : '沒墊靜音'}）。`
+        + `改成墊 ${next} 秒靜音、換一個 whisper window 邊界重轉…`);
+    }
+  }
+}
+
 /**
  * 背景執行（不擋主流程）。給「不依賴講者影片」的工作用，最典型的就是圖片 OCR 版面偵測：
  * 它只需要 public/ 裡的圖，跟 HeyGen 生成完全無關，所以可以在等 HeyGen 那 3-5 分鐘時一起跑完。
@@ -1505,8 +1549,7 @@ async function main() {
 
   // 6. 跑 Remotion 後製（transcribe / correct-subtitles 兩版型共用；parse-script / 配圖 / render 各自版本）
   log("開始 Remotion 後製");
-  run("npm run transcribe");
-  run("npm run correct-subtitles");
+  transcribeWithRetry();
   prepareShots();
 
   if (STOP_BEFORE_RENDER) {

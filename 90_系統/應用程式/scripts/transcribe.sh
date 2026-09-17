@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
 # 從 HeyGen 影片自動產生字幕 JSON
 #
-# 用法：./scripts/transcribe.sh
+# 用法：./scripts/transcribe.sh [--pad=秒數]
+#   --pad=0.5 → 抽出來的音檔前面墊 0.5 秒靜音再轉，時間戳由 Adapter 自動減回去。
+#     只有「字幕時間軸被判定壞掉、要重轉」時才用（見 run.js transcribeWithRetry）。
+#     為什麼有效：whisper 是分 30 秒 window 解碼的，墊靜音會讓 window 邊界落在不同位置，
+#     避開它在某些切點上的解碼失敗。同一個音檔原樣重跑是確定性的（跑三次結果完全相同），
+#     不墊就等於再壞一次。
 # 前置需求（Mac）：
 #   brew install ffmpeg
 #   版本與環境規格見 90_系統/維護說明/環境與Adapter.md
 
 set -euo pipefail
+
+PAD_SEC=0
+for arg in "$@"; do
+  case "$arg" in
+    --pad=*) PAD_SEC="${arg#--pad=}" ;;
+    *) echo "❌ 不認得的參數：$arg（只吃 --pad=秒數）"; exit 1 ;;
+  esac
+done
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORKSPACE_ROOT="$(cd "$ROOT/../.." && pwd)"
@@ -63,11 +76,19 @@ cat > "$META_JSON" <<EOF
 EOF
 echo "   → 已寫入 src/video-meta.json"
 
-echo "▶ 2/4 用 ffmpeg 從影片抽出音檔..."
-ffmpeg -y -i "$INPUT" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_AUDIO" -loglevel error
+if [ "$PAD_SEC" = "0" ]; then
+  echo "▶ 2/4 用 ffmpeg 從影片抽出音檔..."
+  ffmpeg -y -i "$INPUT" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_AUDIO" -loglevel error
+else
+  # 用 awk 不用 python3：這一行是「字幕壞掉要重轉」時才跑的，
+  # 不該因為少一個直譯器就連救都救不了（awk 在 macOS 一定有）。
+  PAD_MS=$(awk "BEGIN { printf \"%d\", $PAD_SEC * 1000 + 0.5 }")
+  echo "▶ 2/4 用 ffmpeg 從影片抽出音檔（前面墊 ${PAD_SEC} 秒靜音，換一個 whisper window 邊界）..."
+  ffmpeg -y -i "$INPUT" -af "adelay=${PAD_MS}|${PAD_MS}" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_AUDIO" -loglevel error
+fi
 
 echo "▶ 3/4 跑 whisper.cpp 轉字幕（中文，Base Q5_1，CPU／4 執行緒）..."
-node "$ROOT/scripts/transcription-engine.js" "$TMP_AUDIO" "$TMP_DIR"
+node "$ROOT/scripts/transcription-engine.js" "$TMP_AUDIO" "$TMP_DIR" "--pad=$PAD_SEC"
 
 echo "▶ 4/4 整理輸出到 src/subtitles.json..."
 # Adapter 正規化的輸出檔名跟輸入相同：heygen.json

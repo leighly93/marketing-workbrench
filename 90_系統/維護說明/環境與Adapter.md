@@ -60,12 +60,20 @@ python3 90_系統/環境/native-environment.py --check
 入口：[transcription-engine.js](../應用程式/scripts/transcription-engine.js)，執行 `whisper-cli`。固定 Base Q5_1、`--no-gpu`、`--threads 4`、`--processors 1`、`--language zh`，使用 `--output-json-full` 取得 token 時間。
 
 - `ensure()`：檢查 CLI 與模型存在，不下載。
-- `transcribe(audio, outputDir)`：把 whisper.cpp 的毫秒 `transcription/tokens` 轉成既有秒制 `segments/words`，剔除引擎控制 token。
+- `transcribe(audio, outputDir, { padSec })`：把 whisper.cpp 的毫秒 `transcription/tokens` 轉成既有秒制 `segments/words`，剔除引擎控制 token。`padSec` 是「這個音檔前面墊了幾秒靜音」，輸出時間戳整體減回去（負值夾成 0），寫進磁碟的也是減回之後的。
 - 中文的 `words` 實際為引擎 token 粒度，不宣稱等同語言學分詞；字幕校正沿用既有介面。
 - 每次轉錄使用獨立暫存目錄。工具失敗、缺少時間或格式錯誤不覆寫上次輸出；驗證後才保存正規化 JSON。
 - shell 仍負責抽音、影片時長與正式字幕備份。引擎換成 Base Q5_1 會影響辨識與時間結果，不能視為 small 模型的等價輸出。
 
-[引擎介面測試](../測試/引擎介面.test.js) 驗證 CPU／執行緒參數、時間轉換、控制 token、失敗保護及 Node 版本一致性。一般 verify 不執行模型；本機推論以獨立合成音訊驗證，不重跑正式工作。
+### 時間軸失效與重轉
+
+whisper 分 30 秒 window 解碼，會在某些切點把一句話的結束時間報過頭；之後整條時間軸往後偏，音檔時間用完時稿件還剩一段沒有時間可放，全部掛到最後一顆 word（成品是字幕上到一半停住、最後一瞬間閃過）。
+
+- **同一個音檔是確定性的**：同輸入連跑三次輸出完全相同，原樣重轉必定再失敗一次。改 `--beam-size`、`--threads`、`--max-len` 都無效。
+- 唯一實測有效的是在音檔前墊靜音換 window 邊界：`scripts/transcribe.sh --pad=秒數` 用 ffmpeg `adelay` 墊，並把秒數傳給 Adapter 減回去；影片時長仍量原始 mp4，不受影響。
+- [correct-subtitles.js](../應用程式/scripts/correct-subtitles.js) 在寫回前判定時間軸：字擠成一團、或 segment 秒數對不上字數就 `exit 3` 並不寫回。[run.js](../應用程式/run.js) 的 `SUBTITLE_PAD_LADDER` 據此重轉，第一次一律不墊（維持既有結果），之後每次墊不同秒數。目前是 `[0, 0.5]`＝總共轉兩次；兩次都壞就停在出片前要求人工介入，不自動再試（連兩次都壞多半不是換 window 邊界能解決的）。
+
+[引擎介面測試](../測試/引擎介面.test.js) 驗證 CPU／執行緒參數、時間轉換、控制 token、失敗保護及 Node 版本一致性。[字幕時間軸測試](../測試/字幕時間軸.test.js) 驗證墊靜音的時間戳還原、三種時間軸判定與重轉階梯。一般 verify 不執行模型；本機推論以獨立合成音訊驗證，不重跑正式工作。
 
 ## 參考
 

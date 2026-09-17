@@ -123,6 +123,15 @@ const STATUS_TEXT = { draft:'建立中', queued:'排隊中', preparing:'準備�
   // 伺服器重開前就開始跑的工作。run.js 是 detached 的，會自己跑完。
   detached:'背景執行中', 'detached-done':'已在背景跑完' };
 
+/**
+ * 狀態文字。draft 平常是「建立中」（上傳檔案那一瞬間），但重新出片複製出來的工作
+ * 也停在 draft，而且會一直停在那裡等人確認 —— 顯示「建立中」會讓人以為系統還在忙。
+ */
+function statusText(j) {
+  if (j.status === 'draft' && j.redoOf) return '等你確認';
+  return STATUS_TEXT[j.status] || j.status;
+}
+
 // tpl 的初始值只是「還沒收到 /api/health 之前」的暫時值；boot2() 收到 TPLS 之後
 // 會把它校正成「可選清單的第一個」（2026-08-31 使用者要求：焦點股日報移到最後，預設改成第一個）。
 let TPLS = {}, BRANDS = [], ADMIN = false, brand = null, tpl = null, view = 'new', openJob = null;
@@ -669,7 +678,7 @@ async function loadJobs() {
     ADMIN ? el('th', {}, '') : '')));
   const tb = el('tbody');
   for (const j of jobs) {
-    let st = STATUS_TEXT[j.status] || j.status;
+    let st = statusText(j);
     if (j.queuePosition > 0) st += `（前面還有 ${j.queuePosition} 支）`;
     tb.append(el('tr', { class: 'jobrow' },
       el('td', { onclick: () => { openJob = j.id; go('job'); } }, new Date(j.createdAt).toLocaleString('zh-TW', { hour12: false }).slice(5)),
@@ -746,7 +755,7 @@ async function loadJob() {
     el('div', { style: 'display:flex;align-items:center;gap:12px;flex-wrap:wrap' },
       el('h2', { style: 'margin:0' }, (TPLS[job.template] || {}).label + '　' + (job.title || '').replace(/\n/g, ' ')),
       el('span', { class: 'st ' + job.status },
-        (STATUS_TEXT[job.status] || job.status) + (job.queuePosition > 0 ? `（前面還有 ${job.queuePosition} 支）` : '')),
+        statusText(job) + (job.queuePosition > 0 ? `（前面還有 ${job.queuePosition} 支）` : '')),
       el('span', { style: 'flex:1' }),
       el('button', { class: 'ghost', onclick: () => { openJob = null; go('list'); } }, '← 回列表')),
     el('div', { style: 'color:var(--dim);font-size:13px;margin-top:8px' },
@@ -773,9 +782,13 @@ async function loadJob() {
         + '這樣不會再呼叫 HeyGen，一毛錢都不用花。' })));
   }
 
+  // 重新出片複製過來的工作停在 draft，等人確認標注 —— 這張卡就是那個關卡。
+  if (job.status === 'draft' && job.redoOf) parts.push(redoConfirmCard(job));
+
   // HeyGen 生成／準備中的時候就可以先標注 —— 不用乾等
   //（2026-08-17 使用者：「等heygen生成時我順便手動標示」）
-  if (['queued', 'preparing', 'detached'].includes(job.status)) parts.push(annotCard(job));
+  // draft 也開：重新出片的工作要先讓人看過框才送出去（2026-09-17）。
+  if (['draft', 'queued', 'preparing', 'detached'].includes(job.status)) parts.push(annotCard(job));
 
   // 排隊等出片 → 還來得及反悔（2026-08-19 使用者要求的「反悔鍵」）。
   // 一旦 status 轉成 rendering 就退不回來了，那時只能取消重跑。
@@ -820,10 +833,14 @@ async function loadJob() {
     parts.push(pronounceReportCard(job));
   }
 
+  if (['done', 'failed'].includes(job.status)) parts.push(redoCard(job));
+
   const logCard = el('div', { class: 'card' },
     el('div', { style: 'display:flex;align-items:center;margin-bottom:12px' },
       el('h2', { style: 'margin:0;flex:1' }, '執行記錄'),
-      ['queued', 'review', 'failed', 'approved', 'detached-done'].includes(job.status)
+      // draft 也要能取消 —— 重新出片複製出來的工作會停在 draft 等人確認，
+      // 少了這個就只能永遠留在列表裡（2026-09-17）。
+      ['draft', 'queued', 'review', 'failed', 'approved', 'detached-done'].includes(job.status)
         ? el('button', { class: 'ghost danger', onclick: async () => {
             if (confirm('確定取消這支工作？')) { await api(`/api/jobs/${job.id}/cancel`, { method: 'POST' }); loadJob(); }
           } }, '取消工作') : ''),
@@ -833,6 +850,69 @@ async function loadJob() {
   box.replaceChildren(...parts);
   const pre = logCard.querySelector('pre');
   if (scrolled) pre.scrollTop = pre.scrollHeight;
+}
+
+/**
+ * 「重新出片」卡片 —— 用同一份稿件、截圖、標注、講者影片再跑一次。
+ *
+ * 2026-09-16 那天字幕時間軸壞掉，同事只能重貼稿件、重傳截圖、**重畫一次顯示範圍與黃框**，
+ * 重畫的結果還跟原本不一樣。那些東西工作資料夾裡全都留著，沒道理要人重做一次。
+ */
+function redoCard(job) {
+  const busyMsg = el('span', { style: 'margin-left:12px;font-size:12.5px;color:var(--dim)' });
+  return el('div', { class: 'card' },
+    el('h2', {}, '重新出片'),
+    el('div', { class: 'note', html:
+      '用<b>完全一樣</b>的稿件、截圖、標注（顯示範圍／黃框／箭頭）與講者影片再跑一次。<br>'
+      + '<b>不會重新呼叫 HeyGen 或 MiniMax，不扣點數。</b><br><br>'
+      + '複製完會停下來讓你先看過標注、可以微調，按「確認，開始出片」才排進佇列。<br>'
+      + '<b>稿件不能改</b> —— 標注是照字元位置對到稿件的，改一個字後面的框就會跑掉。'
+      + '要改稿請重新建立一支工作。' }),
+    el('div', { style: 'margin-top:14px' },
+      el('button', { class: 'ghost', onclick: async (e) => {
+        const btn = e.target;
+        btn.disabled = true;
+        busyMsg.textContent = '複製中…';
+        try {
+          const r = await api(`/api/jobs/${job.id}/redo`, { method: 'POST' });
+          openJob = r.job.id;
+          jobSig = null;
+          go('job');
+        } catch (err) {
+          busyMsg.textContent = '';
+          btn.disabled = false;
+          alert('重新出片失敗：' + err.message);
+        }
+      } }, '♻ 重新出片'),
+      busyMsg));
+}
+
+/** 重新出片複製完的確認關卡（新工作停在 draft，按了才真的排進佇列）。 */
+function redoConfirmCard(job) {
+  const msg = el('span', { style: 'margin-left:12px;font-size:12.5px;color:var(--dim)' });
+  return el('div', { class: 'card' },
+    el('h2', {}, '確認後開始出片'),
+    el('div', { class: 'note', html:
+      `稿件、截圖、標注與講者影片都從工作 <code>${job.redoOf}</code> 帶過來了，`
+      + '<b>還沒開始跑</b>。<br>'
+      + '下面的標注就是原本那一份 —— 看一下框還在不在、要不要微調，好了就按開始。<br>'
+      + '這支不會重新呼叫 HeyGen／MiniMax，<b>不扣點數</b>。' }),
+    el('div', { style: 'margin-top:14px' },
+      el('button', { onclick: async (e) => {
+        const btn = e.target;
+        btn.disabled = true;
+        msg.textContent = '送出中…';
+        try {
+          await api(`/api/jobs/${job.id}/submit`, { method: 'POST' });
+          jobSig = null;
+          loadJob();
+        } catch (err) {
+          msg.textContent = '';
+          btn.disabled = false;
+          alert('送不出去：' + err.message);
+        }
+      } }, '✓ 確認，開始出片'),
+      msg));
 }
 
 /**
