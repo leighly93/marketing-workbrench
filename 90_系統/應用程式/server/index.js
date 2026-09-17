@@ -608,6 +608,21 @@ function isRunJs(pid) {
 }
 
 /**
+ * 停掉一支正在跑的 run.js（2026-09-17 使用者要求「取消鈕要一直在」）。
+ *
+ * ⚠️ 殺的是**整個 process group** 不是單一 pid —— runPipeline 是 detached 起的，
+ *    run.js 自己還會 spawn ffmpeg／remotion／whisper。只殺 run.js 會留下孤兒程序
+ *    繼續吃 CPU 跟寫 public/。group 殺不掉才退回殺單一 pid。
+ * ⚠️ 一定要 SIGTERM 不要 SIGKILL：run.js 的 SIGTERM handler 會清掉 .run.lock
+ *   （見 run.js 的 main()）。KILL 不給它機會清，下一支工作會卡在「排隊等它結束」。
+ */
+function stopRunJs(job) {
+  if (!isRunJs(job.pid)) return false;
+  try { process.kill(-job.pid, 'SIGTERM'); return true; } catch (_) {}
+  try { process.kill(job.pid, 'SIGTERM'); return true; } catch (_) { return false; }
+}
+
+/**
  * 跑 run.js。
  *
  * ⚠️ 兩個關鍵決定（2026-08-17 與使用者討論後定案的「方案 C」）：
@@ -1839,6 +1854,9 @@ function tick() {
   const work = job.status === 'approved' ? doRender(job) : doPrepare(job);
   work
     .catch((e) => {
+      // 人按了取消 → run.js 被 SIGTERM，這裡一定會收到非 0 結束碼。
+      // 那不是失敗，狀態已經是 cancelled 了，蓋成 failed 會讓人以為是系統出錯。
+      if (job.status === 'cancelled') return;
       job.status = 'failed';
       job.error = e.message;
       appendLog(job, '\n❌ ' + e.message + '\n');
@@ -3026,15 +3044,34 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { job: publicJob(job, admin) });
     }
 
+    /**
+     * 取消工作（2026-09-17 改：正在跑的也能取消）。
+     *
+     * 以前 preparing／rendering 一律回 400「請等它結束」—— 使用者實際遇到的是
+     * HeyGen 卡在 processing 十幾分鐘，前台連按鈕都沒有，只能乾等。
+     * 現在一律受理：還在跑就先把 run.js 停掉（連同它 spawn 的子程序），再標成已取消。
+     *
+     * ⚠️ HeyGen／MiniMax 的錢在呼叫當下就扣了，停掉不會退 —— 前台要講清楚，不要
+     *    讓人以為按了就沒事。
+     */
     if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'cancel' && req.method === 'POST') {
       const job = getJob(seg[2]);
       if (!job) return send(res, 404, { error: '找不到工作' });
-      if (['preparing', 'rendering'].includes(job.status))
-        return send(res, 400, { error: '正在跑的工作不能取消，請等它結束' });
+      if (job.status === 'cancelled') return send(res, 200, { job: publicJob(job, admin) });
+      if (['done', 'failed'].includes(job.status))
+        return send(res, 400, { error: '這支已經結束了，要清掉請用列表的刪除' });
+      const stopped = stopRunJs(job);
+      // ⚠️ 要在改 status 之前立旗標：殺掉 run.js 會讓 runPipeline 的 close 以非 0 結束碼
+      //    reject，tick() 的 .catch 接著把工作標成 failed —— 那會蓋掉這裡的 cancelled，
+      //    使用者按了取消卻看到「失敗」。
+      job.cancelledAt = nowISO();
       job.status = 'cancelled';
+      job.error = null;
+      if (stopped) appendLog(job, '\n⛔ 已取消：已停止正在執行的產線（HeyGen／MiniMax 已扣的點數不會退回）\n');
+      else appendLog(job, '\n⛔ 已取消\n');
       rmrf(jobPath(job.id, 'state'));
       saveJob(job);
-      return send(res, 200, { job: publicJob(job, admin) });
+      return send(res, 200, { job: publicJob(job, admin), stopped });
     }
 
     // 刪除整筆工作（含影片、紀錄）。只有本機管理者能刪；正在跑的不給刪。

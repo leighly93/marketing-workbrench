@@ -220,10 +220,12 @@ test('前台：draft 狀態要開標注頁，重新出片按鈕只給跑完或�
   assert.match(app, /\['done', 'failed'\]\.includes\(job\.status\)\) parts\.push\(redoCard\(job\)\)/);
   // 確認關卡：draft + redoOf 才顯示
   assert.match(app, /job\.status === 'draft' && job\.redoOf/);
-  // draft 也要能取消，不然按了重新出片又反悔的工作會永遠留在列表裡
-  const cancel = app.match(/\[([^\]]+)\]\.includes\(job\.status\)\n?\s*\? el\('button', \{ class: 'ghost danger'/);
+  // draft 也要能取消，不然按了重新出片又反悔的工作會永遠留在列表裡。
+  // 2026-09-17 起取消鈕改成「一律顯示」（使用者：跑到一半沒有鈕可按，只能乾等），
+  // 判斷從白名單翻轉成黑名單 —— 這裡跟著看「draft 有沒有被排除掉」。
+  const cancel = app.match(/function cancelBtn\(job\) \{\n\s*if \(\[([^\]]+)\]\.includes\(job\.status\)\) return '';/);
   assert.ok(cancel, 'app.js 找不到取消鈕的狀態判斷');
-  assert.match(cancel[1], /'draft'/);
+  assert.doesNotMatch(cancel[1], /'draft'/, 'draft 要能取消');
   // 停在 draft 等人確認的工作不能顯示「建立中」——那會讓人以為系統還在忙
   assert.match(app, /function statusText\(j\)/);
   assert.match(app, /j\.status === 'draft' && j\.redoOf\) return '等你確認'/);

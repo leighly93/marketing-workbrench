@@ -757,6 +757,10 @@ async function loadJob() {
       el('span', { class: 'st ' + job.status },
         statusText(job) + (job.queuePosition > 0 ? `（前面還有 ${job.queuePosition} 支）` : '')),
       el('span', { style: 'flex:1' }),
+      // ⚠️ 取消鈕放在**頁首**，不是埋在最下面的執行記錄裡（2026-09-17 使用者要求
+      //    「一進到下一頁就要一直顯示」）。以前要捲到整頁最底才看得到，而且正在跑的
+      //    工作根本不畫它 —— 人卡在 HeyGen 十幾分鐘只能乾等。
+      cancelBtn(job),
       el('button', { class: 'ghost', onclick: () => { openJob = null; go('list'); } }, '← 回列表')),
     el('div', { style: 'color:var(--dim);font-size:13px;margin-top:8px' },
       `${job.owner}・${new Date(job.createdAt).toLocaleString('zh-TW', { hour12: false })}`),
@@ -848,21 +852,49 @@ async function loadJob() {
 
   if (['done', 'failed'].includes(job.status)) parts.push(redoCard(job));
 
+  // 取消鈕已經移到頁首了，這裡不要再放一顆 —— 同一頁兩個一樣的紅字按鈕只會讓人不確定
+  // 哪個才是真的（而且下面這顆本來就常常在捲軸外面）。
   const logCard = el('div', { class: 'card' },
-    el('div', { style: 'display:flex;align-items:center;margin-bottom:12px' },
-      el('h2', { style: 'margin:0;flex:1' }, '執行記錄'),
-      // draft 也要能取消 —— 重新出片複製出來的工作會停在 draft 等人確認，
-      // 少了這個就只能永遠留在列表裡（2026-09-17）。
-      ['draft', 'queued', 'review', 'failed', 'approved', 'detached-done'].includes(job.status)
-        ? el('button', { class: 'ghost danger', onclick: async () => {
-            if (confirm('確定取消這支工作？')) { await api(`/api/jobs/${job.id}/cancel`, { method: 'POST' }); loadJob(); }
-          } }, '取消工作') : ''),
+    el('h2', { style: 'margin:0 0 12px' }, '執行記錄'),
     el('pre', { class: 'log' }, logText));
   parts.push(logCard);
 
   box.replaceChildren(...parts);
   const pre = logCard.querySelector('pre');
   if (scrolled) pre.scrollTop = pre.scrollHeight;
+}
+
+/**
+ * 取消工作（2026-09-17 使用者要求「一進到下一頁就要一直顯示」）。
+ *
+ * 以前只給 draft／queued／review／failed／approved／detached-done 這幾個狀態，而且埋在
+ * 頁面最下面的執行記錄裡。實際踩到的情況是：HeyGen 卡在 processing 十幾分鐘，那支是
+ * preparing —— 名單裡沒有它，畫面上連按鈕都沒有，人只能乾等。現在一律顯示。
+ *
+ * 已經結束的（done／failed）不給取消：那不是「停下來」，是要清掉，走列表的刪除。
+ * 已經是 cancelled 的就不用再按一次了。
+ */
+function cancelBtn(job) {
+  if (['done', 'failed', 'cancelled'].includes(job.status)) return '';
+  // 正在跑的要講清楚代價 —— 錢是呼叫當下就扣的，停掉不會退。
+  const running = ['preparing', 'rendering', 'detached'].includes(job.status);
+  const ask = running
+    ? '這支正在跑，取消會直接停掉它。\n\n'
+      + '⚠️ HeyGen／MiniMax 已經扣掉的點數不會退回，而且製作快照會被清掉（不能再「重新出片」）。\n\n'
+      + '確定要停？'
+    : '確定取消這支工作？';
+  return el('button', { class: 'ghost danger', onclick: async (ev) => {
+    if (!confirm(ask)) return;
+    ev.target.disabled = true;
+    try {
+      await api(`/api/jobs/${job.id}/cancel`, { method: 'POST' });
+      jobSig = null;
+      loadJob();
+    } catch (e) {
+      ev.target.disabled = false;
+      alert('取消失敗：' + e.message);
+    }
+  } }, running ? '⛔ 停止這支' : '取消工作');
 }
 
 /**
@@ -1062,6 +1094,28 @@ let annotJobId = null;
 // 排隊等出片那張卡片自己載重點詞（那個階段沒有標注頁也沒有計畫頁可以順便帶）。
 // 記住載過誰，免得每次輪詢重畫都重打一次 API、把人正在拖的選取蓋掉。
 let emphLoadedFor = null;
+// 系統判定的頁型。計畫頁從 planView.pages 拿，標注頁沒有 planView，走 /api/jobs/:id/pages。
+let ANNOT_PAGES = {};
+
+/**
+ * 標注頁的截圖總覽（2026-09-17）。跟配圖計畫頁那面牆共用 shotFigures()，
+ * 差別只在「用了幾次」數的是 ANNOTS、點一下是加標注而不是加計畫段。
+ */
+function drawAnnotWall(job) {
+  const wrap = $('#annotWall');
+  if (!wrap) return;
+  const imgs = (job.files || []).filter((f) => /\.(png|jpe?g)$/i.test(f));
+  if (!imgs.length) return wrap.replaceChildren();
+  const count = {};
+  for (const a of ANNOTS) count[a.src] = (count[a.src] || 0) + 1;
+  const used = imgs.filter((n) => count[n]).length;
+  wrap.replaceChildren(
+    el('div', { style: 'font-size:12.5px;color:var(--dim);margin-bottom:8px' },
+      `全部截圖 ${imgs.length} 張，已經用了 ${used} 張　—　`
+      + '點一下就用它加一段；同一張可以點多次、各自標不同區塊。'),
+    el('div', { class: 'shots' },
+      ...shotFigures(job, imgs, count, ANNOT_PAGES, (n) => addAnnot(job, n))));
+}
 
 function annotCard(job) {
   const c = el('div', { class: 'card' },
@@ -1072,9 +1126,18 @@ function annotCard(job) {
       + '<b>標「哪一句」而不是「第幾秒」</b> —— 秒數要等語音轉完字幕才存在，系統會自己換算。<br>'
       + '圖不夠？<b>下面可以再上傳</b>；編輯器裡也有縮圖列可以直接換成別張圖。' }),
     el('div', { id: 'annotList' }),
+    // 截圖總覽（2026-09-17 使用者要求，跟配圖計畫頁對齊）：看得出哪張用了幾次、
+    // 系統認成什麼頁型，點一下就用那張加一段。以前這塊只長在計畫頁上。
+    el('div', { id: 'annotWall', style: 'margin-top:18px' }),
     el('div', { style: 'margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap' },
       el('button', { class: 'ghost', onclick: () => addAnnot(job) }, '＋ 加一個標注'),
-      el('button', { class: 'ghost', onclick: () => pickMoreShots(job) }, '＋ 上傳更多截圖'),
+      // ⚠️ 上傳完只重畫縮圖牆與標注列，不要走 loadJob() —— 跟計畫頁同一個理由：
+      //    整頁重畫會把人正在拉的框、加到一半的標注洗掉。
+      el('button', { class: 'ghost', onclick: () => pickMoreShots(job, (added) => {
+        job.files = job.files || [];
+        for (const n of added) if (!job.files.includes(n)) job.files.push(n);
+        drawAnnots(job);
+      }) }, '＋ 上傳更多截圖'),
       el('span', { id: 'annotUpMsg', style: 'font-size:12.5px;color:var(--dim)' }),
       el('span', { id: 'annotSaved', style: 'font-size:12.5px;color:var(--dim)' })),
     // ⚠️ 排在 autoGoRow 上面 —— 「標好了，直接出片」按下去就進出片佇列，
@@ -1084,15 +1147,20 @@ function annotCard(job) {
 
   if (annotJobId !== job.id) {
     annotJobId = job.id;
-    ANNOTS = []; UNITS = []; CHARS = []; EMPH = [];
+    ANNOTS = []; UNITS = []; CHARS = []; EMPH = []; ANNOT_PAGES = {};
     Promise.all([
       api(`/api/jobs/${job.id}/sentences`).catch(() => ({ units: [] })),
       api(`/api/jobs/${job.id}/annotations`).catch(() => ({ shots: [] })),
       api(`/api/jobs/${job.id}/emphasis`).catch(() => ({ marks: [] })),
-    ]).then(([sv, av, ev]) => {
+      // 頁型：準備中還沒有 planView，所以走自己的端點（計畫頁是從 planView.pages 拿）。
+      // 截圖分析跟 HeyGen 平行跑，可能比這裡晚完成 —— 讀不到就先畫「未知頁面」，
+      // 下面的輪詢會再補上。
+      api(`/api/jobs/${job.id}/pages`).catch(() => ({ pages: {} })),
+    ]).then(([sv, av, ev, pv]) => {
       UNITS = sv.units || [];
       CHARS = sv.chars || [];
       ANNOTS = av.shots || [];
+      ANNOT_PAGES = pv.pages || {};
       EMPH = (ev.marks || [])
         .filter((m) => Number.isInteger(m.startCharIdx) && Number.isInteger(m.endCharIdx))
         .map((m) => ({ startCharIdx: m.startCharIdx, endCharIdx: m.endCharIdx }));
@@ -1205,6 +1273,9 @@ function drawAnnots(job) {
             el('span', { style: 'font-size:12.5px;color:var(--dim)' },
               '沒圈選的截圖不會出現在影片裡。'))]));
   }));
+  // 牆上的「已用 N 次」要跟著標注一起更新 —— 少了這行，點縮圖加完標注、
+  // 或刪掉一段之後，次數會停在舊數字。
+  drawAnnotWall(job);
 }
 
 async function saveAnnots(job) {
@@ -1536,6 +1607,36 @@ function planCard(job) {
   return c;
 }
 
+/**
+ * 截圖縮圖牆（2026-09-17 抽成共用）。配圖計畫頁與手動標記頁用同一份。
+ *
+ * ⚠️ 以前只長在配圖計畫頁，所以準備中只能一張一張點縮圖，看不出哪張用了幾次、
+ *    系統把它認成什麼頁 —— 跟字幕重點詞同一類問題（功能只開在一頁上）。
+ *
+ * count：每張圖被用了幾次（計畫頁數 edits、標注頁數 ANNOTS）。
+ * pages：系統判定的頁型；計畫頁來自 planView.pages，標注頁走 /api/jobs/:id/pages。
+ * onPick：點一下要做什麼（計畫頁＝加一段 addSeg，標注頁＝加一個標注 addAnnot）。
+ */
+function shotFigures(job, images, count, pages, onPick) {
+  return (images || []).map((n) => {
+    const c = (count || {})[n] || 0;
+    // 2026-09-07 系統判定的頁型（來自 app-images.generated.json）。
+    // 認不出來（unknown）或只認得出「是個股頁但不知道哪個 tab」（stock-other）→ 給一顆 📌，
+    // 按了只存指紋與截圖、不命名；之後 `node scripts/page-pins.js` 批次分群命名（使用者定案：不要當場手打）。
+    const pg = (pages || {})[n] || {};
+    const unknown = !pg.page || pg.page === 'unknown' || pg.page === 'stock-other';
+    const fig = el('figure', { class: c ? 'used' : '', title: `點一下＝用 ${n} 加一段`,
+      onclick: () => onPick(n) },
+      el('img', { src: `/api/jobs/${job.id}/file/${n}`, alt: '' }),
+      el('div', { class: 'tag' }, c ? `已用 ${c} 次` : '還沒用'),
+      el('div', { class: 'pg' + (unknown ? ' unk' : ''), title: '系統判定的頁型' }, pg.pageLabel || '未知頁面'),
+      el('div', { class: 'nm' }, n));
+    // 2026-09-07 使用者定案：📌 只給管理者（本機連進來的人）看；同事那邊只看到頁型標籤、沒有按鈕。
+    if (unknown && ADMIN) fig.append(el('button', { class: 'pin', title: '記下這種頁：系統認不出來，先存指紋與截圖，之後批次命名',
+      onclick: (ev) => { ev.stopPropagation(); pinPage(n, fig); } }, '📌'));
+    return fig;
+  });
+}
 /**
  * 字幕重點詞區塊（2026-09-17）。**共用** —— 準備中、待確認、排隊等出片都要有這一塊。
  *
