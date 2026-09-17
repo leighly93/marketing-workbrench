@@ -448,19 +448,12 @@ function restoreWorkspace(job) {
 //   橫式（output-dapan-landscape）過不了規格第 4 項「1080×1920 直式、不加黑邊」，硬套只會加黑邊或裁切；
 //   投廣版（output-focusstock-ad）與投廣模板（output.mp4）使用者定案不套。
 //   不在名單裡的照舊直接 copyFileSync。
-const DELIVERY_SPEC_OUTPUTS = {
-  dapan: ['output-dapan.mp4'],
-  // 盤中焦點只出直式，整支都要照交付規格轉（2026-08-31 使用者：「輸出也要照轉檔規則」）
-  midday: ['output-midday.mp4'],
-  // 美股焦點同樣只出直式，整支都要照交付規格轉（跟盤中焦點同一條規則）
-  usstock: ['output-usstock.mp4'],
-  focusstock: ['output-focusstock.mp4'],
-  institution: ['output-institution.mp4'],
-};
-
-function needsDeliverySpec(job, outName) {
-  return (DELIVERY_SPEC_OUTPUTS[job.template] || []).includes(outName);
-}
+/**
+ * 2026-09-17 使用者定案：**所有成品都做收尾**，不再分「只有直式要轉」。
+ * 舊規則是為了完整交付規格那 23 秒的成本才挑著做；現在收尾只要 0.6 秒（視訊 copy），
+ * 全部做的好處是**音量一致** —— 橫式與投廣版以前完全沒正規化，音量看 HeyGen 那次多大聲。
+ * 沒有音軌的檔案會在 measureLoudness 失敗，由呼叫端的 try/catch 退回原始檔（見 doRender）。
+ */
 
 /** 跑一次 ffmpeg，不阻塞 event loop（轉一支 1080×1920 要一兩分鐘，execFileSync 會讓整個前台卡死） */
 function runFfmpeg(args, onStderr) {
@@ -480,16 +473,6 @@ function runFfmpeg(args, onStderr) {
 // `-fps_mode` 是 ffmpeg 5.0 才有的（4.x 只有 `-vsync`）。本機是哪一版不一定，
 // 猜錯整條轉檔就掛掉退回 copyFileSync＝規格白做，所以問一次、記起來。
 let fpsModeSupported = null;
-async function supportsFpsMode() {
-  if (fpsModeSupported !== null) return fpsModeSupported;
-  try {
-    const out = await runFfmpeg(['-hide_banner', '-h', 'full']);
-    fpsModeSupported = /-fps_mode/.test(out);
-  } catch (_) {
-    fpsModeSupported = false;
-  }
-  return fpsModeSupported;
-}
 
 /**
  * Pass 1：量測響度。
@@ -516,48 +499,33 @@ async function measureLoudness(file) {
 }
 
 /**
- * Pass 2：交付轉檔。
+ * 成品收尾：**只做響度正規化與 faststart，視訊直接 copy 不重新編碼**。
  *
- * 幾個容易改壞的地方，改之前先看這裡：
- *  - `scale=in_range=pc:out_range=tv` 只壓 range、**故意不碰 matrix**。源被標成 yuvj（full range）
- *    ＋ bt470bg（PAL 矩陣），但內容其實是 bt709 的網頁畫面 —— 標籤本身就是錯的。
- *    讓 ffmpeg「相信」錯標籤去做矩陣轉換，顏色會被改壞；這裡是壓完 range 再由輸出端重打 bt709。
- *  - `-colorspace / -color_primaries / -color_trc` 三個都要給。規格第 9 項要 primaries／transfer／matrix
- *    皆填，缺一項就不算「明確標記」。
- *  - `scenecut=0` ＋ `open-gop=0`：不關場景偵測，x264 會臨時插 I-frame，GOP 就不是固定 15；
- *    open-gop=0 才是 closed GOP。
- *  - `aresample=48000` 最容易漏 —— loudnorm 內部會把音訊升到 192 kHz，不接這個就不是 48 kHz，
- *    規格第 7 項直接掛。
- *  - 位元率走 **CRF 21 ＋ maxrate 5M 品質導向**（2026-08-21 使用者定案）。規格那欄「目標 5 Mbps」
- *    與「建議 CRF 21 品質導向」本來是矛盾的；選品質導向是因為 K 線細線條／字幕邊緣／APP 截圖小字
- *    都是高頻細節，撐不住固定位元率的削法。若對方檢核要求「必須接近 5 Mbps」才改 two-pass ABR。
+ * 2026-09-17 使用者定案：投放平台那份交付規格（H.264 High 4.1／GOP 15／bt709 三欄／
+ * CRF 21 + maxrate 5M／CFR 30）**已經沒有這個規定了**，整套拿掉。留下的兩項不是規格、是實用：
+ *   ① `loudnorm I=-14 TP=-1.5` —— 每支影片音量一致。少了它，音量就看 HeyGen／MiniMax
+ *      那次輸出多大聲，支跟支之間會有落差。
+ *   ② `+faststart` —— moov 放檔頭，前台線上播放不必先載完整個檔（成品 30MB 上下，差別明顯）。
+ *
+ * ⚠️ `-c:v copy` 是這次最大的改變：Remotion 出來的已經是 H.264 CRF 23，再編一次只是多一次
+ *    失真加一兩分鐘。現在只重編音訊（loudnorm 必須重編），所以**檔案大小≒原檔、耗時剩幾秒**。
+ *    哪天對方又要求特定視訊規格，把舊參數加回來即可（git 記錄裡有完整那一份）。
+ *
+ * loudnorm 仍是 two-pass（先 measureLoudness 量、再把量到的值餵回去）—— 單 pass 的動態壓縮
+ * 會讓旁白忽大忽小。`aresample=48000` 不能省：loudnorm 內部會把音訊升到 192 kHz。
  */
-async function transcodeForDelivery(from, to, onProgress) {
+async function finalizeOutput(from, to, onProgress) {
   const m = await measureLoudness(from);
-  const cfrArgs = (await supportsFpsMode()) ? ['-fps_mode', 'cfr'] : ['-vsync', 'cfr'];
-  const tmp = to + '.delivery.tmp.mp4';
+  const tmp = to + '.finalize.tmp.mp4';
   try {
     await runFfmpeg([
       '-y', '-hide_banner', '-nostats', '-i', from,
-      '-c:v', 'libx264', '-profile:v', 'high', '-level:v', '4.1', '-preset', 'slow',
-      '-crf', '21', '-maxrate', '5M', '-bufsize', '10M',
-      // GOP 15＝0.5 秒一個 I-frame，關鍵影格密度是預設的 16 倍，位元率會明顯往上跑。
-      // 這是整份規格裡最貴的一項，也是唯一需要盯實際位元率的。
-      '-x264-params', 'keyint=15:min-keyint=15:scenecut=0:open-gop=0:bframes=2',
-      // ⚠️ `setparams` 不是多寫的 —— ffmpeg 7/8 會把濾鏡鏈輸出的 frame 色彩屬性套到編碼器上，
-      //    蓋掉下面 `-color_primaries`／`-color_trc`（源檔這兩欄是 unknown，就被蓋成 unknown）。
-      //    2026-08-21 實測：本機 ffmpeg 8.1.1 出來的成品 primaries／transfer 都是 unknown、只有
-      //    matrix=bt709 活著（scale 會處理矩陣），規格第 9 項「三欄皆填」等於沒過。ffmpeg 4.4 沒這問題，
-      //    所以不是參數寫錯、是版本行為差異。setparams 從 4.3 就有，新舊版都安全，兩邊都留著。
-      '-vf', 'scale=in_range=pc:out_range=tv,format=yuv420p'
-        + ',setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709',
-      '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
-      '-r', '30', ...cfrArgs,
+      '-c:v', 'copy',
       '-af', `loudnorm=I=-14:TP=-1.5:LRA=11:measured_I=${m.input_i}:measured_TP=${m.input_tp}`
         + `:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}`
         + ':linear=true,aresample=48000',
-      '-c:a', 'aac', '-profile:a', 'aac_low', '-b:a', '128k', '-ar', '48000', '-ac', '2',
-      '-movflags', '+faststart', '-brand', 'mp42',
+      '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2',
+      '-movflags', '+faststart',
       tmp,
     ], onProgress);
     fs.renameSync(tmp, to); // 轉完才就位 —— 中途失敗不會在成品庫留半支
@@ -2006,19 +1974,15 @@ async function doRender(job) {
     let size = fs.statSync(from).size;
     try {
       const dest = archivePath(job, name);
-      // 直式三個版型走交付規格轉檔，其餘（橫式／投廣版）照舊直接複製。
-      // ⚠️ 轉檔失敗一定要退回 copyFileSync —— 不能因為 ffmpeg 掛掉就沒有成品。
-      if (needsDeliverySpec(job, name)) {
-        appendLog(job, `\n🎛  ${name} 轉交付規格（H.264 High 4.1／yuv420p／bt709／GOP 15／−14 LUFS／TP −1.5）…\n`);
-        try {
-          const m = await transcodeForDelivery(from, dest);
-          size = fs.statSync(dest).size;
-          appendLog(job, `   ✅ 轉檔完成（源響度 ${m.input_i} LUFS／TP ${m.input_tp} dBTP → −14／−1）\n`);
-        } catch (e) {
-          appendLog(job, `   ⚠️ 交付轉檔失敗，改用原始渲染檔（這支不合規，要手動補轉）：${e.message}\n`);
-          fs.copyFileSync(from, dest);
-        }
-      } else {
+      // 2026-09-17 起**每一支成品都收尾**（含橫式與投廣版），不再只挑直式。
+      // ⚠️ 收尾失敗一定要退回 copyFileSync —— 不能因為 ffmpeg 掛掉就沒有成品。
+      appendLog(job, `\n🎛  ${name} 收尾（響度 −14 LUFS／TP −1.5 ＋ faststart，視訊不重編）…\n`);
+      try {
+        const m = await finalizeOutput(from, dest);
+        size = fs.statSync(dest).size;
+        appendLog(job, `   ✅ 收尾完成（源響度 ${m.input_i} LUFS／TP ${m.input_tp} dBTP → −14／−1.5）\n`);
+      } catch (e) {
+        appendLog(job, `   ⚠️ 收尾失敗，改用原始渲染檔（音量沒正規化）：${e.message}\n`);
         fs.copyFileSync(from, dest);
       }
       job.outputs.push({ name, size, archive: path.relative(WORKSPACE_ROOT, dest) });
