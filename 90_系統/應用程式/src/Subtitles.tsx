@@ -273,6 +273,29 @@ function splitIntoPhrases(
 
 const PHRASES = splitIntoPhrases(data.segments, data._scriptBreaks ?? []);
 
+/**
+ * 有重點詞的那些句子 → 講者要推近的時間區間（秒，相對講者影片的開頭）。
+ *
+ * 2026-09-17 使用者定案：**跟著整句、硬切**。不跟著「詞」是因為一個詞常常只有 0.4 秒，
+ * 推進去又出來會像畫面抽搐。相鄰的兩句併成一段，不要切出去又立刻切回來。
+ *
+ * ⚠️ 原本想把切點對齊「聲音落下」（使用者剪真人素材的做法），但 AI 配音的句子之間大多
+ *    沒有停頓 —— 實測一支 46 秒的影片只有 10 個靜音區間、卻有 27 句字幕，只有 31% 的句首
+ *    附近有真正的停頓，其餘最近的靜音都差 2 秒以上，硬對過去反而錯位。所以切在**字幕換
+ *    的那一格**：字幕換與推鏡同時發生，視覺上是同一個節拍。
+ */
+export function emphasisPunchSpans(): { start: number; end: number }[] {
+  if (!phrasesAlignable || EMPHASIS_CHARS.size === 0) return [];
+  const spans: { start: number; end: number }[] = [];
+  for (const p of PHRASES) {
+    if (!p.map.some((i) => i >= 0 && EMPHASIS_CHARS.has(i))) continue;
+    const last = spans[spans.length - 1];
+    if (last && p.start - last.end <= 0.4) last.end = p.end;
+    else spans.push({ start: p.start, end: p.end });
+  }
+  return spans;
+}
+
 if (typeof window !== 'undefined') {
   // eslint-disable-next-line no-console
   console.log(

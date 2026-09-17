@@ -24,6 +24,8 @@ import { frameSpan } from '../timeline';
 import { Subtitles } from '../Subtitles';
 import { ShotFocusImage } from '../ShotFocus';
 import videoMeta from '../video-meta.json';
+import { PunchIn } from '../PunchIn';
+import { emphasisPunchSpans } from '../Subtitles';
 
 /**
  * 大盤小報 composition。
@@ -89,7 +91,9 @@ export const DapanComposition: React.FC = () => {
             所以用 objectFit:'cover'（等比放大＋裁切左右）把畫面填滿直式畫布，裁掉的是
             左右兩側背景，跟現有 MarketingVideo.tsx 那套「contain + scale(1.03)」
             （給直式來源用）是不同情境，這裡不能沿用 */}
-        <AbsoluteFill>
+        {/* 標了字幕重點詞的那幾句，講者推近一級（2026-09-17 使用者定案，見 PunchIn.tsx）。
+            沒標任何重點詞時 spans 是空陣列 → 完全不套 transform，畫面一格都不變。 */}
+        <PunchIn spans={emphasisPunchSpans()}>
           <OffthreadVideo
             src={staticFile('heygen.mp4')}
             volume={1.5}
@@ -116,7 +120,7 @@ export const DapanComposition: React.FC = () => {
               objectPosition: '52.7% center',
             }}
           />
-        </AbsoluteFill>
+        </PunchIn>
 
         {/* 截圖段：全螢幕切換（v1，無 OCR 黃框標註） */}
         {DAPAN_SHOT_RUNS.map((run, idx) => {

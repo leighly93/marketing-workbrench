@@ -19,6 +19,8 @@ import {
   secToFrame,
 } from './usstock-timeline';
 import { frameSpan } from '../timeline';
+import { PunchIn } from '../PunchIn';
+import { emphasisPunchSpans } from '../Subtitles';
 import { Subtitles } from '../Subtitles';
 import { ShotFocusImage } from '../ShotFocus';
 import videoMeta from '../video-meta.json';
@@ -66,7 +68,9 @@ export const UsStockComposition: React.FC = () => {
 
       {/* === 主段：主講者影片期 === */}
       <Sequence from={introFrames} durationInFrames={heygenFrames}>
-        <AbsoluteFill>
+        {/* 標了字幕重點詞的那幾句，講者推近一級（2026-09-17，見 PunchIn.tsx）。
+            沒標就是空陣列 → 完全不套 transform，畫面一格都不變。 */}
+        <PunchIn spans={emphasisPunchSpans()}>
           <OffthreadVideo
             src={staticFile('heygen.mp4')}
             volume={1.5}
@@ -77,7 +81,7 @@ export const UsStockComposition: React.FC = () => {
               objectPosition: 'center center',
             }}
           />
-        </AbsoluteFill>
+        </PunchIn>
 
         {/* 截圖段：全螢幕切換（黃框由 auto-shot／人工標注決定） */}
         {USSTOCK_SHOT_RUNS.map((run, idx) => {
