@@ -16,12 +16,14 @@ export const PUNCH = {
   /** 推近幅度。1.25 是實際拿 avatar 渲過比較的：構圖還在、臉明顯變大。 */
   scale: 1.25,
   /**
-   * 縮放錨點。
-   * 水平用畫面中心就好 —— 各 composition 的 `objectPosition` 已經把人物擺到中間，
+   * 縮放錨點（**直式／全畫面講者**用的預設值）。
+   * 水平用畫面中心就好 —— 那些 composition 的 `objectPosition` 已經把人物擺到畫布正中央，
    * 這裡再偏一次會把那個校正抵消掉。
    * 垂直 25% 偏上，推近時臉留在畫面上半、被裁掉的是下襬，跟人工剪的特寫同一個取景。
    * ⚠️ 換 avatar look 時要順便看一眼 —— 人物在來源畫面的高低不一樣，這個值可能要重量
    *   （跟 DapanComposition 的 objectPosition 同一組前提）。
+   * ⚠️ 講者**沒有**佔滿畫布時（橫式 DapanLandscapeComposition 的人物只在左側可見區）
+   *   不能用這個預設值，要用 `origin` prop 傳該版型自己的中心 —— 見那支的 PUNCH_ORIGIN。
    */
   origin: '50% 25%',
 };
@@ -29,8 +31,13 @@ export const PUNCH = {
 export const PunchIn: React.FC<{
   /** 要推近的時間區間（秒，相對這個 Sequence 的開頭） */
   spans: { start: number; end: number }[];
+  /**
+   * 覆寫縮放錨點（CSS transform-origin，百分比是**對整個畫布**算的）。
+   * 不傳＝用 PUNCH.origin（人物置中於畫布的版型）。
+   */
+  origin?: string;
   children: React.ReactNode;
-}> = ({ spans, children }) => {
+}> = ({ spans, origin = PUNCH.origin, children }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const t = frame / fps;
@@ -39,7 +46,7 @@ export const PunchIn: React.FC<{
     // ⚠️ 外層一定要 overflow:hidden —— 放大後的影片會溢出畫布，蓋到上面的 header bar。
     <AbsoluteFill style={{ overflow: 'hidden' }}>
       <AbsoluteFill
-        style={on ? { transform: `scale(${PUNCH.scale})`, transformOrigin: PUNCH.origin } : undefined}
+        style={on ? { transform: `scale(${PUNCH.scale})`, transformOrigin: origin } : undefined}
       >
         {children}
       </AbsoluteFill>

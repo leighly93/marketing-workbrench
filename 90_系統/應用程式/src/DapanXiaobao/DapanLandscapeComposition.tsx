@@ -17,7 +17,8 @@ import {
   secToFrame,
 } from './dapan-timeline';
 import { frameSpan } from '../timeline';
-import { Subtitles } from '../Subtitles';
+import { Subtitles, emphasisPunchSpans } from '../Subtitles';
+import { PunchIn } from '../PunchIn';
 import { ShotFocusImage } from '../ShotFocus';
 import videoMeta from '../video-meta.json';
 
@@ -49,6 +50,23 @@ const PANEL_LEFT_X = 1178;
 const LANDSCAPE_WIDTH = 1920;
 const LANDSCAPE_HEIGHT = 1080;
 
+/**
+ * 重點句推鏡的縮放錨點（2026-09-17 補做 —— 直式先做了，橫式漏掉）。
+ *
+ * ⚠️ **不能**沿用 PunchIn 的預設 '50% 25%'：那個 50% 的前提是「人物在畫布正中央」，
+ *    橫式的人物只在左側可見區（0 ~ PANEL_LEFT_X），中心是 589 不是 960。
+ *    以 960 為錨點放大 1.25，人物會被往左推約 93px、偏出可見區中心 ——
+ *    等於把 objectPosition 56.3% 那條校正（見下方長註解）整個抵消掉。
+ *    所以水平錨點＝可見區中心 ÷ 畫布寬 ＝ 589/1920 ≈ 30.7%。
+ * 垂直沿用 25%（1080×0.25＝270，落在眼睛高度附近）：臉留在原位、裁掉的是下襬，
+ * 跟直式同一個取景邏輯。
+ *
+ * 放大後的覆蓋範圍（確認不會露黑邊）：左緣 0→−147、右緣 1198→1350（塞在 1178 的面板底下）、
+ * 上下 0→−67.5 / 1080→1282.5，四邊都超出畫布。
+ * ⚠️ 改 PANEL_LEFT_X 或換 avatar look，這個值要跟 objectPosition 一起重算。
+ */
+const PUNCH_ORIGIN = `${((PANEL_LEFT_X / 2 / LANDSCAPE_WIDTH) * 100).toFixed(1)}% 25%`;
+
 function fadeProgress(
   frame: number,
   start: number,
@@ -77,31 +95,36 @@ export const DapanLandscapeComposition: React.FC = () => {
     <AbsoluteFill style={{ backgroundColor: 'black' }}>
       {/* 講者影片：往左集中在左側可見區（x0 ~ PANEL_LEFT_X）。
           寬度多墊 20px 塞到面板底下，避免左右接縫露黑邊（面板不透明會蓋住）。 */}
-      <AbsoluteFill>
-        <OffthreadVideo
-          src={staticFile('heygen.mp4')}
-          volume={1.5}
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            width: PANEL_LEFT_X + 20,
-            height: '100%',
-            objectFit: 'cover',
-            // 2026-09-11 跟直式一起修（使用者是對直式反映「人不夠置中」，但橫式偏得更多，
-            // 原因一樣）。舊值 'center center' 配上面那句「人物仍落在可見區正中央」的註解 ——
-            // 實測 09-11 出的橫式.mp4，頭肩中點在 643.5、可見區中心是 589，**偏右 54.5px**。
-            // 偏移由兩件事疊出來，跟直式那邊只有第一項不同：
-            //   ① avatar 本身偏右 35px（見 DapanComposition.tsx 的長註解）→ ×1.2 ＝ 42px
-            //   ② 框比可見區寬 20px（墊在面板底下防黑邊），置中等於整個人往右挪 10px → ×1.2 ＝ 12px
-            // 換算：可裁寬度 1920−1198＝722px，要往左推 54.5/1.2＝45.4px → 6.3% → 50%+6.3%。
-            // ⚠️ 換 DAPAN_AVATAR 或改 PANEL_LEFT_X／那 20px 墊寬，這個值都要重算。
-            objectPosition: '56.3% center',
-            transform: 'scale(1.2)', // 2026-08-10 使用者定案人物放大 1.2（往中心放大；右側溢出被面板蓋掉、上下由畫布裁掉，頭仍在框內）
-            transformOrigin: 'center center',
-          }}
-        />
-      </AbsoluteFill>
+      {/* 標了字幕重點詞的那幾句，講者推近一級（2026-09-17 使用者定案，見 PunchIn.tsx）。
+          跟直式同一份 spans、同一個倍率，只有錨點換成橫式的可見區中心（見 PUNCH_ORIGIN）。
+          沒標任何重點詞時 spans 是空陣列 → 完全不套 transform，畫面一格都不變。 */}
+      <PunchIn spans={emphasisPunchSpans()} origin={PUNCH_ORIGIN}>
+        <AbsoluteFill>
+          <OffthreadVideo
+            src={staticFile('heygen.mp4')}
+            volume={1.5}
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              width: PANEL_LEFT_X + 20,
+              height: '100%',
+              objectFit: 'cover',
+              // 2026-09-11 跟直式一起修（使用者是對直式反映「人不夠置中」，但橫式偏得更多，
+              // 原因一樣）。舊值 'center center' 配上面那句「人物仍落在可見區正中央」的註解 ——
+              // 實測 09-11 出的橫式.mp4，頭肩中點在 643.5、可見區中心是 589，**偏右 54.5px**。
+              // 偏移由兩件事疊出來，跟直式那邊只有第一項不同：
+              //   ① avatar 本身偏右 35px（見 DapanComposition.tsx 的長註解）→ ×1.2 ＝ 42px
+              //   ② 框比可見區寬 20px（墊在面板底下防黑邊），置中等於整個人往右挪 10px → ×1.2 ＝ 12px
+              // 換算：可裁寬度 1920−1198＝722px，要往左推 54.5/1.2＝45.4px → 6.3% → 50%+6.3%。
+              // ⚠️ 換 DAPAN_AVATAR 或改 PANEL_LEFT_X／那 20px 墊寬，這個值都要重算。
+              objectPosition: '56.3% center',
+              transform: 'scale(1.2)', // 2026-08-10 使用者定案人物放大 1.2（往中心放大；右側溢出被面板蓋掉、上下由畫布裁掉，頭仍在框內）
+              transformOrigin: 'center center',
+            }}
+          />
+        </AbsoluteFill>
+      </PunchIn>
 
       {/* 截圖段：全螢幕切換（v1，DAPAN_SHOTS 目前為空）。橫式擺在左側講者可見區。 */}
       {/* 截圖段：只在左側講者可見區（0 ~ PANEL_LEFT_X）作用，右側品牌面板不覆蓋。
