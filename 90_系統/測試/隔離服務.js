@@ -84,7 +84,7 @@ function loadServer(root, options = {}) {
     setInterval: options.idleTimers ? () => 0 : blocked,
   };
   const operations = vm.runInNewContext(
-    source.slice(0, cut) + '\n;({ snapshotWorkspace, restoreWorkspace, pruneOldJobs, archivePath, backupJobArtifacts, stageJobInputs });',
+    source.slice(0, cut) + '\n;({ snapshotWorkspace, restoreWorkspace, pruneOldJobs, archivePath, backupJobArtifacts, stageJobInputs, writeEmphasis, emphasisOf, clearWorkspaceInputs });',
     context, { filename: sourceFile, timeout: 5000 },
   );
   assert.equal(typeof route, 'function');

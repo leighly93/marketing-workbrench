@@ -387,7 +387,18 @@ function newId() {
 const LOCK = path.join(WORKSPACE_ROOT, '.run.lock');
 
 /** 把 public/ 裡上一支工作留下的東西清掉（套版素材與字型保留） */
+/** 字幕重點詞的存放位置（2026-09-17）。所有版型共用一份 —— 字幕本身就只有一份。 */
+const EMPHASIS_FILE = 'src/emphasis.generated.json';
+
 function clearWorkspaceInputs() {
+  // ⚠️ 字幕重點詞是**唯一一個不會被重新產生**的 generated 檔（2026-09-17）：
+  //    shots／subtitles／video-meta 每支工作都重算一次覆蓋掉，只有它是人工標的，
+  //    沒標就沒有任何一步會寫它。不清掉的話，下一支會**繼承上一支的標記**，
+  //    而且字元索引是別份腳本的 —— 成品裡會有幾個毫不相干的字莫名其妙放大變黃。
+  //    跟「撞名截圖用到上一支的尺寸」同一類的殘留。
+  //    restoreWorkspace 也走這支，清完才從快照還原，所以重跑舊工作照樣拿回自己的標記。
+  // ⚠️ 要放在下面那個 early return **之前** —— 它清的是 public，跟這個檔沒關係。
+  rmrf(path.join(ROOT, EMPHASIS_FILE));
   const pub = path.join(ROOT, 'public');
   if (!fs.existsSync(pub)) return;
   for (const n of fs.readdirSync(pub)) {
@@ -833,6 +844,42 @@ function pagesOf(state) {
   return out;
 }
 
+/** 讀某個根目錄下的重點詞標記；壞掉或沒有就當成沒標。 */
+function emphasisOf(baseDir) {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(baseDir, EMPHASIS_FILE), 'utf-8'));
+    return (Array.isArray(j.marks) ? j.marks : [])
+      .filter((m) => Number.isInteger(m?.startCharIdx) && Number.isInteger(m?.endCharIdx));
+  } catch (_) { return []; }
+}
+
+/**
+ * 把前台送來的重點詞寫進 ROOT。
+ * ⚠️ 跟 applyPlanEdits 一樣要寫 **ROOT** 不是快照 —— run.js --render-only 只讀 ROOT
+ *（2026-08-18 那個「人工框選一直不見」的坑，同一條路）。
+ * 正規化：排序、去重、合併重疊，順便丟掉負數與頭尾相反的。
+ */
+function writeEmphasis(marks) {
+  const clean = [];
+  for (const m of Array.isArray(marks) ? marks : []) {
+    const a = Number(m?.startCharIdx), b = Number(m?.endCharIdx);
+    if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0) continue;
+    clean.push({ startCharIdx: Math.min(a, b), endCharIdx: Math.max(a, b) });
+  }
+  clean.sort((x, y) => x.startCharIdx - y.startCharIdx);
+  const merged = [];
+  for (const m of clean) {
+    const last = merged[merged.length - 1];
+    if (last && m.startCharIdx <= last.endCharIdx + 1) {
+      last.endCharIdx = Math.max(last.endCharIdx, m.endCharIdx);
+    } else merged.push({ ...m });
+  }
+  const f = path.join(ROOT, EMPHASIS_FILE);
+  ensureDir(path.dirname(f));
+  fs.writeFileSync(f, JSON.stringify({ marks: merged }, null, 2) + '\n');
+  return merged;
+}
+
 function buildPlanView(job) {
   const state = jobPath(job.id, 'state');
   const ct = (() => {
@@ -896,6 +943,8 @@ function buildPlanView(job) {
     // 三大法人的聚焦是「捲到區塊帶 + 壓暗其餘」，沒有「往下滑動」這回事 ——
     // 勾了也不會有任何效果，所以前台不要畫那個勾選框（靜默失效比沒有更糟）。
     rows, images, totalSec,
+    // 字幕重點詞（2026-09-17）：前台在計畫頁底部那一區標的，存腳本字元範圍
+    emphasis: emphasisOf(state),
     // 2026-09-07 每張圖系統判定的頁型，給審核頁顯示＋決定要不要給 📌（認不出來才給）。
     pages: pagesOf(state),
     pendingAnnots: pendingAnnotsOf(job, rows),
@@ -1849,6 +1898,12 @@ async function doRender(job) {
   saveJob(job);
 
   restoreWorkspace(job);
+  // ⚠️ 要在 restoreWorkspace 之後（ROOT 才是 render 讀的那一份），跟 applyPlanEdits 同一時機。
+  //    null＝這條路沒有經過計畫頁（例如「直接出片」），不要動既有的檔。
+  if (job.pendingEmphasis) {
+    const marks = writeEmphasis(job.pendingEmphasis);
+    if (marks.length) appendLog(job, `\n🖍 字幕重點詞 ${marks.length} 處\n`);
+  }
   if (job.pendingEdits && job.pendingEdits.length) {
     applyPlanEdits(job, job.pendingEdits);
     // 「人工標記」那一類不是這一步套用的（它是標注頁的產物，只為了寫修正紀錄而記），
@@ -2345,7 +2400,7 @@ function learnFromEdits(job, edits) {
 // admin=false（＝同事）時，回應裡**根本不會有** ip 這個欄位 —— 不是前端不畫而已，
 // 是伺服器不送。所以按 F12 翻 Network 也翻不到（2026-08-21 使用者要求）。
 function publicJob(j, admin) {
-  const { pid, pendingEdits, autoPlan, ip, ...rest } = j;
+  const { pid, pendingEdits, pendingEmphasis, autoPlan, ip, ...rest } = j;
   const out = { ...rest, queuePosition: queuePosition(j) };
   if (admin && ip) out.ip = ip;
   return out;
@@ -2829,6 +2884,9 @@ const server = http.createServer(async (req, res) => {
       recordCorrections(job, job.planView, edits);
       learnFromEdits(job, edits);
       job.pendingEdits = edits;
+      // 字幕重點詞跟 edits 是兩份資料（它不屬於任何一段配圖，可能落在完全沒配圖的地方），
+      // 所以分開帶、分開寫。這裡只存起來，真正寫進 ROOT 是在 doRender（見 pendingEmphasis）。
+      job.pendingEmphasis = Array.isArray(body.emphasis) ? body.emphasis : null;
       job.status = 'approved';
       saveJob(job);
       tick();
@@ -2860,6 +2918,7 @@ const server = http.createServer(async (req, res) => {
       job.status = 'review';
       job.autoApprove = false;
       job.pendingEdits = [];
+      job.pendingEmphasis = null;
       delete job.approvedAt;
       delete job.approvedBy;
       appendLog(job, '\n↩️ 已退回「等你確認」\n');

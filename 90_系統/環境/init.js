@@ -9,6 +9,9 @@ const { applicationPath, dataPath } = require('../paths');
 const generated = {
   'subtitles.json': { text: '', segments: [], language: 'zh', _scriptBreaks: [], _scriptCharTimes: [] },
   'video-meta.json': { heygenDurationSec: 1, outroDurationSec: 0, headerDate: '', titleText: '', _bootstrap: true },
+  // 字幕重點詞（2026-09-17）：人工在配圖計畫頁標的腳本字元範圍，所有版型共用一份
+  //（字幕本身就只有 src/subtitles.json 一份，不分版型）。
+  'emphasis.generated.json': { marks: [] },
   'overlays.generated.json': [],
   'textcards.generated.json': [],
   'marketing-shots.generated.json': [],

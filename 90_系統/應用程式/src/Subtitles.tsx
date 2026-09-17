@@ -2,6 +2,7 @@ import React from 'react';
 import { AbsoluteFill, Sequence } from 'remotion';
 import { secToFrame } from './timeline';
 import subtitleData from './subtitles.json';
+import emphasisData from './emphasis.generated.json';
 
 /**
  * Whisper 輸出的字幕格式
@@ -36,9 +37,44 @@ type Phrase = {
   start: number;
   end: number;
   text: string;
+  /**
+   * `text` 每一個字對應的**腳本字元索引**（插進去的空白／頓號是 -1）。
+   *
+   * 重點詞（2026-09-17）標的是腳本字元範圍，而字幕是 word 拼出來的短句 —— 中間隔著
+   * 標點裁切、空白還原、編號合併三道加工，長度對不上，所以要逐字帶著索引走。
+   * ⚠️ 驗證過：所有 word 去空白後拼起來，剛好等於 `_scriptCharTimes` 的字元序列
+   *    （同一支 303 = 303），所以游標只在「非空 word」前進就對得上。
+   */
+  map: number[];
 };
 
 const data = subtitleData as WhisperOutput;
+
+/**
+ * 重點詞（2026-09-17 使用者定案）：整句維持白字一般大小，只有標到的詞放大變黃。
+ * 標記在配圖計畫頁人工拖選，存腳本字元範圍 —— 不存文字，因為同一個詞在句子裡
+ * 可能出現兩次，存文字分不出標的是哪一個。
+ */
+export const SUBTITLE_EMPHASIS = {
+  color: '#FFE600',
+  /**
+   * 放大倍率。⚠️ 用 em **不能**寫死 px —— 橫式（DapanLandscapeComposition）用 textStyle
+   * 把字幕基準字級改成 52，寫死 92 的話那邊會變成 1.77 倍，大得離譜。
+   * 1.3 倍是實渲比過的：直式 70→91 剛好，82 那一版力道不夠。
+   */
+  scale: 1.3,
+};
+
+type EmphasisMark = { startCharIdx: number; endCharIdx: number };
+
+/** 攤平成「這個腳本字元要不要高亮」。字數只有幾百，用 Set 最直接。 */
+const EMPHASIS_CHARS: Set<number> = new Set();
+for (const m of ((emphasisData as { marks?: EmphasisMark[] }).marks ?? [])) {
+  if (typeof m?.startCharIdx !== 'number' || typeof m?.endCharIdx !== 'number') continue;
+  const lo = Math.min(m.startCharIdx, m.endCharIdx);
+  const hi = Math.max(m.startCharIdx, m.endCharIdx);
+  for (let i = lo; i <= hi; i++) EMPHASIS_CHARS.add(i);
+}
 
 /**
  * 把 Whisper 的長 segment 切成多個短句以利顯示。
@@ -92,11 +128,34 @@ function findScriptBreak(
   );
 }
 
+/**
+ * 收尾一段字幕：去掉尾端標點與前後空白，**`map` 要跟著裁**，
+ * 不裁的話後面每一個字的索引都會偏掉、重點詞就標到隔壁字上。
+ * `extra` 是額外要當成尾端標點的字元（收整份的最後一段時多吃一個半形逗號，沿用原行為）。
+ */
+function closePhrase(p: Phrase, extra = ''): Phrase {
+  const tail = new RegExp(`[，。、${extra}\\s]`);
+  let end = p.text.length;
+  while (end > 0 && tail.test(p.text[end - 1])) end--;
+  let start = 0;
+  while (start < end && /\s/.test(p.text[start])) start++;
+  return { ...p, text: p.text.slice(start, end), map: p.map.slice(start, end) };
+}
+
+/**
+ * 整份字幕能不能對回腳本字元。只要有一段是「沒有 words 的舊格式 segment」就設成 false ——
+ * 那種段落算不出字元索引，硬標會標到錯的字上，寧可整份不標（2026-09-17）。
+ */
+let phrasesAlignable = true;
+
 function splitIntoPhrases(
   segments: WhisperSegment[],
   breaks: number[] = []
 ): Phrase[] {
   const raw: Phrase[] = [];
+  /** 消化到腳本的第幾個字（只有非空 word 會前進，見 Phrase.map 的說明） */
+  let cursor = 0;
+  phrasesAlignable = true;
 
   // 把所有 segment 的 word 攤平成一條 list — 不再每個 segment 重置 current。
   // 原因：Whisper 的 segment 邊界是它自己分析出來的（常常切在奇怪的地方），
@@ -106,7 +165,9 @@ function splitIntoPhrases(
   const allWords: WhisperWord[] = [];
   for (const seg of segments) {
     if (!seg.words || seg.words.length === 0) {
-      raw.push({ start: seg.start, end: seg.end, text: seg.text.trim() });
+      const t = seg.text.trim();
+      raw.push({ start: seg.start, end: seg.end, text: t, map: new Array(t.length).fill(-1) });
+      phrasesAlignable = false;   // 這段對不回腳本 → 整份停用重點詞
       continue;
     }
     for (const w of seg.words) allWords.push(w);
@@ -139,8 +200,12 @@ function splitIntoPhrases(
     const hasLeadingSpace = /^\s/.test(w.word);
     const wordText = w.word.trim();
     if (!wordText) continue;
+    // 這顆 word 佔腳本的哪幾個字
+    const idx: number[] = [];
+    for (let k = 0; k < wordText.length; k++) idx.push(cursor + k);
+    cursor += wordText.length;
     if (current === null) {
-      current = { start: w.start, end: w.end, text: wordText };
+      current = { start: w.start, end: w.end, text: wordText, map: idx };
       lastWord = w;
       continue;
     }
@@ -169,26 +234,21 @@ function splitIntoPhrases(
     if (shouldSplit) {
       // 真的切下去才把斷點劃掉：被 midNumber 擋掉的那次不算用過。
       if (breakIdx >= 0) usedBreaks[breakIdx] = true;
-      raw.push({
-        ...current,
-        text: current.text.replace(/[，。、]+$/, '').trim(),
-      });
-      current = { start: w.start, end: w.end, text: wordText };
+      raw.push(closePhrase(current));
+      current = { start: w.start, end: w.end, text: wordText, map: idx };
       lastWord = w;
     } else {
       current.end = w.end;
       lastWord = w;
       const isAlnumEdge =
         /[0-9A-Za-z]$/.test(current.text) && /^[0-9A-Za-z]/.test(wordText);
-      current.text += (hasLeadingSpace && isAlnumEdge ? ' ' : '') + wordText;
+      const sep = hasLeadingSpace && isAlnumEdge ? ' ' : '';
+      current.text += sep + wordText;
+      if (sep) current.map.push(-1);   // 還原出來的空白不屬於腳本任何一個字
+      current.map.push(...idx);
     }
   }
-  if (current) {
-    raw.push({
-      ...current,
-      text: current.text.replace(/[，。、,]+$/, '').trim(),
-    });
-  }
+  if (current) raw.push(closePhrase(current, ','));
 
   // 2026-05-28 起：不再合併太短句、嚴格跟 script.txt 結構（用戶要求）
   // 2026-09-15 唯一的例外：**編號**（第一、第二、第三…）跟後面那句接起來。
@@ -202,10 +262,11 @@ function splitIntoPhrases(
     const prev = merged[merged.length - 1];
     if (prev && ORDINAL_RE.test(prev.text)) {
       prev.text += '、' + p.text;
+      prev.map = prev.map.concat(-1, p.map);   // 補回去的頓號不屬於腳本
       prev.end = p.end;
       continue;
     }
-    merged.push({ ...p });
+    merged.push({ ...p, map: [...p.map] });
   }
   return merged.filter((p) => p.text.length > 0);
 }
@@ -252,6 +313,7 @@ export const Subtitles: React.FC<SubtitlesStyleProps> = ({
           >
             <SubtitleLine
               text={p.text}
+              map={p.map}
               containerStyle={containerStyle}
               textStyle={textStyle}
             />
@@ -322,11 +384,32 @@ function keepTokensTogether(text: string): React.ReactNode {
   return out;
 }
 
-const SubtitleLine: React.FC<{ text: string } & SubtitlesStyleProps> = ({
+/**
+ * 依重點詞把一句字幕切成「要放大變黃」與「照常」兩種片段。
+ * 沒有任何重點詞、或整份對不回腳本時回傳 null，呼叫端就走原本那條路（行為完全不變）。
+ */
+function splitByEmphasis(text: string, map: number[]): { text: string; hl: boolean }[] | null {
+  if (!phrasesAlignable || EMPHASIS_CHARS.size === 0) return null;
+  if (map.length !== text.length) return null;   // 對位不上就不要亂標
+  const parts: { text: string; hl: boolean }[] = [];
+  let any = false;
+  for (let i = 0; i < text.length; i++) {
+    const hl = map[i] >= 0 && EMPHASIS_CHARS.has(map[i]);
+    if (hl) any = true;
+    const last = parts[parts.length - 1];
+    if (last && last.hl === hl) last.text += text[i];
+    else parts.push({ text: text[i], hl });
+  }
+  return any ? parts : null;
+}
+
+const SubtitleLine: React.FC<{ text: string; map?: number[] } & SubtitlesStyleProps> = ({
   text,
+  map,
   containerStyle,
   textStyle,
 }) => {
+  const parts = map ? splitByEmphasis(text, map) : null;
   return (
     <AbsoluteFill
       style={{
@@ -361,7 +444,17 @@ const SubtitleLine: React.FC<{ text: string } & SubtitlesStyleProps> = ({
           ...textStyle,
         }}
       >
-        {keepTokensTogether(text)}
+        {/* 重點詞：整句維持白字一般大小，只有標到的詞放大變黃（2026-09-17 使用者定案）。
+            沒標的段落照舊整句丟給 keepTokensTogether，一個字都不會變。 */}
+        {parts
+          ? parts.map((seg, i) => (seg.hl
+            ? (
+              <span key={i} style={{ color: SUBTITLE_EMPHASIS.color, fontSize: `${SUBTITLE_EMPHASIS.scale}em` }}>
+                {seg.text}
+              </span>
+            )
+            : <React.Fragment key={i}>{keepTokensTogether(seg.text)}</React.Fragment>))
+          : keepTokensTogether(text)}
       </div>
     </AbsoluteFill>
   );

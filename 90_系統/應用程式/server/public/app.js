@@ -1331,6 +1331,10 @@ function planCard(job) {
 
   UNITS = pv.units || [];   // 點一下選整句用
   CHARS = pv.chars || [];   // 逐字拖選用
+  // 這支已經標過的重點詞（伺服器從 src/emphasis.generated.json 讀出來的）
+  EMPH = (pv.emphasis || [])
+    .filter((m) => Number.isInteger(m.startCharIdx) && Number.isInteger(m.endCharIdx))
+    .map((m) => ({ startCharIdx: m.startCharIdx, endCharIdx: m.endCharIdx }));
   // 自動列身上才有真的秒數（人工列是「秒數出片時算」）。拿它們回推一個字大約幾秒，
   // 「裁完剩下的會不會不到 1.4 秒」才講得出秒數。算不出來就維持 null，提示只講字數。
   {
@@ -1424,6 +1428,9 @@ function planCard(job) {
             ? '這支還沒有任何配圖 —— 從下面的「全部截圖」點一張開始加。'
             : '這支還沒有任何配圖，也還沒有截圖 —— 先用下面的「＋ 上傳截圖」傳幾張。'))]));
     drawUnused();
+    // 改了某一段的出現範圍之後，重點詞那一區的藍底線要跟著更新
+    //（不然「哪裡已經有圖」會停在剛進頁面的那一刻，愈改愈不準）。
+    drawEmph();
   }
 
   function addSeg(src) {
@@ -1510,6 +1517,26 @@ function planCard(job) {
   c.append(el('div', { style: 'margin-top:20px;display:flex;gap:12px;align-items:center' },
     addSegBtn,
     el('button', { class: 'go', onclick: () => approve(job, Object.values(edits)) }, '確認，開始出片')));
+
+  // ── 字幕重點詞（2026-09-17 使用者要求）──────────────────────
+  // 收合起來不佔版面（使用者：「希望這功能可以收合」）。
+  // 同一塊裡同時看得到「哪些字已經有配圖」（藍底線）跟「標了哪些重點詞」——
+  // 使用者要的就是這個：畫面太單一的地方可以用字幕補強。
+  c.append(el('details', { class: 'emph' },
+    el('summary', {},
+      '字幕重點詞（選填）　',
+      el('span', { id: 'emphCount', class: 'sec' }, '尚未標記')),
+    el('div', { class: 'tip' },
+      '在下面的腳本上拖選要強調的詞 —— 成品裡那幾個字會放大變黃，同一句其餘維持白字一般大小。'
+      + '點一下已標的地方就取消。'),
+    el('div', { class: 'tip' },
+      '字底下有藍線＝那一段已經有配圖；沒有線的地方畫面上只有講者。'),
+    el('div', { class: 'range', id: 'emphRange' }),
+    el('div', { style: 'margin-top:8px' },
+      el('button', { class: 'ghost tiny', id: 'emphClear',
+        onclick: () => { EMPH = []; drawEmph(); } }, '全部清除'))));
+  // DOM 要等呼叫端 append 之後才找得到，所以繞一圈再畫。
+  setTimeout(drawEmph, 0);
   return c;
 }
 
@@ -1798,10 +1825,99 @@ async function approve(job, e) {
   try {
     await api(`/api/jobs/${job.id}/approve`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ edits: e, by: $('#owner').value }),
+      body: JSON.stringify({ edits: e, by: $('#owner').value, emphasis: EMPH }),
     });
     loadJob();
   } catch (err) { alert('出錯了：' + err.message); }
+}
+
+// ── 字幕重點詞（2026-09-17）─────────────────
+// 在配圖計畫頁底部標，成品裡那幾個字會放大變黃（其餘維持白字一般大小）。
+// 存的是**腳本字元範圍**不是文字 —— 同一個詞在句子裡可能出現兩次，存文字分不出標哪一個。
+// ⚠️ 只有人工標的才算，沒有任何自動判斷（跟黃框同一條規則：系統不要自己加東西）。
+let EMPH = [];
+
+/** 這個字有沒有被標成重點 */
+function isEmph(i) {
+  return EMPH.some((m) => i >= m.startCharIdx && i <= m.endCharIdx);
+}
+
+/** 加一段（跟相鄰的合併），或整段取消（點到已標的地方就是取消） */
+function toggleEmph(lo, hi) {
+  if (lo > hi) [lo, hi] = [hi, lo];
+  // 取消只看「真的壓到」—— 用相鄰判斷的話，點旁邊一個沒標的字會把隔壁整段刪掉。
+  const hit = EMPH.filter((m) => !(m.endCharIdx < lo || m.startCharIdx > hi));
+  if (hit.length && lo === hi) {
+    // 單點擊在已標的字上 → 移除整段（整段拿掉比切成兩半直覺）
+    EMPH = EMPH.filter((m) => !hit.includes(m));
+    return;
+  }
+  // 新增時**連相鄰的一起併**，跟伺服器 writeEmphasis 同一條規則 ——
+  // 兩邊規則不一樣的話，「已標 N 處」在送出前後會跳號（實測過）。
+  const near = EMPH.filter((m) => !(m.endCharIdx < lo - 1 || m.startCharIdx > hi + 1));
+  let a = lo, b = hi;
+  for (const m of near) { a = Math.min(a, m.startCharIdx); b = Math.max(b, m.endCharIdx); }
+  EMPH = EMPH.filter((m) => !near.includes(m));
+  EMPH.push({ startCharIdx: a, endCharIdx: b });
+  EMPH.sort((x, y) => x.startCharIdx - y.startCharIdx);
+}
+
+/** 這些字元被哪一段配圖用到了（藍底線的來源）。跟編輯器的 usedRanges 不同：這裡看全部的段。 */
+function shotCoveredChars() {
+  const set = new Set();
+  Object.values(edits || {}).forEach((e) => {
+    if (e.deleted) return;
+    const a = e.startCharIdx, b = e.endCharIdx;
+    if (typeof a !== 'number' || typeof b !== 'number') return;
+    for (let i = Math.min(a, b); i <= Math.max(a, b); i++) set.add(i);
+  });
+  return set;
+}
+
+function drawEmph() {
+  const wrap = $('#emphRange');
+  if (!wrap) return;
+  if (!CHARS.length) return wrap.replaceChildren(el('span', {}, '（腳本還在讀…）'));
+  const covered = shotCoveredChars();
+  const nodes = [];
+  CHARS.forEach((c) => {
+    const cls = [];
+    if (covered.has(c.i)) cls.push('used');   // 藍底線＝這裡已經有圖
+    if (isEmph(c.i)) cls.push('emph');        // 黃＝標成重點詞
+    if (c.b) cls.push('br');
+    nodes.push(el('i', { 'data-e': c.i, class: cls.join(' ') }, c.c));
+    if (c.p) nodes.push(el('br', { class: 'para' }));
+  });
+  wrap.replaceChildren(...nodes);
+  const n = $('#emphCount');
+  if (n) n.textContent = EMPH.length ? `已標 ${EMPH.length} 處` : '尚未標記';
+  const btn = $('#emphClear');
+  if (btn) { btn.disabled = !EMPH.length; btn.style.opacity = EMPH.length ? 1 : 0.35; }
+}
+
+// 拖選：跟上面「出現在哪一段」同一套手勢（點一下標一個字、拖曳標一段、點已標的取消）。
+{
+  const idxOf = (t) => (t && t.dataset && t.dataset.e != null ? +t.dataset.e : null);
+  let dragging = false, anchor = null, last = null;
+  document.addEventListener('mousedown', (ev) => {
+    const w = $('#emphRange');
+    if (!w || !w.contains(ev.target)) return;
+    const i = idxOf(ev.target);
+    if (i == null) return;
+    dragging = true; anchor = i; last = i;
+    ev.preventDefault();
+  });
+  document.addEventListener('mousemove', (ev) => {
+    if (!dragging) return;
+    const i = idxOf(ev.target);
+    if (i != null) last = i;
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    toggleEmph(anchor, last);
+    drawEmph();
+  });
 }
 
 // ── 逐字選取 ──────────────────────────────
