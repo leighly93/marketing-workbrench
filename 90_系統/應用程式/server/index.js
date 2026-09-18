@@ -28,6 +28,7 @@ const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');   // 重新出片沿用 OCR 結果時，比對截圖 md5 用
 const { workspaceRoot, dataPath, resolveDataReference } = require('../../paths');
 const { spawn, execFileSync } = require('child_process');
 // 「你教過的東西」記憶庫。memKeyOf／mergeRuns 一定要跟 auto-shot.js 共用同一份實作 ——
@@ -416,6 +417,10 @@ function clearWorkspaceInputs() {
   }
   // 標注檔要指名清掉。不能用 *.json 一律清 —— deeplinks.json 是投廣品牌素材。
   rmrf(path.join(pub, 'annotations.json'));
+  // 重新出片的 OCR 沿用檔同理（2026-09-18）。run.js 那邊本來就會逐張比對 md5、對不上不沿用，
+  // 所以留著也不會誤用；但殘留檔本身就是坑（同一類的「撞名截圖用到上一支的尺寸」踩過），
+  // 這支工作沒帶沿用檔就不該在 public 看到別人的。
+  rmrf(path.join(pub, 'app-images.reuse.json'));
 }
 
 function snapshotWorkspace(job) {
@@ -2739,10 +2744,21 @@ const server = http.createServer(async (req, res) => {
      *   ／講者影片（優先用素材裡的，沒有就用製作快照那份）／版型、語氣、品牌等旗標。
      *
      * ⚠️ 一律 skipGenerate：不呼叫 HeyGen、不呼叫 MiniMax，**不會重新扣點數**。
-     * ⚠️ 新工作停在 draft，不自動送出 —— 使用者要先進標注頁確認框還在、可以微調，
-     *    按「確認，開始出片」才排進佇列。
      * ⚠️ 稿件不給改：annotations.json 是用字元索引（startCharIdx／endCharIdx）定位的，
      *    稿件改一個字，後面的標注就會整段錯位而且不會報錯。要改稿就得開新工作重畫。
+     *
+     * 2026-09-18 使用者定案：**直接排進佇列，不停在 draft**。
+     *   09-17 曾經加過一道 draft 關卡（「確認，開始出片」），本意是讓人先看過標注再跑。
+     *   實際用下來變成要按兩顆按鈕，而且第二顆（配圖計畫那關）才是真正看得到東西的地方 ——
+     *   draft 那關只看得到自己畫的標注，配圖計畫要等字幕轉完才算得出來。
+     *   配圖計畫頁能做的事是 draft 那關的超集（拖框、改範圍、換圖、加減段、上傳更多截圖、
+     *   標重點詞），所以少那一關沒有任何功能損失，只少按一顆。
+     *
+     * ⚠️ autoApprove **不繼承**（2026-09-18 使用者定案）。
+     *   來源工作如果開過「標好了，直接出片」，整包複製會把它也帶過來 ——
+     *   結果是重新出片跑完就自動核可、直接出片，使用者根本看不到配圖計畫。
+     *   但「進來重新出片」的動機本身就是要改東西，系統沒有任何依據知道人什麼時候改完。
+     *   所以一律從關閉開始，要自動出片由人在頁面上自己按。
      */
     if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'redo' && req.method === 'POST') {
       const src = getJob(seg[2]);
@@ -2780,7 +2796,7 @@ const server = http.createServer(async (req, res) => {
         template: src.template,
         owner: src.owner,
         title: src.title,
-        status: 'draft',
+        status: 'queued',
         createdAt: nowISO(),
         ip: clientIp(req),
         skipGenerate: true,
@@ -2788,7 +2804,8 @@ const server = http.createServer(async (req, res) => {
         withAd: !!src.withAd,
         emotion: normalizeEmotion(src.emotion),
         brand: src.brand ? String(src.brand) : null,
-        autoApprove: !!src.autoApprove,
+        // 不繼承（見上面的說明）：內容設定照抄，但「要不要停下來等人」這種流程設定要由人重新決定。
+        autoApprove: false,
         // 稿件整份照抄，所以當時算出來的命中清單也照抄 —— 不重算，免得詞庫改過之後
         // 記錄跟 script.txt 的實際內容對不起來。
         voiceRules: src.voiceRules || { own: [], shared: [], hit: [] },
@@ -2810,6 +2827,30 @@ const server = http.createServer(async (req, res) => {
       if (!fs.existsSync(jobPath(job.id, 'input', 'heygen.mp4'))) {
         fs.copyFileSync(heygenFrom, jobPath(job.id, 'input', 'heygen.mp4'));
       }
+      // OCR 沿用：截圖是原封不動複製過來的，版面偵測結果不可能不一樣。
+      // 實測一支 8 張截圖的工作，準備階段 22 秒裡有 18 秒花在這段分析上 —— 重跑純粹是浪費。
+      // 這裡把來源快照的結果連同「每張截圖的 md5」寫進新工作的 input/，
+      // run.js 在分析前會自己重新算一次 md5 比對，**全部對得上才沿用**；
+      // 少一張、多一張、換過一張都會退回照常重跑（見 run.js reuseAppImages）。
+      // 沿用失敗不影響出片，最多就是多花那 18 秒，所以整段包在 try 裡。
+      const ocrFrom = jobPath(src.id, 'state', 'src', 'app-images.generated.json');
+      if (fs.existsSync(ocrFrom)) {
+        try {
+          const cached = JSON.parse(fs.readFileSync(ocrFrom, 'utf-8'));
+          if (Array.isArray(cached.images) && cached.images.length) {
+            const inputDir = jobPath(job.id, 'input');
+            const sources = {};
+            for (const name of fs.readdirSync(inputDir)) {
+              if (!/\.(png|jpe?g)$/i.test(name)) continue;
+              sources[name] = crypto.createHash('md5')
+                .update(fs.readFileSync(path.join(inputDir, name))).digest('hex');
+            }
+            fs.writeFileSync(jobPath(job.id, 'input', 'app-images.reuse.json'),
+              JSON.stringify({ from: src.id, sources, images: cached.images }, null, 2));
+          }
+        } catch (_) { /* 沿用只是最佳化，壞了就讓它照常重跑 OCR */ }
+      }
+
       job.files = fs.readdirSync(jobPath(job.id, 'input')).filter((n) => !n.startsWith('.'));
       job.files.push('script.txt');
       job.annotationCount = src.annotationCount || 0;
@@ -2818,7 +2859,9 @@ const server = http.createServer(async (req, res) => {
       saveJob(job);
       appendLog(job, `♻️ 重新出片：沿用工作 ${src.id} 的稿件、截圖、標注與講者影片。\n`
         + '   不會重新呼叫 HeyGen／MiniMax，也不會重新扣點數。\n'
-        + `   帶過來的檔案：${job.files.join('、')}\n`);
+        + `   帶過來的檔案：${job.files.join('、')}\n`
+        + '   直接開始準備（轉字幕、排配圖計畫），跑完會停在「待確認」等你看配圖計畫。\n');
+      tick();
       return send(res, 200, { job: publicJob(job, admin) });
     }
 
