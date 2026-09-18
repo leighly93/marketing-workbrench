@@ -12,7 +12,8 @@
  *   3. Needleman-Wunsch 全域對齊兩條字串
  *   4. 對齊結果 → 建立 scriptChar → whisperWord 映射表
  *      - match / sub：scriptChar 屬於對到的 whisper word
- *      - scriptExtra：附給時間上最近的 whisper word
+ *      - scriptExtra：整段沒對到（whisper 漏聽）且空白夠放 → 依字數把空白攤平，補出合成 word（第 5.5 步）；
+ *                     補不起來的才附給時間上最近的 whisper word
  *      - whisperExtra：丟棄（Whisper 多打 / 幻覺）
  *   5. 對每個 whisper word，重組 .word = 對到它的所有 scriptChars 串接（缺空字串）
  *   6. 套用 subtitles-replacements.json（fallback，跨 word 安全）
@@ -116,6 +117,122 @@ for (const p of pairs) {
   if (p.bi < 0) continue;
   if (p.ai >= 0) scriptCharToWord[p.bi] = whisperChars[p.ai].wordRef;
 }
+// ─── 5.5 whisper 漏聽一整段 → 依稿件字數把那段空白攤平 ────────
+//
+// 2026-09-18 使用者定案：「時間可能差個零點幾秒、但片子出得來」。
+//
+// 為什麼補得起來：這支程式的前提就是「字幕文字 100% 來自 script.txt，whisper 只負責提供時間」。
+// whisper 偶爾會在 30 秒 window 邊界整段漏聽（實例：09-18 那支從 25.72 秒起 4.28 秒
+// 完全沒轉出東西），但這時我們手上其實兩份資訊都在 —— ①那段空白的起訖時間、
+// ②稿件裡缺的是哪幾個字；缺的只是「這幾個字各自落在哪」。中文語速穩定，
+// 按字數把空白均分的誤差在零點幾秒，遠比整支片停在出片前划算。
+//
+// 不補會怎樣（這一步存在的理由）：下面的 scriptExtra 規則會把這 32 個字全掛到
+// 時間上最近的那一顆 word 上 → 擠成 0.87 秒 → 被 11.5 的守門擋下 → 停線。
+// 資訊其實沒丟，是對齊邏輯沒去用它。
+//
+// ⚠️ 只補「補得起來」的洞。空白不夠放（每字低於 MIN_SEC_PER_CHAR）就不補，留給下面的
+// 鄰居 fallback，讓守門照常擋 —— 那種不是漏聽而是 whisper 的時間軸整體歪掉
+// （09-18 第二次失敗就是：結尾 20 個字只剩 1.27 秒可放，攤平也只是讓它閃得比較平均而已）。
+// 分流的另一半在 11.5：補洞比例過高、或 whisper 自報 segment 時長對不上字數，一律照擋。
+// **我們補的是「沒聽到」，不是「聽錯位置」。**
+const MIN_SEC_PER_CHAR = 0.1;  // 攤平後每字至少要有這麼久，否則不算救回來（閃過的字幕沒有意義）
+const MAX_FILL_RATIO = 0.25;   // 補洞字數佔全稿的上限；超過表示這份轉錄整體不可信（見 11.5 的 C 判準）
+// 幾個字以上才算「漏聽一段」。小洞一律維持原本的鄰居 fallback，不要碰 ——
+// 這條門檻是為了**不動到正常影片**：PUNCT_RE 會把「%」濾掉（第 3 步），於是每支稿件裡的
+// 「38%」都會產生一個 1 個字的洞；沒有這條門檻，那個 % 就會被補成一顆獨立 word
+// （實測 09-18 那支有 3 處），等於在所有正常片子上改變斷句行為，只為了修一個不存在的問題。
+// 8 這個數字的來由：守門 A 判準是「連續 15 個字擠在 1 秒內」，洞要接近那個規模才會真的擋片；
+// 而 8 個字以上掛到同一顆 word，人眼也已經看得出字幕突然跳掉一段。8 以下兩者都不成立。
+const MIN_GAP_CHARS = 8;
+
+// B 判準要看的是「whisper 自己聽到多少字」，所以在補洞之前先記下來 ——
+// 補完之後 seg.text 會被第 6 步重寫成含補出來的字，用那個算會把 B 的敏感度洗掉。
+for (const seg of subs.segments) {
+  seg._whisperChars = (seg.text || '').replace(new RegExp(PUNCT_RE.source, 'g'), '').length;
+}
+
+// 結尾漏聽時要知道「可以攤到哪裡」。video-meta.json 由 transcribe.sh 寫，讀不到就退回最後一顆 word。
+function readAudioEnd() {
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'video-meta.json'), 'utf-8'));
+    const sec = Number(meta.heygenDurationSec);
+    if (Number.isFinite(sec) && sec > 0) return sec;
+  } catch (_) { /* 沒有 meta 就用下面的 fallback */ }
+  let last = 0;
+  for (const seg of subs.segments) for (const w of seg.words || []) last = Math.max(last, w.end);
+  return last;
+}
+
+const audioEnd = readAudioEnd();
+const insertAfter = new Map();  // prevWord（null＝整份最前面）→ 要接在它後面的合成 word
+const filledGaps = [];
+const skippedGaps = [];
+
+for (let i = 0; i < scriptChars.length;) {
+  if (scriptCharToWord[i]) { i++; continue; }
+  let j = i;
+  while (j < scriptChars.length && !scriptCharToWord[j]) j++;
+  // [i, j) 這段稿件字，whisper 一個都沒對到
+  const prevWord = i > 0 ? scriptCharToWord[i - 1] : null;
+  const nextWord = j < scriptChars.length ? scriptCharToWord[j] : null;
+  const from = prevWord ? prevWord.end : 0;
+  const to = nextWord ? nextWord.start : audioEnd;
+  const n = j - i;
+  const span = to - from;
+  const perChar = span / n;
+  if (n < MIN_GAP_CHARS) {
+    // 小洞不碰（多半是被 PUNCT_RE 濾掉的「%」這種），走下面的鄰居 fallback ——
+    // 維持 2026-09-18 之前就在跑的行為，不列入 skippedGaps（它不是「補不起來的漏聽」）。
+  } else if (span > 0 && perChar >= MIN_SEC_PER_CHAR) {
+    const made = [];
+    for (let k = 0; k < n; k++) {
+      const w = {
+        word: scriptChars[i + k].char,   // 第 6 步會照 wordToScriptChars 再寫一次，這裡先放著
+        start: Number((from + perChar * k).toFixed(3)),
+        end: Number((from + perChar * (k + 1)).toFixed(3)),
+        probability: 0,   // 0 ＝ 這顆不是 whisper 聽出來的，是我們按字數補的
+        filled: true,
+      };
+      made.push(w);
+      scriptCharToWord[i + k] = w;
+    }
+    insertAfter.set(prevWord, (insertAfter.get(prevWord) || []).concat(made));
+    filledGaps.push({ from: Number(from.toFixed(2)), to: Number(to.toFixed(2)), chars: n, secPerChar: Number(perChar.toFixed(3)),
+      text: cleanScriptText.slice(i, j) });
+  } else {
+    // 補不起來：留給鄰居 fallback，交給 11.5 的守門判
+    skippedGaps.push({ from: Number(from.toFixed(2)), to: Number(to.toFixed(2)), chars: n, secPerChar: Number(perChar.toFixed(3)) });
+  }
+  i = j;
+}
+
+// 把合成 word 插回 segment。只動 words，不碰 seg.start／seg.end ——
+// 渲染端（Subtitles.tsx）是把所有 segment 的 words 攤平成一條 list 在用，不看 segment 邊界；
+// 而 11.5 的 B 判準要的正是 whisper 自報的那個原始區間，動了就等於把證據擦掉。
+if (insertAfter.size) {
+  for (const seg of subs.segments) {
+    if (!seg.words) continue;
+    const rebuilt = [];
+    for (const w of seg.words) {
+      rebuilt.push(w);
+      const add = insertAfter.get(w);
+      if (add) rebuilt.push(...add);
+    }
+    seg.words = rebuilt;
+  }
+  const head = insertAfter.get(null);
+  if (head) {
+    const first = subs.segments.find((s) => Array.isArray(s.words));
+    if (first) first.words.unshift(...head);
+  }
+  for (const g of filledGaps) {
+    console.log(`🩹 whisper 漏聽 ${g.from}～${g.to} 秒（${g.chars} 個字「${g.text.slice(0, 12)}${g.text.length > 12 ? '…' : ''}」）`
+      + ` → 已用稿件字數把時間攤平（每字 ${g.secPerChar} 秒）`);
+  }
+}
+subs._filledGaps = filledGaps;
+
 // scriptExtra 用最近的鄰居（向前優先，否則向後）
 for (let i = 0; i < scriptChars.length; i++) {
   if (scriptCharToWord[i]) continue;
@@ -372,7 +489,14 @@ if (fs.existsSync(REPLACEMENTS_PATH)) {
 //   成品是「字幕上到一半就不動了，最後一瞬間整段閃過」—— 而整條 pipeline 一聲不吭照樣出片，
 //   只能靠人盯著看才發現。所以這裡寧可停下來，也不要讓壞掉的片流出去。
 //
-// ⚠️ 判準只抓「一定是壞的」，寧可漏抓也不要誤擋：正常影片離這兩條線都很遠
+// 2026-09-18 之後這一關的角色變成「分流的後半段」：
+//   ・whisper **沒聽到**一段（時間軸其餘是準的）→ 第 5.5 步已經按稿件字數把空白攤平，
+//     那些字有了合理時間，A 判準自然就不會觸發 → 放行，片子出得來。
+//   ・whisper **聽錯位置**（時間軸整體歪掉）→ 5.5 補不動（空白根本不夠放），
+//     或雖然補了但補太多（C 判準）→ 照樣擋在這裡。
+//   換句話說：能用稿件算回來的就算回來，只有真的算不回來才停線。
+//
+// ⚠️ 判準只抓「一定是壞的」，寧可漏抓也不要誤擋：正常影片離這幾條線都很遠
 //    （實測正常那支：最多 7 個字共用一顆 word、最長 segment 0.19 秒/字）。
 const PUNCT_ALL_RE = new RegExp(PUNCT_RE.source, 'g');
 
@@ -408,8 +532,13 @@ function detectTimelineFailure() {
 
   // B. 根因：whisper 自己報的 segment 時長對不上它的字數。
   //    這是「window 邊界把結束時間報過頭」的直接指紋，比 A 更早、更能指出壞在第幾秒。
+  //    ⚠️ 字數一定要用 `_whisperChars`（5.5 在補洞之前記下的 whisper 原始字數），
+  //    不能用 seg.text —— 第 6 步已經把補出來的字寫進 seg.text 了，拿它算會讓分母變大、
+  //    把這條判準洗掉。B 問的是「whisper 自己聽到的字撐不撐得住它自己報的時長」。
   for (const seg of subs.segments) {
-    const n = (seg.text || '').replace(PUNCT_ALL_RE, '').length;
+    const n = Number.isFinite(seg._whisperChars)
+      ? seg._whisperChars
+      : (seg.text || '').replace(PUNCT_ALL_RE, '').length;
     const dur = seg.end - seg.start;
     if (!n || dur <= 6 || dur / n <= 0.4) continue;
     problems.push(
@@ -418,6 +547,20 @@ function detectTimelineFailure() {
       + `     從這裡開始整條字幕會落後語音，後面的字被往後擠。`
     );
     break;
+  }
+
+  // C. 5.5 補的洞太多 → 這份轉錄整體不可信，不要用「攤平」把它蓋過去。
+  //    補洞的前提是「whisper 只是漏聽一小段，其餘時間軸是準的」—— 我們靠兩端那兩顆真 word
+  //    把空白夾出來。漏掉的比例一大，那個前提就不成立了（夾出來的區間本身可能就是歪的），
+  //    再攤平只是把「看不出來的錯」做得更像對的。寧可停在這裡交回給人。
+  const filledChars = (subs._filledGaps || []).reduce((s, g) => s + g.chars, 0);
+  if (filledChars > cleanScriptText.length * MAX_FILL_RATIO) {
+    const pct = ((filledChars / cleanScriptText.length) * 100).toFixed(0);
+    problems.push(
+      `whisper 這次漏聽了 ${filledChars} 個字（佔整篇 ${pct}%，共 ${subs._filledGaps.length} 段）—— `
+      + `超過可以用稿件補回來的上限（${(MAX_FILL_RATIO * 100).toFixed(0)}%）。\n`
+      + `     漏這麼多表示整條時間軸都不可信，補出來的時間會是猜的，不是差零點幾秒的問題。`
+    );
   }
   return problems;
 }
@@ -429,7 +572,15 @@ if (timelineProblems.length) {
   for (const p of timelineProblems) console.error(`  ・${p}\n`);
   console.error('  這是 whisper 在 30 秒 window 邊界的解碼失敗，不是稿件或配音的問題。');
   console.error('  同一個音檔原樣重跑會得到一模一樣的結果（實測跑三次完全相同），');
-  console.error('  所以重跑時會在音檔前面墊一段靜音，換一個 window 邊界再轉一次。\n');
+  console.error('  所以重跑時會在音檔前面墊一段靜音，換一個 window 邊界再轉；\n');
+  console.error('  墊多少是逐支音檔碰運氣（壞掉的 pad 值每支不同），所以會依序試幾個間距拉開的值。\n');
+  // 5.5 想補但補不起來的洞：這是「時間軸歪掉」而不是「單純漏聽」的直接證據，
+  // 印出來才知道停線不是補洞漏做，是那段時間根本塞不下那些字。
+  for (const g of skippedGaps) {
+    console.error(`  （${g.from}～${g.to} 秒要放 ${g.chars} 個字、每字只有 ${g.secPerChar} 秒 —— `
+      + `低於可攤平的下限 ${MIN_SEC_PER_CHAR} 秒，所以第 5.5 步沒有補它。）`);
+  }
+  if (skippedGaps.length) console.error('');
   process.exit(3); // 3 = 時間軸判定失敗（run.js 靠這個 code 決定要不要墊靜音重跑）
 }
 
