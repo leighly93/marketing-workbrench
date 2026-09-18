@@ -52,17 +52,26 @@ function doneJob(root, id = '20260916-161822-jm3u') {
   return id;
 }
 
+// 假子程序：`on` 永遠不觸發 close/error，所以 runPipeline 的 Promise 一直 pending、
+// 工作停在 preparing。2026-09-18 起 redo 會直接排進佇列（tick 是同步呼叫），
+// 沙箱又禁止 spawn —— 不給假的話工作會直接變 failed，就測不到「還在跑的時候改標注」。
+const 假子程序 = { spawn: () => ({ pid: 4242, unref() {}, on() {} }), execFileSync: () => '' };
+
 test('重新出片：稿件、截圖、標注與講者影片原封不動帶到新工作', async (t) => {
   const root = fixture(t);
   const src = doneJob(root);
-  const request = loadServer(root);
+  const request = loadServer(root, { childProcess: 假子程序, idleTimers: true });
 
   const r = await request('POST', `/api/jobs/${src}/redo`, {});
   assert.equal(r.status, 200);
   const job = r.body.job;
 
-  // 停在 draft：要先讓人進標注頁看過框才送出，不能自己排進佇列
-  assert.equal(job.status, 'draft');
+  // 2026-09-18（99d2384）起直接排進佇列，不停在 draft ——
+  // 那一關只看得到自己畫的標注，而配圖計畫頁能做的事是它的超集，少按一顆沒有功能損失。
+  // 停下來等人的地方改成「跑完停在配圖計畫」（見下面 autoApprove 那條）。
+  // ⚠️ 用集合比對而不是寫死 'preparing'：建立後佇列會同步接手，測到的是 queued 還是
+  //    preparing 取決於 tick 的時機，寫死哪一個都脆弱。重點是**不能是 draft**。
+  assert.ok(['queued', 'preparing'].includes(job.status), `不該停在 draft，實際是 ${job.status}`);
   assert.equal(job.redoOf, src);
   assert.notEqual(job.id, src);
   // 一律用現成講者影片 → 不呼叫 HeyGen／MiniMax，不重新扣點數
@@ -73,7 +82,10 @@ test('重新出片：稿件、截圖、標注與講者影片原封不動帶到�
   assert.equal(job.title, '標題第一行\n標題第二行');
   assert.equal(job.emotion, 'happy');
   assert.equal(job.withAd, true);
-  assert.equal(job.autoApprove, true);
+  // ⚠️ autoApprove **不繼承**（2026-09-18 使用者定案）：來源開過「標好了，直接出片」的話，
+  //    重新出片會在準備完就自動核可、人根本看不到配圖計畫。內容設定照抄，
+  //    但「要不要停下來等人」這種流程設定由人重新決定。
+  assert.equal(job.autoApprove, false);
   assert.deepEqual(job.voiceRules.hit, [{ from: '反彈', to: '反談', src: 'shared', times: 1 }]);
 
   // 稿件要一字不差 —— 重新套一次共用詞庫的話，詞庫改過之後就跟當初那支不一樣了
@@ -99,7 +111,7 @@ test('重新出片：素材裡自己就有講者影片時，用素材那份（�
   const root = fixture(t);
   const src = doneJob(root);
   write(workFile(root, src, 'input', 'heygen.mp4'), '當初送進去的講者影片');
-  const request = loadServer(root);
+  const request = loadServer(root, { childProcess: 假子程序, idleTimers: true });
 
   const r = await request('POST', `/api/jobs/${src}/redo`, {});
   assert.equal(r.status, 200);
@@ -112,7 +124,7 @@ test('重新出片：缺講者影片就講清楚缺什麼，不要靜默失敗�
   write(path.join(root, '工作紀錄', id, '_製作資料', 'job.json'),
     { id, template: 'dapan', owner: '未署名', title: '舊工作', status: 'done', createdAt: '2026-09-07' });
   write(workFile(root, id, 'input', 'script.txt'), '===\n===\n舊工作\n===\n內文\n');
-  const request = loadServer(root);
+  const request = loadServer(root, { childProcess: 假子程序, idleTimers: true });
 
   const r = await request('POST', `/api/jobs/${id}/redo`, {});
   assert.equal(r.status, 400);
@@ -128,7 +140,7 @@ test('重新出片：還在背景跑的工作不給重跑（製作快照這一�
   const file = path.join(root, '工作紀錄', src, '_製作資料', 'job.json');
   write(file, { ...JSON.parse(fs.readFileSync(file, 'utf8')), status: 'detached' });
 
-  const r = await loadServer(root)('POST', `/api/jobs/${src}/redo`, {});
+  const r = await loadServer(root, { childProcess: 假子程序, idleTimers: true })('POST', `/api/jobs/${src}/redo`, {});
   assert.equal(r.status, 400);
   assert.match(r.body.error, /還在跑/);
   assert.deepEqual(fs.readdirSync(path.join(root, '工作紀錄')), [src]);
@@ -152,7 +164,7 @@ test('重新出片：版型已經不在了就直接講，不要複製出一支�
   const file = path.join(root, '工作紀錄', id, '_製作資料', 'job.json');
   write(file, { ...JSON.parse(fs.readFileSync(file, 'utf8')), template: '早就砍掉的版型' });
 
-  const r = await loadServer(root)('POST', `/api/jobs/${id}/redo`, {});
+  const r = await loadServer(root, { childProcess: 假子程序, idleTimers: true })('POST', `/api/jobs/${id}/redo`, {});
   assert.equal(r.status, 400);
   assert.match(r.body.error, /版型「早就砍掉的版型」已經不在了/);
   assert.deepEqual(fs.readdirSync(path.join(root, '工作紀錄')), [id]);
@@ -161,7 +173,7 @@ test('重新出片：版型已經不在了就直接講，不要複製出一支�
 test('重新出片：找不到工作回 404', async (t) => {
   const root = fixture(t);
   doneJob(root);
-  const request = loadServer(root);
+  const request = loadServer(root, { childProcess: 假子程序, idleTimers: true });
   const r = await request('POST', '/api/jobs/20260101-000000-zzzz/redo', {});
   assert.equal(r.status, 404);
 });
@@ -183,25 +195,28 @@ test('重新出片複製過來的工作，送出時過得了 submit 的現成影
 test('確認關卡改完標注要回報「有吃到」，不能顯示計畫已經算完的紅字警告', async (t) => {
   const root = fixture(t);
   const src = doneJob(root);
-  const request = loadServer(root);
+  const request = loadServer(root, { childProcess: 假子程序, idleTimers: true });
   const created = (await request('POST', `/api/jobs/${src}/redo`, {})).body.job;
 
   const saved = await request('PUT', `/api/jobs/${created.id}/annotations`,
     { shots: [{ src: 'shot1.png', startCharIdx: 0, endCharIdx: 5, region: null, cell: null, arrow: null }] });
   assert.equal(saved.status, 200);
-  // applied=false 的話前台會紅字說「這支的配圖計畫已經算完，這筆不會自動進去」——
-  // 對 draft 完全相反：它根本還沒開始跑，submit 後 input/ 會整包複製過去。
+  // applied=false 的話前台會紅字說「這支的配圖計畫已經算完，這筆不會自動進去」。
+  // 2026-09-18 起 redo 直接開跑，所以這裡是 preparing 而不是 draft —— 但結論一樣要 true：
+  // 那代表這支正佔著 ROOT 在跑，標注會被補寫進 ROOT/public，趕得上 auto-shot。
   assert.equal(saved.body.applied, true);
   assert.equal(saved.body.count, 1);
 });
 
-test('標注頁在 draft 要讀得到圖與句子，不然確認關卡是空白的', async (t) => {
+test('標注頁在準備中要讀得到圖與句子，不然確認關卡是空白的', async (t) => {
   const root = fixture(t);
   const src = doneJob(root);
-  const request = loadServer(root);
+  const request = loadServer(root, { childProcess: 假子程序, idleTimers: true });
   const created = (await request('POST', `/api/jobs/${src}/redo`, {})).body.job;
 
-  // 圖片走 /file/：那支 API 會找 input/，draft 的素材就在那裡
+  // 圖片走 /file/：那支 API 會找 input/，redo 複製過來的素材就在那裡
+  // （2026-09-18 起 redo 不停在 draft，但「標注頁讀得到圖」這件事在準備中一樣要成立 ——
+  //  HeyGen 還在跑的那幾分鐘正是人在標注的時候）
   const img = await request('GET', `/api/jobs/${created.id}/file/shot1.png`);
   assert.equal(img.status, 200);
   assert.equal(img.bytes.toString(), '截圖位元組');

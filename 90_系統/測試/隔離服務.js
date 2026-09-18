@@ -62,6 +62,8 @@ function loadServer(root, options = {}) {
     fs: confinedFs(root),
     os,
     path,
+    // 只做 md5（重新出片比對截圖有沒有換過），沒有副作用，給真的就好
+    crypto: localRequire('node:crypto'),
     http: { createServer(handler) { route = handler; return { on() {}, listen: blocked }; } },
     child_process: options.childProcess || new Proxy({}, { get: () => blocked }),
     '../scripts/shot-memory': localRequire('../scripts/shot-memory'),

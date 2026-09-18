@@ -148,8 +148,11 @@ test('擠成一團的位置在中間時，訊息要講對位置，不能一律�
     evenSegment(1, BODY30.slice(25, 30), 10, 0.3),
   ]);
   assert.equal(code, 3, out);
-  assert.match(out, /第 \d+～\d+ 個字（共 \d+ 個）/);
-  assert.doesNotMatch(out.split('・')[1] || out, /^最後/);
+  // 2026-09-18：訊息格式隨「用稿件把時間攤平」改寫過 —— 從「第 N～M 個字（共 X 個）」
+  // 變成「漏聽 N～M 秒（X 個字「…」）」。要講對位置這個意圖沒變，只是改用秒數表達。
+  assert.match(out, /漏聽 [\d.]+～[\d.]+ 秒（\d+ 個字/, '要講出漏在哪一段、漏了幾個字');
+  assert.match(out, /漏聽了 \d+ 個字（佔整篇 \d+%/, '要講出佔整篇多少，人才知道嚴不嚴重');
+  assert.doesNotMatch(out.split('・')[1] || out, /^最後/, '團塊在中間就不能說「最後」');
 });
 
 test('第一個字就跟不上時，不要印出空的「停在「」之後」', () => {
@@ -174,9 +177,10 @@ test('重轉階梯：第一次不墊靜音（維持原本行為），後面每�
   const ladder = m[1].split(',').map((s) => Number(s.trim()));
   assert.equal(ladder[0], 0, '第一次一定不能墊 —— 墊了等於改掉所有影片的字幕結果');
   assert.equal(new Set(ladder).size, ladder.length, '每次墊的秒數要不一樣，墊一樣的等於原樣重轉（whisper 是確定性的）');
-  // 2026-09-17 使用者定案：總共只轉兩次，連兩次都壞就停下來交給人，不自動跑第三次。
-  // 要改這個數字得是新的決定，不是順手調參。
-  assert.deepEqual(ladder, [0, 0.5]);
+  // 2026-09-18 使用者調整：原本是 [0, 0.5]（只轉兩次），當天出片一直卡在時間軸判定失敗，
+  // 改成四次、每次墊的秒數拉開。要再改得是新的決定，不是順手調參。
+  assert.deepEqual(ladder, [0, 0.8, 1.5, 2.5]);
+  assert.ok(ladder.length >= 2, '至少要有重轉一次的機會');
   // 只有「時間軸判定失敗」(exit 3) 才重轉，其他錯誤照舊往上丟
   assert.match(src, /e\.status !== 3/);
 });
