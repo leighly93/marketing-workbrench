@@ -47,7 +47,8 @@
     "use-focusstock-ad-assets": "node scripts/use-focusstock-ad-assets.js",
     "parse-script:focusstock": "node scripts/parse-focusstock-script.js",
     "render:focusstock": "remotion render Focusstock ../暫存/產線輸出/output-focusstock.mp4 --concurrency=2 --timeout=300000 --crf 23 --audio-bitrate 128k",
-    "render:focusstock-ad": "remotion render FocusstockAd ../暫存/產線輸出/output-focusstock-ad.mp4 --concurrency=2 --timeout=300000 --crf 23 --audio-bitrate 128k"
+    "render:focusstock-ad": "remotion render FocusstockAd ../暫存/產線輸出/output-focusstock-ad.mp4 --concurrency=2 --timeout=300000 --crf 23 --audio-bitrate 128k",
+    "render-motion": "node scripts/render-motion.js"
   },
   "dependencies": {
     "@fal-ai/client": "^1.10.1",

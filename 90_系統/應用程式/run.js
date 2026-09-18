@@ -1551,6 +1551,7 @@ async function main() {
   log("開始 Remotion 後製");
   transcribeWithRetry();
   prepareShots();
+  renderMotionClips();
 
   if (STOP_BEFORE_RENDER) {
     log("⏸  已指定 --stop-before-render：配圖計畫算好了，這裡停下不 render。");
@@ -1558,6 +1559,41 @@ async function main() {
     return;
   }
   renderTemplate();
+}
+
+/**
+ * 動態小影片（MG）：讀 public/motion.json → render 直式＋橫式 → 寫 motion.generated.json。
+ *
+ * 排在 transcribeWithRetry() 之後 —— 每一項要在旁白唸到它的那一刻進場，沒有字幕時間軸就算不出來。
+ * 排在 prepareShots() 之後 —— 配圖是主，動態是補；之後若要「只在沒配圖的段落放動態」，
+ * 計畫已經算好了，直接讀得到。
+ *
+ * ⚠️ **失敗一律降級成「這支沒有動態」**，跟 auto-shot 同一個原則：
+ *    HeyGen 額度已經花掉了，不能因為動態掛掉就沒有成品。
+ *    降級時要把 motion.generated.json 清空 —— 不清的話會沿用上一支的內容，
+ *    貼上別支影片的動態畫面（而且完全沒有錯誤訊息）。
+ */
+function renderMotionClips() {
+  const motionGenerated = resolve(PROJECT_DIR, "src/MotionClip/motion.generated.json");
+  // 先清掉上一支殘留的動態檔。這些檔名不符合 cleanStaleStaging 的版型前綴規則（dapan-／midday-…），
+  // 它不會幫忙清；上一支有 2 段、這支只有 1 段的話，motion-2-*.mp4 會留著佔空間。
+  try {
+    const pub = resolve(PROJECT_DIR, "public");
+    for (const f of require("fs").readdirSync(pub)) {
+      if (/^motion-\d+-[pl]\.mp4$/.test(f)) require("fs").unlinkSync(resolve(pub, f));
+    }
+  } catch (e) { /* 清不掉不是致命的，下面照跑 */ }
+
+  try {
+    run("npm run render-motion");
+  } catch (e) {
+    log("⚠️ 動態小影片生成失敗（不影響出片，只是這支沒有動態）：" + e.message);
+    try {
+      writeFileSync(motionGenerated, "[]\n");
+    } catch (e2) {
+      log("   ⚠️ 連清空 motion.generated.json 都失敗了，這支可能會帶上上一支的動態：" + e2.message);
+    }
+  }
 }
 
 /**
