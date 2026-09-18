@@ -23,6 +23,8 @@ import {
 import { frameSpan } from '../timeline';
 import { Subtitles } from '../Subtitles';
 import { ShotFocusImage } from '../ShotFocus';
+import { MotionOverlay } from '../MotionClip/MotionOverlay';
+import { MOTION_RUNS } from '../MotionClip/motion-timeline';
 import videoMeta from '../video-meta.json';
 import { PunchIn } from '../PunchIn';
 import { emphasisPunchSpans } from '../Subtitles';
@@ -145,6 +147,15 @@ export const DapanComposition: React.FC = () => {
             </Sequence>
           );
         })}
+
+        {/* 動態小影片：獨立畫面，會蓋掉講者與截圖，但字幕與招牌 bar 留在它上面。
+            mp4 本身就是 1080×1920 全畫面（背景與掃光在影片裡已鋪滿），內容只畫在 y310–1440，
+            所以這裡滿版貼上即可，不必補底色或算位置。沒標動態時 MOTION_RUNS 是空陣列＝完全沒有這一層。
+            ⚠️ 這一段在 `<Sequence from={introFrames}>` 內，時間自動對齊主段（開場卡那 1 秒不算）。 */}
+        <MotionOverlay
+          runs={MOTION_RUNS}
+          region={{ x: 0, y: 0, w: VIDEO_WIDTH, h: VIDEO_HEIGHT }}
+        />
 
         {/* 字幕層：跟講者段同一套樣式（直接 reuse，未修改），截圖段也照樣顯示在最上層 */}
         <Subtitles />

@@ -20,6 +20,8 @@ import { frameSpan } from '../timeline';
 import { Subtitles, emphasisPunchSpans } from '../Subtitles';
 import { PunchIn } from '../PunchIn';
 import { ShotFocusImage } from '../ShotFocus';
+import { MotionOverlay } from '../MotionClip/MotionOverlay';
+import { MOTION_RUNS } from '../MotionClip/motion-timeline';
 import videoMeta from '../video-meta.json';
 
 /**
@@ -171,6 +173,15 @@ export const DapanLandscapeComposition: React.FC = () => {
 
       {/* 標題：常駐在右側面板 header 下方 */}
       <LandscapeTitleCard />
+
+      {/* 動態小影片：只覆蓋左側講者可見區（0～PANEL_LEFT_X），右側品牌面板不動。
+          橫式那支 mp4 是 1178×1080（背景鋪滿、內容畫在 y0–918 避開字幕），滿版貼進 region 即可。
+          ⚠️ 橫式沒有開場卡，這裡不包 Sequence 偏移 —— 與截圖段同一個時間基準（見 DAPAN_SHOT_RUNS 那段）。 */}
+      <MotionOverlay
+        runs={MOTION_RUNS}
+        landscape
+        region={{ x: 0, y: 0, w: PANEL_LEFT_X, h: LANDSCAPE_HEIGHT }}
+      />
 
       {/* 字幕：靠左、置於左側講者區底部，且放在最上層（面板/日期/標題之後）→ 永遠不被蓋到。
           alignItems: 'flex-start' = 靠左；right = 面板寬 → 字幕只落在左側可見區、不會頂到右側面板；

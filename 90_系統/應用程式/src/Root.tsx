@@ -24,6 +24,12 @@ import { MiddayFocusComposition } from './MiddayFocus/MiddayFocusComposition';
 import { MIDDAY_TOTAL_DURATION_SEC } from './MiddayFocus/midday-timeline';
 import { UsStockComposition } from './UsStock/UsStockComposition';
 import { USSTOCK_TOTAL_DURATION_SEC } from './UsStock/usstock-timeline';
+import { MotionClip } from './MotionClip/MotionClipComposition';
+import {
+  EXAMPLE_CONTRAST,
+  EXAMPLE_LIST,
+  EXAMPLE_QUOTE,
+} from './MotionClip/motion-clip-examples';
 
 /**
  * Remotion Root：在此註冊所有 Composition
@@ -105,6 +111,87 @@ export const RemotionRoot: React.FC = () => {
         fps={VIDEO_FPS}
         width={VIDEO_WIDTH}
         height={VIDEO_HEIGHT}
+      />
+      {/* ── 動態小影片（MG）：獨立 render 成 mp4，再由 MotionOverlay 貼回各版型 ──
+          三種型別（contrast／list／quote）、深藍＋黃、漲紅跌綠、零圖示素材。
+          ⚠️ 尺寸＝**該版型整個可見畫面**，不是只有內容區 —— 背景有漸層與掃光，
+             只鋪內容區的話光掃到邊界就斷掉。內容由 safeTop／safeBottom 限制在安全區內。
+               直式 1080×1920（內容 y310–1440，避開招牌 bar 與字幕）
+               橫式 1178×1080（內容 y0–918，避開右側面板與字幕）
+          時長一律由 props.durationSec 決定（＝那段旁白的長度）。
+          MotionClipDemo* 是 Studio 裡看長相用的 1080×1080 舊尺寸，不進產線。 */}
+      <Composition
+        id="MotionClip"
+        component={MotionClip as React.FC<Record<string, unknown>>}
+        durationInFrames={240}
+        fps={VIDEO_FPS}
+        width={1080}
+        height={1080}
+        defaultProps={{ spec: EXAMPLE_LIST, durationSec: 8 }}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: Math.max(
+            30,
+            Math.round(((props as { durationSec?: number }).durationSec ?? 8) * VIDEO_FPS)
+          ),
+        })}
+      />
+      <Composition
+        id="MotionClipDemoContrast"
+        component={MotionClip as React.FC<Record<string, unknown>>}
+        durationInFrames={VIDEO_FPS * 8}
+        fps={VIDEO_FPS}
+        width={1080}
+        height={1080}
+        defaultProps={{ spec: EXAMPLE_CONTRAST }}
+      />
+      <Composition
+        id="MotionClipDemoList"
+        component={MotionClip as React.FC<Record<string, unknown>>}
+        durationInFrames={VIDEO_FPS * 12}
+        fps={VIDEO_FPS}
+        width={1080}
+        height={1080}
+        defaultProps={{ spec: EXAMPLE_LIST }}
+      />
+      {/* 2026-09-17：直式／橫式各一支，共用同一套佈局、各自填滿可用區 */}
+      <Composition
+        id="MotionClipListPortrait"
+        component={MotionClip as React.FC<Record<string, unknown>>}
+        durationInFrames={VIDEO_FPS * 12}
+        fps={VIDEO_FPS}
+        width={1080}
+        height={1920}
+        defaultProps={{ spec: EXAMPLE_LIST, safeTop: 310, safeBottom: 1440 }}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: Math.max(
+            30,
+            Math.round(((props as { durationSec?: number }).durationSec ?? 12) * VIDEO_FPS)
+          ),
+        })}
+      />
+      <Composition
+        id="MotionClipListLandscape"
+        component={MotionClip as React.FC<Record<string, unknown>>}
+        durationInFrames={VIDEO_FPS * 12}
+        fps={VIDEO_FPS}
+        width={1178}
+        height={1080}
+        defaultProps={{ spec: EXAMPLE_LIST, safeTop: 0, safeBottom: 918 }}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: Math.max(
+            30,
+            Math.round(((props as { durationSec?: number }).durationSec ?? 12) * VIDEO_FPS)
+          ),
+        })}
+      />
+      <Composition
+        id="MotionClipDemoQuote"
+        component={MotionClip as React.FC<Record<string, unknown>>}
+        durationInFrames={VIDEO_FPS * 6}
+        fps={VIDEO_FPS}
+        width={1080}
+        height={1080}
+        defaultProps={{ spec: EXAMPLE_QUOTE }}
       />
     </>
   );
