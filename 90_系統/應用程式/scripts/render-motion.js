@@ -16,9 +16,14 @@
  *     [{
  *       "startCharIdx": 280, "endCharIdx": 336,   ← 前台選範圍會給這組（優先）
  *       "at": "所以現在最重要的",                  ← 手寫時可改用文字比對（找不到就報錯）
- *       "spec": { "template": "list", "kicker": "...", "title": "三個|觀察重點",
- *                 "items": [{ "text": "法人到底賣多少", "at": "法人到底賣多少" }] }
+ *       "spec": { ... }                            ← **可選**，見下
  *     }]
+ *
+ * ── spec 從哪來 ──────────────────────────────────────────────
+ *   一律問 motion-engine（產線唯一入口，AGENTS.md：業務邏輯不得新增供應者 CLI 呼叫）：
+ *     MOTION_ENGINE 沒設        → manual：直接用參數檔裡的 spec
+ *     MOTION_ENGINE=claude-cli  → 用 claude -p 讀那段原文產生；失敗時退回參數檔的 spec
+ *   engine 回 null＝這一段不做動態，跳過它、繼續下一段。
  *
  * ── 檔名為什麼有兩套 ──────────────────────────────────────────
  *   public/ 放 ASCII 檔名（motion-1-p.mp4）給 Remotion 的 staticFile 用，避開中文路徑；
@@ -29,11 +34,33 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const crypto = require('crypto');
+const motionEngine = require('./motion-engine');
 
 const ROOT = path.resolve(__dirname, '..');
 const PUBLIC = path.join(ROOT, 'public');
 const SUBS = path.join(ROOT, 'src', 'subtitles.json');
 const OUT_JSON = path.join(ROOT, 'src', 'MotionClip', 'motion.generated.json');
+// 指紋單獨存 —— 放進 motion.generated.json 會讓渲染端的型別多一個用不到的欄位。
+// 檔名跟著 *.generated.json 的慣例：這樣它會被 snapshotTargets 收進快照（重跑才不會白跑一次），
+// 也自動被 .gitignore 排除。
+const SIG_FILE = path.join(ROOT, 'src', 'MotionClip', 'motion-sig.generated.json');
+
+/**
+ * 這份產出是「哪份輸入 ＋ 哪條字幕時間軸」做出來的。
+ * 動態在 prepare 階段就 render（review 頁才預覽得到），但人可能在那之後才標／才改，
+ * 所以 doRender 之前要再確認一次。有這個指紋就能只在真的變了的時候重跑，
+ * 沒變就省下十幾秒。
+ */
+function inputSignature(entriesRaw, subs) {
+  const h = crypto.createHash('sha1');
+  h.update(String(entriesRaw || ''));
+  h.update('|');
+  // 字幕換了（例如重轉過）秒數就不一樣，也要重做
+  h.update(String((subs && subs.times && subs.times.length) || 0));
+  h.update(String((subs && subs.times && subs.times.length && subs.times[subs.times.length - 1].end) || ''));
+  return h.digest('hex').slice(0, 16);
+}
 
 const args = process.argv.slice(2);
 const argOf = (k, d) => {
@@ -44,6 +71,11 @@ const INPUT = path.resolve(ROOT, argOf('input', 'public/motion.json'));
 const ONLY = argOf('only', '');
 /** 只算時間、不 render。驗證「每一項落在第幾秒」時用，幾毫秒就跑完。 */
 const DRY = args.includes('--dry-run');
+/**
+ * 輸入沒變就跳過。給 doRender 用：動態在 prepare 階段就 render 過了，
+ * 但人可能在配圖計畫頁又改過，所以出片前要再確認一次 —— 沒改就別白跑十幾秒。
+ */
+const IF_CHANGED = args.includes('--if-changed');
 
 /** 兩個版型的畫布與安全區。要接盤中焦點／美股焦點時在這裡加一筆即可。 */
 const ORIENTATIONS = {
@@ -142,15 +174,27 @@ function main() {
   if (!fs.existsSync(INPUT)) {
     log(`ℹ️ 沒有 ${path.relative(ROOT, INPUT)}，這支影片不做動態`);
     fs.writeFileSync(OUT_JSON, '[]\n');
+    fs.writeFileSync(SIG_FILE, 'none');
     return;
   }
-  const entries = JSON.parse(fs.readFileSync(INPUT, 'utf-8'));
+  const raw = fs.readFileSync(INPUT, 'utf-8');
+  const entries = JSON.parse(raw);
   if (!Array.isArray(entries) || entries.length === 0) {
     log('ℹ️ 參數檔是空的，這支影片不做動態');
     fs.writeFileSync(OUT_JSON, '[]\n');
+    fs.writeFileSync(SIG_FILE, 'empty');
     return;
   }
   const subs = loadSubtitles();
+  const signature = inputSignature(raw, subs);
+  if (IF_CHANGED) {
+    let prev = null;
+    try { prev = fs.readFileSync(SIG_FILE, 'utf-8').trim(); } catch (_) {}
+    if (prev === signature && fs.existsSync(OUT_JSON)) {
+      log('ℹ️ 動態的參數與字幕都沒變，沿用上次的結果（不重跑）');
+      return;
+    }
+  }
   const generated = [];
 
   entries.forEach((entry, idx) => {
@@ -158,7 +202,15 @@ function main() {
     const range = resolveRange(entry, subs, idx);
     const durationSec = Number((range.endSec - range.startSec).toFixed(3));
     const phrase = subs.text.slice(range.startCharIdx, range.endCharIdx + 1);
-    const spec = resolveItemTimes(entry.spec || {}, range, subs);
+
+    // spec 一律問 engine：manual 後端直接回參數檔裡的 spec，claude-cli 後端讀原文產生。
+    // 回 null＝這段不做動態（engine 已經把原因印出來了），跳過、繼續下一段。
+    const planned = motionEngine.plan({ text: phrase, manualSpec: entry.spec });
+    if (!planned) {
+      log(`\n⏭  動態 ${n}：參數產不出來，這段跳過`);
+      return;
+    }
+    const spec = resolveItemTimes(planned, range, subs);
     const kw = keywordOf(entry.keyword || phrase);
 
     log(`\n🎬 動態 ${n}：charIdx ${range.startCharIdx}–${range.endCharIdx}`
@@ -187,7 +239,9 @@ function main() {
     log(`\n▷ dry-run 結束：算出 ${generated.length} 段，沒有 render、沒有寫 ${path.basename(OUT_JSON)}`);
     return;
   }
+  // 指紋放在陣列外面會讓渲染端的型別變複雜，所以塞進每一筆（渲染端忽略底線開頭的欄位）
   fs.writeFileSync(OUT_JSON, JSON.stringify(generated, null, 2) + '\n');
+  fs.writeFileSync(SIG_FILE, signature);
   log(`\n✅ 完成：${generated.length} 段動態，已寫入 ${path.relative(ROOT, OUT_JSON)}`);
 }
 

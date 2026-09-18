@@ -147,7 +147,8 @@ function 隔離環境(字幕文字) {
   fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'src/MotionClip'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'public'), { recursive: true });
-  fs.copyFileSync(path.join(app, 'scripts/render-motion.js'), path.join(dir, 'scripts/render-motion.js'));
+  for (const f of ['render-motion.js', 'motion-engine.js'])
+    fs.copyFileSync(path.join(app, 'scripts', f), path.join(dir, 'scripts', f));
   const times = [...(字幕文字 || '')].map((_, i) => ({ start: +(i * 0.2).toFixed(2), end: +((i + 1) * 0.2).toFixed(2) }));
   fs.writeFileSync(path.join(dir, 'src/subtitles.json'),
     JSON.stringify({ _scriptText: 字幕文字 || '', _scriptCharTimes: times }));
@@ -179,7 +180,9 @@ test('命名規則：public 用 ASCII、素材用看得懂的中文名', () => {
   const dir = 隔離環境('接下來看法人賣多少和融資被洗掉');
   fs.writeFileSync(path.join(dir, 'public/motion.json'), JSON.stringify([{
     startCharIdx: 0, endCharIdx: 14, keyword: '三個觀察重點',
-    spec: { template: 'list', items: [{ text: '法人賣多少', at: '法人賣多少' }] },
+    // list 至少兩項 —— 少於兩項 motion-engine 會判定不合格（一項的條列沒有意義）
+    spec: { template: 'list', items: [{ text: '法人賣多少', at: '法人賣多少' },
+                                      { text: '融資洗掉沒', at: '融資被洗掉' }] },
   }]));
   const out = 跑(dir, '--dry-run');
   assert.match(out, /public\/motion-1-p\.mp4/, '直式 public 檔名');
@@ -243,4 +246,117 @@ test('run.js：清殘留的 regex 只打中動態檔，不能誤刪講者影片�
                         'motion.json', 'minimax.mp3', 'motion-1-p.mp4.bak']) {
     assert.ok(!re.test(不該刪), `${不該刪} 不該被清掉`);
   }
+});
+
+// ── 伺服器端（2026-09-18）─────────────────────────────────────
+// 動態的設定存在工作自己的 input/motion.json。選這個位置是因為 stageJobInputs 會把
+// 整個 input/ 複製進 ROOT/public，而 render-motion.js 讀的就是 public/motion.json ——
+// 不必另外接線，「重新出片」整包帶走 input/ 也自動沿用。
+// 要盯的是：正規化（只收一段、丟壞值、spec 原樣留著）、狀態守門、以及 preparing 時
+// 要補寫 ROOT/public（那代表 run.js 正佔著 ROOT 在跑，不補就趕不上 renderMotionClips）。
+
+const { fixture: 沙箱, write: 寫檔, loadServer } = require('./隔離服務');
+const { applicationPath: appPath } = require('../paths');
+const { createJobStore } = require('../工作儲存');
+
+// 工作目錄是「工作紀錄/<日期>_<標題>_<完整ID>」，不是 jobs/<id> —— 要用正式的解析器拿路徑
+const 工作檔 = (root, id, ...parts) => path.join(createJobStore(root).directory(id), ...parts);
+
+// 伺服器跑在 vm 沙箱，原型跟這邊不同 realm，strict deepEqual 會誤判 —— 先轉純資料
+const 純 = (v) => JSON.parse(JSON.stringify(v));
+const 稿件 = { template: 'dapan', title: '合成標題', body: '這是合成稿件。' };
+
+test('伺服器：只收一段、丟掉壞值、spec 原樣保留', (t) => {
+  const root = 沙箱(t);
+  const api = loadServer(root);
+  const got = 純(api.normalizeMotion([
+    { startCharIdx: 10, endCharIdx: 40, keyword: '三大法人', spec: { template: 'list', items: [] } },
+    { startCharIdx: 50, endCharIdx: 60 },          // 第二段 → 使用者定案每支只有 1 段，丟掉
+    { startCharIdx: 'x', endCharIdx: 9 },          // 不是數字 → 丟掉
+    { startCharIdx: 9, endCharIdx: 3 },            // 頭尾顛倒 → 丟掉（不自動翻正，那會猜錯意圖）
+    null,
+  ]));
+  assert.equal(got.length, 1);
+  assert.deepEqual(got[0], {
+    startCharIdx: 10, endCharIdx: 40, keyword: '三大法人',
+    spec: { template: 'list', items: [] },
+  });
+});
+
+test('伺服器：spec 的內容不在這裡驗 —— 那是 motion-engine 的事', (t) => {
+  // 這一層只管「有沒有這個欄位」。三種模板各要什麼欄位只有 motion-engine 知道，
+  // 兩邊都驗會漂走（這專案被「同一套規則兩份實作」咬過好幾次）。
+  const root = 沙箱(t);
+  const api = loadServer(root);
+  const got = 純(api.normalizeMotion([{ startCharIdx: 0, endCharIdx: 5, spec: { 亂寫: true } }]));
+  assert.deepEqual(got[0].spec, { 亂寫: true });
+});
+
+test('伺服器：存進工作自己的 input/motion.json，清空就把檔案刪掉', async (t) => {
+  const root = 沙箱(t);
+  const request = loadServer(root);
+  const 建立 = await request('POST', '/api/jobs', 稿件);
+  const id = 建立.body.job.id;   // POST /api/jobs 回的是 { job: {...} }
+  const 檔 = 工作檔(root, id, '素材', 'motion.json');
+
+  const 存 = await request('PUT', `/api/jobs/${id}/motion`,
+    { entries: [{ startCharIdx: 3, endCharIdx: 9 }] });
+  assert.equal(存.status, 200);
+  assert.equal(存.body.count, 1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(檔, 'utf8')), [{ startCharIdx: 3, endCharIdx: 9 }]);
+
+  const 讀 = await request('GET', `/api/jobs/${id}/motion`);
+  assert.deepEqual(純(讀.body.entries), [{ startCharIdx: 3, endCharIdx: 9 }]);
+
+  // 清空 → 檔案要消失，不是留一個空陣列。留著的話 render-motion 會走「參數檔是空的」
+  // 那條路，行為一樣但多一次讀檔；更重要的是 input/ 裡不該留沒意義的檔案。
+  const 清 = await request('PUT', `/api/jobs/${id}/motion`, { entries: [] });
+  assert.equal(清.body.count, 0);
+  assert.equal(fs.existsSync(檔), false);
+});
+
+test('伺服器：開始 render 之後就不給改，並且說清楚為什麼', async (t) => {
+  const root = 沙箱(t);
+  const api = loadServer(root);
+  const request = api;
+  const 建立 = await request('POST', '/api/jobs', 稿件);
+  const id = 建立.body.job.id;   // POST /api/jobs 回的是 { job: {...} }
+  // ⚠️ 要改記憶體裡那份 —— 伺服器的工作狀態不是每次從 job.json 重讀
+  api.getJob(id).status = 'rendering';
+
+  const res = await request('PUT', `/api/jobs/${id}/motion`,
+    { entries: [{ startCharIdx: 0, endCharIdx: 5 }] });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /已經開始出片/);
+});
+
+test('伺服器：preparing 時要補寫 ROOT/public，才趕得上 run.js 的動態那一步', async (t) => {
+  // 動態是在 prepare 階段就 render 的（配圖計畫頁才預覽得到）。
+  // 人在「準備中」標的若不補進 ROOT，run.js 讀不到 → 這支就沒有動態。
+  const root = 沙箱(t);
+  const api = loadServer(root);
+  const request = api;
+  const 建立 = await request('POST', '/api/jobs', 稿件);
+  const id = 建立.body.job.id;   // POST /api/jobs 回的是 { job: {...} }
+  api.getJob(id).status = 'preparing';
+
+  await request('PUT', `/api/jobs/${id}/motion`, { entries: [{ startCharIdx: 1, endCharIdx: 8 }] });
+  const rootMotion = path.join(appPath(root), 'public', 'motion.json');
+  assert.ok(fs.existsSync(rootMotion), 'preparing 時必須補寫 ROOT/public/motion.json');
+  assert.deepEqual(JSON.parse(fs.readFileSync(rootMotion, 'utf8')), [{ startCharIdx: 1, endCharIdx: 8 }]);
+
+  // 清空時也要把 ROOT 那份刪掉，不然 run.js 會拿舊設定去做
+  await request('PUT', `/api/jobs/${id}/motion`, { entries: [] });
+  assert.equal(fs.existsSync(rootMotion), false, '清空時 ROOT 那份也要刪掉');
+});
+
+test('伺服器：queued 階段不補寫 ROOT —— 那會污染別支正在跑的工作', async (t) => {
+  const root = 沙箱(t);
+  const request = loadServer(root);
+  const 建立 = await request('POST', '/api/jobs', 稿件);
+  const id = 建立.body.job.id;   // POST /api/jobs 回的是 { job: {...} }   // 建立後預設是 draft，不是 preparing
+
+  await request('PUT', `/api/jobs/${id}/motion`, { entries: [{ startCharIdx: 1, endCharIdx: 8 }] });
+  assert.equal(fs.existsSync(path.join(appPath(root), 'public', 'motion.json')), false,
+    '只有 preparing 才代表這支正佔著 ROOT');
 });

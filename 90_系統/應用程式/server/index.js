@@ -390,6 +390,10 @@ const LOCK = path.join(WORKSPACE_ROOT, '.run.lock');
 /** 把 public/ 裡上一支工作留下的東西清掉（套版素材與字型保留） */
 /** 字幕重點詞的存放位置（2026-09-17）。所有版型共用一份 —— 字幕本身就只有一份。 */
 const EMPHASIS_FILE = 'src/emphasis.generated.json';
+const MOTION_FILE = 'src/MotionClip/motion.generated.json';
+const MOTION_SIG_FILE = 'src/MotionClip/motion-sig.generated.json';
+/** 動態可以改到什麼時候：跟重點詞一樣，界線是「還沒開始 render」。 */
+const MOTION_EDITABLE = ['draft', 'queued', 'preparing', 'detached', 'review', 'approved'];
 
 /**
  * 還來得及標重點詞的狀態（2026-09-17）。界線是「這支還沒開始 render」——
@@ -409,6 +413,11 @@ function clearWorkspaceInputs() {
   //    restoreWorkspace 也走這支，清完才從快照還原，所以重跑舊工作照樣拿回自己的標記。
   // ⚠️ 要放在下面那個 early return **之前** —— 它清的是 public，跟這個檔沒關係。
   rmrf(path.join(ROOT, EMPHASIS_FILE));
+  // ⚠️ 動態小影片的產出同理（2026-09-18）。render-motion 正常跑完會自己覆蓋成 []，
+  //    但 run.js 若在**轉字幕那一步就失敗**根本走不到它，上一支的動態就留在這裡，
+  //    下一支 render 時會貼上別支影片的畫面。指紋檔一起清，免得 --if-changed 誤判成「沒變」。
+  rmrf(path.join(ROOT, MOTION_FILE));
+  rmrf(path.join(ROOT, MOTION_SIG_FILE));
   const pub = path.join(ROOT, 'public');
   if (!fs.existsSync(pub)) return;
   for (const n of fs.readdirSync(pub)) {
@@ -896,6 +905,48 @@ function writeEmphasis(marks) {
  *    真正寫進 ROOT 的時機只有一個：doRender 的 restoreWorkspace 之後。
  */
 function jobEmphasisFile(job) { return jobPath(job.id, 'input', 'emphasis.json'); }
+
+/**
+ * 動態小影片的設定（2026-09-18）。存在工作自己的 input/motion.json。
+ *
+ * 為什麼是 input/：`stageJobInputs` 會把整個 input/ 複製進 ROOT/public，
+ * 而 render-motion.js 讀的就是 public/motion.json —— 不必另外接線。
+ * 「重新出片」整包帶走 input/，動態設定也自動跟著新工作走。
+ */
+function jobMotionFile(job) { return jobPath(job.id, 'input', 'motion.json'); }
+
+function readJobMotion(job) {
+  try {
+    const j = JSON.parse(fs.readFileSync(jobMotionFile(job), 'utf-8'));
+    return normalizeMotion(j);
+  } catch (_) { return []; }
+}
+
+/**
+ * 只留下能用的欄位，而且**只收一段**（使用者定案：每支預設 1 段）。
+ * spec 原樣保留 —— 它的驗證在 motion-engine.js，那裡才知道三種模板各要什麼。
+ */
+function normalizeMotion(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((m) => m && Number.isInteger(m.startCharIdx) && Number.isInteger(m.endCharIdx)
+      && m.endCharIdx >= m.startCharIdx)
+    .slice(0, 1)
+    .map((m) => ({
+      startCharIdx: m.startCharIdx,
+      endCharIdx: m.endCharIdx,
+      ...(m.keyword ? { keyword: String(m.keyword).slice(0, 40) } : {}),
+      ...(m.spec && typeof m.spec === 'object' ? { spec: m.spec } : {}),
+    }));
+}
+
+function saveJobMotion(job, raw) {
+  const entries = normalizeMotion(raw);
+  ensureDir(path.dirname(jobMotionFile(job)));
+  if (entries.length === 0) { rmrf(jobMotionFile(job)); return []; }
+  fs.writeFileSync(jobMotionFile(job), JSON.stringify(entries, null, 2) + '\n');
+  return entries;
+}
 
 function readJobEmphasis(job) {
   try {
@@ -1945,6 +1996,22 @@ async function doRender(job) {
     const marks = writeEmphasis(readJobEmphasis(job));
     if (marks.length) appendLog(job, `\n🖍 字幕重點詞 ${marks.length} 處\n`);
   }
+  // 動態小影片：同一個時機、同一個理由。快照裡是 prepare 當時的結果，但人可能在
+  // 配圖計畫頁又改過、或才第一次標（「直接出片」那條路也不經過計畫頁）。
+  // 先把最新設定寫回工作區，再用 --if-changed 決定要不要重做 —— 沒改就 0.09 秒跳過。
+  // ⚠️ 失敗一律降級成「這支沒有動態」，跟 run.js 那邊同一個原則。
+  try {
+    const mf = path.join(ROOT, 'public', 'motion.json');
+    const motion = readJobMotion(job);
+    if (motion.length) fs.writeFileSync(mf, JSON.stringify(motion, null, 2) + '\n');
+    else rmrf(mf);
+    execFileSync('node', [path.join('scripts', 'render-motion.js'), '--if-changed'],
+      { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
+    if (motion.length) appendLog(job, `\n🎬 動態小影片 ${motion.length} 段\n`);
+  } catch (e) {
+    appendLog(job, `\n⚠️ 動態小影片重算失敗（不影響出片，只是這支沒有動態）：${e.message}\n`);
+    try { fs.writeFileSync(path.join(ROOT, MOTION_FILE), '[]\n'); } catch (_) {}
+  }
   if (job.pendingEdits && job.pendingEdits.length) {
     applyPlanEdits(job, job.pendingEdits);
     // 「人工標記」那一類不是這一步套用的（它是標注頁的產物，只為了寫修正紀錄而記），
@@ -2966,6 +3033,42 @@ const server = http.createServer(async (req, res) => {
         job.emphasisCount = marks.length;
         saveJob(job);
         return send(res, 200, { ok: true, marks, count: marks.length });
+      }
+    }
+
+    /**
+     * 動態小影片（2026-09-18）。跟 /emphasis 同一個形狀：GET 讀、PUT 存，
+     * 存的是工作自己的 input/motion.json。
+     *
+     * ⚠️ 時機比重點詞緊：動態是在 **prepare 階段**就 render 的（配圖計畫頁才預覽得到），
+     *    所以在 preparing 標的要立刻補進 ROOT/public，才趕得上 run.js 的 renderMotionClips。
+     *    判斷條件跟 annotations 一樣只看 'preparing' —— 那代表這支正佔著 ROOT；
+     *    'queued' 的還沒開始，它的 input/ 之後會整包複製過去。
+     *
+     * ⚠️ 趕不上也沒關係：doRender 會在 restoreWorkspace 之後把最新設定寫回去，
+     *    再用 --if-changed 決定要不要重做。所以不管什麼時候標都進得了成品。
+     */
+    if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'motion') {
+      const job = getJob(seg[2]);
+      if (!job) return send(res, 404, { error: '找不到工作' });
+      if (req.method === 'GET') {
+        return send(res, 200, { entries: readJobMotion(job) });
+      }
+      if (req.method === 'PUT') {
+        if (!MOTION_EDITABLE.includes(job.status))
+          return send(res, 400, { error: '這支已經開始出片了，動態改了也進不去' });
+        const body = JSON.parse((await readBody(req)).toString() || '{}');
+        const entries = saveJobMotion(job, body.entries);
+        if (job.status === 'preparing') {
+          const f = path.join(ROOT, 'public', 'motion.json');
+          if (entries.length) {
+            ensureDir(path.dirname(f));   // 不假設 public/ 一定在（clearWorkspaceInputs 之後可能還沒建回來）
+            fs.writeFileSync(f, JSON.stringify(entries, null, 2) + '\n');
+          } else rmrf(f);
+        }
+        job.motionCount = entries.length;
+        saveJob(job);
+        return send(res, 200, { ok: true, entries, count: entries.length });
       }
     }
 
