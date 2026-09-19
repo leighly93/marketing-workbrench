@@ -2013,7 +2013,15 @@ async function doRender(job) {
     const said = [r.stdout, r.stderr].filter((s) => s && s.trim()).join('\n').trim();
     if (said) appendLog(job, `\n${said}\n`);
     if (r.status !== 0) throw new Error(r.error ? r.error.message : `render-motion 結束碼 ${r.status}`);
-    if (motion.length) appendLog(job, `\n🎬 動態小影片 ${motion.length} 段\n`);
+    // 報**實際產出**的段數，不是前台標了幾段 —— 參數產不出來時 render-motion 會寫入空陣列，
+    // 印設定的數字就變成「log 說有 1 段、影片裡卻什麼都沒有」（2026-09-19 踩過）。
+    let made = 0;
+    try { made = JSON.parse(fs.readFileSync(path.join(ROOT, MOTION_FILE), 'utf-8')).length; } catch (_) {}
+    if (motion.length) {
+      appendLog(job, made
+        ? `\n🎬 動態小影片 ${made} 段\n`
+        : `\n⚠️ 標了 ${motion.length} 段動態，但一段都沒產出（原因見上面）——這支影片不會有動態\n`);
+    }
   } catch (e) {
     appendLog(job, `\n⚠️ 動態小影片重算失敗（不影響出片，只是這支沒有動態）：${e.message}\n`);
     try { fs.writeFileSync(path.join(ROOT, MOTION_FILE), '[]\n'); } catch (_) {}

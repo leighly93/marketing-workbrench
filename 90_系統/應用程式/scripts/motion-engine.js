@@ -103,6 +103,27 @@ function validate(spec) {
   return { ...spec, lines: lines.slice(0, 4) };
 }
 
+/**
+ * 把 execFileSync 丟出來的錯誤講成人話。順序有意義：
+ * stdout 的 JSON（claude 自己的錯誤）→ stderr → 結束碼／signal → 最後才是命令列。
+ */
+function describeFailure(e) {
+  const out = (e && e.stdout || '').toString().trim();
+  if (out) {
+    try {
+      const j = JSON.parse(out);
+      const msg = j.result || j.error || j.message;
+      if (msg) return `${String(msg).slice(0, 300)}（claude 回報，結束碼 ${e.status}）`;
+    } catch (_) { /* 不是 JSON 就當純文字用 */ }
+    return `${out.split('\n').slice(-3).join(' ').slice(0, 300)}（結束碼 ${e.status}）`;
+  }
+  const err = (e && e.stderr || '').toString().trim();
+  if (err) return `${err.split('\n').slice(-3).join(' ').slice(0, 300)}（結束碼 ${e.status}）`;
+  if (e && e.signal) return `被 ${e.signal} 中止（逾時上限 120 秒）`;
+  if (e && e.code === 'ENOENT') return '找不到 claude 這個指令（服務的 PATH 裡沒有）';
+  return `結束碼 ${e && e.status}，沒有任何輸出`;
+}
+
 const ENGINES = {
   manual: {
     label: '手動（前台貼的參數）',
@@ -126,6 +147,10 @@ const ENGINES = {
     plan({ text, manualSpec }) {
       if (!text || !text.trim()) return validate(manualSpec);
       let out;
+      // 失敗重試一次。claude -p 偶爾會秒退（2026-09-19 出片時遇過一次，
+      // 同一份輸入在別的環境重跑都正常），這種暫時性失敗重試就過，
+      // 成本是多等幾秒；真的壞掉的話第二次也會失敗，訊息照樣留在 log 裡。
+      for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         out = execFileSync('claude', [
           '-p', buildPrompt(text),
@@ -145,11 +170,20 @@ const ENGINES = {
           maxBuffer: 8 * 1024 * 1024,
         });
       } catch (e) {
-        // 登入過期／限流／沒裝 CLI 都走這裡。回 null 讓呼叫端降級，
-        // 但訊息要留下來 —— 背景服務跑的時候沒人看得到 stderr。
-        const why = (e && (e.stderr || e.message) || '').toString().trim().split('\n').slice(-3).join(' ');
-        console.error(`⚠️ claude -p 失敗：${why || '沒有錯誤訊息'}`);
-        return validate(manualSpec);
+        // 登入過期／用量上限／沒裝 CLI 都走這裡。回 null 讓呼叫端降級，
+        // 但訊息要留下來 —— 背景服務跑的時候沒人看得到終端機。
+        //
+        // ⚠️ stdout 一定要看。--output-format json 的失敗（用量上限、登入過期）
+        //    是把原因寫在 **stdout** 的 JSON 裡，stderr 留空、1 秒內非零退出。
+        //    只看 stderr 的話，e.message 就只剩「Command failed: claude -p …」整條命令列，
+        //    看起來像參數有問題，實際上跟參數無關（2026-09-19 查了一輪才發現）。
+        console.error(`⚠️ claude -p 失敗（第 ${attempt} 次）：${describeFailure(e)}`);
+        // 找不到指令重試也沒用，直接放棄
+        if (attempt === 2 || (e && e.code === 'ENOENT')) return validate(manualSpec);
+        try { execFileSync('sleep', ['3']); } catch (_) { /* 等不到就直接重試 */ }
+        continue;
+      }
+      break;
       }
       let result;
       try {
@@ -189,4 +223,4 @@ function plan(input, env = process.env) {
   return createEngine(env.MOTION_ENGINE).plan(input || {});
 }
 
-module.exports = { plan, createEngine, validate, extractJson, buildPrompt, ENGINES, MODELS };
+module.exports = { plan, createEngine, validate, extractJson, buildPrompt, describeFailure, ENGINES, MODELS };
