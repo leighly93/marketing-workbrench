@@ -207,7 +207,10 @@ function main() {
     // 回 null＝這段不做動態（engine 已經把原因印出來了），跳過、繼續下一段。
     const planned = motionEngine.plan({ text: phrase, manualSpec: entry.spec });
     if (!planned) {
-      log(`\n⏭  動態 ${n}：參數產不出來，這段跳過`);
+      // engine 名稱一定要印出來 —— 光說「產不出來」的話，
+      // 「engine 選錯」跟「claude 這次回得不合格」看起來一模一樣。
+      const who = process.env.MOTION_ENGINE || '預設';
+      log(`\n⏭  動態 ${n}：參數產不出來（後端＝${who}，原因見上一行），這段跳過`);
       return;
     }
     const spec = resolveItemTimes(planned, range, subs);

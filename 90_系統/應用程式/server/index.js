@@ -30,7 +30,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');   // 重新出片沿用 OCR 結果時，比對截圖 md5 用
 const { workspaceRoot, dataPath, resolveDataReference } = require('../../paths');
-const { spawn, execFileSync } = require('child_process');
+const { spawn, spawnSync, execFileSync } = require('child_process');
 // 「你教過的東西」記憶庫。memKeyOf／mergeRuns 一定要跟 auto-shot.js 共用同一份實作 ——
 // 這裡負責寫、auto-shot 負責讀，鍵值算法漂掉的話學到的東西下次就對不上（2026-08-21）。
 const SHOT_MEMORY = require('../scripts/shot-memory');
@@ -2005,8 +2005,14 @@ async function doRender(job) {
     const motion = readJobMotion(job);
     if (motion.length) fs.writeFileSync(mf, JSON.stringify(motion, null, 2) + '\n');
     else rmrf(mf);
-    execFileSync('node', [path.join('scripts', 'render-motion.js'), '--if-changed'],
-      { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
+    // ⚠️ 輸出一定要進 log。跑 run.js 那條路的輸出本來就是 log，只有這裡是 server
+    //    自己叫的，以前 pipe 完就丟掉 —— 於是「跳過這段」的原因在前台完全看不到，
+    //    成品只是默默沒有動態（2026-09-18 踩過）。用 spawnSync 才拿得到成功時的 stderr。
+    const r = spawnSync('node', [path.join('scripts', 'render-motion.js'), '--if-changed'],
+      { cwd: ROOT, encoding: 'utf-8', timeout: 300000 });
+    const said = [r.stdout, r.stderr].filter((s) => s && s.trim()).join('\n').trim();
+    if (said) appendLog(job, `\n${said}\n`);
+    if (r.status !== 0) throw new Error(r.error ? r.error.message : `render-motion 結束碼 ${r.status}`);
     if (motion.length) appendLog(job, `\n🎬 動態小影片 ${motion.length} 段\n`);
   } catch (e) {
     appendLog(job, `\n⚠️ 動態小影片重算失敗（不影響出片，只是這支沒有動態）：${e.message}\n`);

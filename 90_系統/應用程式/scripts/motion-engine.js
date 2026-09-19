@@ -8,7 +8,8 @@
  * 換後端不必動它們。這跟 ocr-engine.js／transcription-engine.js 是同一個模式。
  *
  * ── 開關（.env）────────────────────────────────────────────────
- *   MOTION_ENGINE 沒設      → manual（讀前台貼進來的 spec，不呼叫任何服務）
+ *   MOTION_ENGINE 沒設      → claude-cli（前台只選範圍，參數本來就要自己產）
+ *   MOTION_ENGINE=manual    → 只讀前台貼進來的 spec，不呼叫任何服務
  *   MOTION_ENGINE=claude-cli → claude -p（用**訂閱**，不需要 API key）
  *   MOTION_ENGINE=api        → 保留，尚未實作（真要做時約 US$1.5／月 200 支）
  *
@@ -106,7 +107,17 @@ const ENGINES = {
   manual: {
     label: '手動（前台貼的參數）',
     plan({ manualSpec }) {
-      return validate(manualSpec);
+      const spec = validate(manualSpec);
+      // ⚠️ 一定要講原因。manual 不呼叫任何服務，「前台只選了範圍、沒貼參數」
+      //    在這裡回 null 是正常行為，但對人來說看到的是「影片裡沒有動態」，
+      //    不講的話跟當機分不出來（2026-09-18 實際踩過：查了半小時才發現是 engine 選錯）。
+      if (!spec) {
+        console.error(manualSpec
+          ? '⚠️ manual 後端：前台貼的參數不合格，這段不做動態'
+          : '⚠️ manual 後端只吃前台貼好的參數，而這段只有選取範圍沒有參數。'
+            + '要讓它自己產生，請設 MOTION_ENGINE=claude-cli');
+      }
+      return spec;
     },
   },
 
@@ -164,7 +175,10 @@ const ENGINES = {
 };
 
 function createEngine(name) {
-  const key = name || 'manual';
+  // 預設是 claude-cli：前台只讓人「選一段文字」，參數本來就該自己產生 ——
+  // 預設 manual 的話，沒設環境變數就會靜默變成「每支都沒有動態」（2026-09-18 踩過）。
+  // manual 仍留著，給「參數自己貼、不想呼叫任何服務」的情況用。
+  const key = name || 'claude-cli';
   const engine = ENGINES[key];
   if (!engine) throw new Error(`不認得的 MOTION_ENGINE：${key}（可用：${Object.keys(ENGINES).join('／')}）`);
   return engine;
