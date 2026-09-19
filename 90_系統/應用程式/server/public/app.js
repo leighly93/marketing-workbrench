@@ -2032,6 +2032,17 @@ async function approve(job, e) {
 // ⚠️ 只有人工標的才算，沒有任何自動判斷（跟黃框同一條規則：系統不要自己加東西）。
 let EMPH = [];
 
+/**
+ * 拖曳中的「還沒放手」範圍 —— 只影響畫面，不動 EMPH／MOTION，也不存檔。
+ * 需要這個中繼變數，是因為這兩處放手時做的是**決策**而不是設定範圍
+ *（toggleEmph 要判斷取消與合併、動態要判斷「點在已選範圍內＝取消」），
+ * 中途套用會在拖曳途中反覆翻轉。配圖計畫沒這問題，它拖曳中改的是不落地的草稿。
+ * 視覺上跟配圖計畫對齊：拖曳中藍底（.sel）、放手後才變黃底（.emph）。
+ */
+let EMPH_PREVIEW = null;    // {lo, hi} 或 null
+let MOTION_PREVIEW = null;
+const inPreview = (p, i) => !!p && i >= p.lo && i <= p.hi;
+
 /** 這個字有沒有被標成重點 */
 function isEmph(i) {
   return EMPH.some((m) => i >= m.startCharIdx && i <= m.endCharIdx);
@@ -2142,8 +2153,9 @@ function drawMotion() {
   const nodes = [];
   CHARS.forEach((c) => {
     const cls = [];
-    if (covered.has(c.i)) cls.push('used');                                   // 藍底線＝已經有配圖
-    if (m && c.i >= m.startCharIdx && c.i <= m.endCharIdx) cls.push('emph');  // 黃＝這段要做動態
+    if (covered.has(c.i)) cls.push('used');                                      // 藍底線＝已經有配圖
+    if (inPreview(MOTION_PREVIEW, c.i)) cls.push('sel');                         // 藍底＝正在拖、還沒放手
+    else if (m && c.i >= m.startCharIdx && c.i <= m.endCharIdx) cls.push('emph'); // 黃＝這段要做動態
     if (c.b) cls.push('br');
     nodes.push(el('i', { 'data-mo': c.i, class: cls.join(' ') }, c.c));
     if (c.p) nodes.push(el('br', { class: 'para' }));
@@ -2218,16 +2230,22 @@ async function saveMotion() {
     const i = idxOf(ev.target);
     if (i == null) return;
     dragging = true; anchor = i; last = i;
+    MOTION_PREVIEW = { lo: i, hi: i };   // 點下去就上色，不等放手
+    drawMotion();
     ev.preventDefault();
   });
   document.addEventListener('mousemove', (ev) => {
     if (!dragging) return;
     const i = idxOf(ev.target);
-    if (i != null) last = i;
+    if (i == null || i === last) return;              // 同一格不重畫
+    last = i;
+    MOTION_PREVIEW = { lo: Math.min(anchor, i), hi: Math.max(anchor, i) };
+    drawMotion();
   });
   document.addEventListener('mouseup', () => {
     if (!dragging) return;
     dragging = false;
+    MOTION_PREVIEW = null;               // 預覽讓位給下面真正套用的結果
     const lo = Math.min(anchor, last);
     const hi = Math.max(anchor, last);
     const m = MOTION[0];
@@ -2274,8 +2292,9 @@ function drawEmph() {
   const nodes = [];
   CHARS.forEach((c) => {
     const cls = [];
-    if (covered.has(c.i)) cls.push('used');   // 藍底線＝這裡已經有圖
-    if (isEmph(c.i)) cls.push('emph');        // 黃＝標成重點詞
+    if (covered.has(c.i)) cls.push('used');          // 藍底線＝這裡已經有圖
+    if (inPreview(EMPH_PREVIEW, c.i)) cls.push('sel');  // 藍底＝正在拖、還沒放手
+    else if (isEmph(c.i)) cls.push('emph');          // 黃＝標成重點詞
     if (c.b) cls.push('br');
     nodes.push(el('i', { 'data-e': c.i, class: cls.join(' ') }, c.c));
     if (c.p) nodes.push(el('br', { class: 'para' }));
@@ -2297,16 +2316,22 @@ function drawEmph() {
     const i = idxOf(ev.target);
     if (i == null) return;
     dragging = true; anchor = i; last = i;
+    EMPH_PREVIEW = { lo: i, hi: i };     // 點下去就上色，不等放手
+    drawEmph();
     ev.preventDefault();
   });
   document.addEventListener('mousemove', (ev) => {
     if (!dragging) return;
     const i = idxOf(ev.target);
-    if (i != null) last = i;
+    if (i == null || i === last) return;              // 同一格不重畫
+    last = i;
+    EMPH_PREVIEW = { lo: Math.min(anchor, i), hi: Math.max(anchor, i) };
+    drawEmph();
   });
   document.addEventListener('mouseup', () => {
     if (!dragging) return;
     dragging = false;
+    EMPH_PREVIEW = null;                 // 預覽讓位給下面真正套用的結果
     toggleEmph(anchor, last);
     drawEmph();
     saveEmph();
