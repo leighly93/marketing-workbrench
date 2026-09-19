@@ -158,6 +158,35 @@ const 跑 = (dir, ...args) =>
   execFileSync('node', [path.join(dir, 'scripts/render-motion.js'), ...args], { encoding: 'utf-8' });
 const 產出 = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'src/MotionClip/motion.generated.json'), 'utf-8'));
 
+test('產出檔被刪掉也要跑得起來 —— Remotion 是靜態 import 它的', () => {
+  // 2026-09-19 實際出片踩到：清工作區時把 motion.generated.json **刪掉**（而不是清空），
+  // 而 motion-timeline.ts 是 `import generatedMotion from './motion.generated.json'`。
+  // 檔案不在，Remotion 連 bundle 都過不了 —— 而 render-motion 第一步就是 render。
+  // 錯誤訊息是「Can't resolve './motion.generated.json'」，看起來像專案壞了，
+  // 其實只差一個空陣列。所以這支程式要自己補上，不能假設有人先放好。
+  const dir = 隔離環境('外資今天買超八百七十億而且是連續第二天');
+  fs.writeFileSync(path.join(dir, 'public/motion.json'), JSON.stringify([{
+    startCharIdx: 0,
+    endCharIdx: 10,
+    spec: {
+      template: 'list',
+      kicker: '今日盤勢',
+      title: '外資|買超',
+      items: [{ text: '買超 870 億', at: '八百七十億' }, { text: '連 2 日', at: '連續第二天' }],
+    },
+  }]));
+  const out = path.join(dir, 'src/MotionClip/motion.generated.json');
+  fs.rmSync(out, { force: true });
+  assert.equal(fs.existsSync(out), false, '前提：這個檔一開始不存在');
+
+  // manual 後端＝用上面貼好的 spec，不呼叫 claude；dry-run＝不真的 render。
+  execFileSync('node', [path.join(dir, 'scripts/render-motion.js'), '--dry-run'],
+    { encoding: 'utf-8', env: { ...process.env, MOTION_ENGINE: 'manual' } });
+
+  assert.ok(fs.existsSync(out), 'render 之前就該把它補出來，否則 bundle 會失敗');
+  assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf-8')), [], '補出來的是空陣列');
+});
+
 test('沒有參數檔：寫出空陣列，不是留著上一支的動態', () => {
   // 這是最常走的路徑 —— 大部分影片沒有動態。留著舊內容的話，
   // 下一支會莫名其妙帶上別支的動態畫面。

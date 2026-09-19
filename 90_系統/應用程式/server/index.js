@@ -416,8 +416,10 @@ function clearWorkspaceInputs() {
   // ⚠️ 動態小影片的產出同理（2026-09-18）。render-motion 正常跑完會自己覆蓋成 []，
   //    但 run.js 若在**轉字幕那一步就失敗**根本走不到它，上一支的動態就留在這裡，
   //    下一支 render 時會貼上別支影片的畫面。指紋檔一起清，免得 --if-changed 誤判成「沒變」。
-  rmrf(path.join(ROOT, MOTION_FILE));
-  rmrf(path.join(ROOT, MOTION_SIG_FILE));
+  //    ⚠️ 這個檔要「清空」不能「刪掉」：motion-timeline.ts 靜態 import 它，
+  //       檔案不在的話 Remotion 連 bundle 都過不了，render-motion 一開跑就炸。
+  try { fs.writeFileSync(path.join(ROOT, MOTION_FILE), '[]\n'); } catch (_) {}
+  rmrf(path.join(ROOT, MOTION_SIG_FILE));   // 指紋檔沒有人 import，刪掉即可
   const pub = path.join(ROOT, 'public');
   if (!fs.existsSync(pub)) return;
   for (const n of fs.readdirSync(pub)) {

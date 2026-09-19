@@ -171,6 +171,13 @@ function renderOne(o, spec, durationSec, outPath) {
 }
 
 function main() {
+  // ⚠️ 第一件事：確保 motion.generated.json 存在。
+  //    motion-timeline.ts 是**靜態 import** 它的，檔案不在 Remotion 連 bundle 都過不了 ——
+  //    而這支程式第一步就是 render。清工作區時若把它刪掉（而不是清空），
+  //    每次出片都會在這裡炸掉，而且錯誤訊息是「Can't resolve './motion.generated.json'」，
+  //    看起來像專案壞了，其實只是少一個空陣列（2026-09-19 實際出片踩到）。
+  if (!fs.existsSync(OUT_JSON)) fs.writeFileSync(OUT_JSON, '[]\n');
+
   if (!fs.existsSync(INPUT)) {
     log(`ℹ️ 沒有 ${path.relative(ROOT, INPUT)}，這支影片不做動態`);
     fs.writeFileSync(OUT_JSON, '[]\n');
