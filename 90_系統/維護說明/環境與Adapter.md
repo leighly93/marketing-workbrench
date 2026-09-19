@@ -75,6 +75,28 @@ whisper 分 30 秒 window 解碼，會在某些切點把一句話的結束時間
 
 [引擎介面測試](../測試/引擎介面.test.js) 驗證 CPU／執行緒參數、時間轉換、控制 token、失敗保護及 Node 版本一致性。[字幕時間軸測試](../測試/字幕時間軸.test.js) 驗證墊靜音的時間戳還原、三種時間軸判定與重轉階梯。一般 verify 不執行模型；本機推論以獨立合成音訊驗證，不重跑正式工作。
 
+## 動態小影片 Adapter
+
+入口：[motion-engine.js](../應用程式/scripts/motion-engine.js)。前台只讓人在腳本上選一段文字，卡片參數由後端產生；[render-motion.js](../應用程式/scripts/render-motion.js) 只呼叫 `plan()`，不自己碰任何供應者。
+
+- `MOTION_ENGINE` 切換後端：`claude-cli`（預設，跑 `claude -p`，用訂閱不需要 API key）／`manual`（只吃前台貼好的 spec，不呼叫任何服務）／`api`（保留，未實作）。
+- 驗證**只拒絕不修正**：template 不在三種之內、list 少於兩項、contrast 沒有否定項，一律回 `null`。回 `null` 等於「這段不做動態」，呼叫端必須能接受 —— 與其送半對的參數進 render，不如不做。
+- 失敗一律降級成「這支沒有動態」，不擋出片。失敗兩次才放棄（`ENOENT` 不重試）。
+
+### 背景服務要有 CLAUDE_CODE_OAUTH_TOKEN
+
+`claude` 的憑證放在 macOS login keychain，**出片服務讀不到**，只會得到 `Not logged in · Please run /login`，於是每支影片都靜默沒有動態。
+
+- 解法是 `.env` 的 `CLAUDE_CODE_OAUTH_TOKEN`，由 `claude setup-token` 產生（吃訂閱，不是 API key，效期一年）。`server/start.js` 用 dotenv 載進 `process.env`，`execFileSync` 與 spawn 出去的 `run.js` 都繼承，因此與 keychain、security session、服務啟動方式都無關。
+- **在終端互動使用時不需要它**，所以「自己跑得動」不能當成「服務跑得動」的證據。要驗證就清掉環境裡的 `CLAUDE*`／`ANTHROPIC*` 再跑：`env -i HOME=… PATH=… CLAUDE_CODE_OAUTH_TOKEN=… claude -p …` 應回 `is_error=false`。
+- `setup-token` 印出的 token 在終端會折行，滑鼠拖選容易只抓到半截；完整長度是 108 字元、`sk-ant-oat01-` 開頭，長度不對就會是 401。
+
+### 失敗要看得到原因
+
+`--output-format json` 的 claude 失敗（用量上限、登入過期）是把原因寫在 **stdout** 的 JSON 裡，stderr 留空、1 秒內非零退出。只看 stderr 的話，只會拿到 Node 的 `Command failed: claude -p …` 整條命令列，看起來像旗標有問題，其實無關。`describeFailure()` 按 stdout JSON → stdout 純文字 → stderr → signal → 結束碼的順序取訊息，服務端呼叫的輸出也一律寫進工作 log —— 這條路沒有人在看終端。
+
+[動態小影片測試](../測試/動態小影片.test.js) 驗證參數契約、時間定位與失敗降級；不呼叫 `claude`。
+
 ## 參考
 
 - [Docker：固定基底 digest 與建置實務](https://docs.docker.com/build/building/best-practices/)
