@@ -136,8 +136,14 @@ const Shell: React.FC<{
   const bottom = safeBottom ?? height;
   const contentH = Math.max(1, bottom - top);
   const scale = Math.min(width, contentH) / 1080;
-  const designW = width / scale;
-  const designH = contentH / scale;
+  // 內容區是**安全區裡的最大正方形**，水平置中。
+  // ⚠️ designW 要固定 1080，不能用 width / scale：那會讓橫式的設計空間變成 1386 寬
+  //    （直式是 1080），同一套佈局被放進更寬的框、左對齊就整塊偏左，右側空一大塊
+  //    （2026-09-18 使用者指出）。固定 1080 之後兩版真的是同一套排版，只是橫式整塊右移。
+  const boxW = Math.min(width, contentH);
+  const designW = boxW / scale;          // 恆等於 1080
+  const designH = contentH / scale;      // 直式比 1080 高一點，讓內容用滿垂直空間
+  const left = (width - boxW) / 2;
   // 頭尾淡出：獨立 mp4 會被貼進主片，切換點要柔一點
   const fade = interpolate(
     frame,
@@ -175,7 +181,7 @@ const Shell: React.FC<{
       <div
         style={{
           position: 'absolute',
-          left: 0,
+          left,
           top,
           width: designW,
           height: designH,
