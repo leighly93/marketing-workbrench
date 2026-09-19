@@ -389,3 +389,37 @@ test('伺服器：queued 階段不補寫 ROOT —— 那會污染別支正在跑
   assert.equal(fs.existsSync(path.join(appPath(root), 'public', 'motion.json')), false,
     '只有 preparing 才代表這支正佔著 ROOT');
 });
+
+// ── 被 src/ 靜態 import 的產出檔，一律不准刪 ──────────────────────
+// 2026-09-19 同一個症頭連續踩兩次（motion.generated.json、emphasis.generated.json）：
+// 清工作區把檔案「刪掉」而不是「清空」，Remotion bundle 直接失敗，
+// 錯誤訊息長得像專案壞了。與其每次補一個個案，不如讓測試自己去掃 ——
+// 以後新增任何一個被 import 的 generated 檔，忘了這件事就會在這裡被擋下來。
+test('清工作區只能清空、不能刪掉被 src/ 靜態 import 的 generated 檔', () => {
+  const srcDir = path.join(app, 'src');
+  const imported = new Set();
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(full); continue; }
+      if (!/\.(ts|tsx)$/.test(e.name)) continue;      // .fuse_hidden 之類的殘留不算
+      const code = fs.readFileSync(full, 'utf-8');
+      for (const m of code.matchAll(/from\s+'(\.[^']*\.generated\.json)'/g)) {
+        imported.add(path.relative(app, path.resolve(path.dirname(full), m[1])));
+      }
+    }
+  })(srcDir);
+  assert.ok(imported.size >= 2, `應該掃得到被 import 的產出檔，實際 ${imported.size} 個`);
+
+  const server = fs.readFileSync(path.join(app, 'server/index.js'), 'utf-8');
+  // server 用常數指路徑，先把常數解出來再比對
+  const consts = new Map();
+  for (const m of server.matchAll(/^const ([A-Z_]+FILE) = '([^']+)';/gm)) consts.set(m[1], m[2]);
+  const 被刪掉的 = [];
+  for (const m of server.matchAll(/rmrf\(path\.join\(ROOT,\s*([A-Z_]+FILE)\)\)/g)) {
+    const target = consts.get(m[1]);
+    if (target && imported.has(target)) 被刪掉的.push(`${m[1]}（${target}）`);
+  }
+  assert.deepEqual(被刪掉的, [],
+    '這些檔被 src/ 靜態 import，rmrf 掉會讓 Remotion bundle 失敗；改成寫入空值');
+});

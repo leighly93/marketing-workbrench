@@ -412,7 +412,9 @@ function clearWorkspaceInputs() {
   //    跟「撞名截圖用到上一支的尺寸」同一類的殘留。
   //    restoreWorkspace 也走這支，清完才從快照還原，所以重跑舊工作照樣拿回自己的標記。
   // ⚠️ 要放在下面那個 early return **之前** —— 它清的是 public，跟這個檔沒關係。
-  rmrf(path.join(ROOT, EMPHASIS_FILE));
+  //    ⚠️ 清空不刪除：Subtitles.tsx 靜態 import 它，檔案不在 Remotion 就 bundle 不了
+  //       （跟下面 motion.generated.json 同一個道理，2026-09-19 兩個都踩過）。
+  writeEmphasis([]);
   // ⚠️ 動態小影片的產出同理（2026-09-18）。render-motion 正常跑完會自己覆蓋成 []，
   //    但 run.js 若在**轉字幕那一步就失敗**根本走不到它，上一支的動態就留在這裡，
   //    下一支 render 時會貼上別支影片的畫面。指紋檔一起清，免得 --if-changed 誤判成「沒變」。

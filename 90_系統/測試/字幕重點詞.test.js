@@ -83,7 +83,11 @@ test('換下一支工作時，上一支的重點詞要被清掉（它不會被�
   // doPrepare 準備下一支工作時走的就是這一支
   api.clearWorkspaceInputs();
 
-  assert.equal(fs.existsSync(path.join(app, EMPHASIS_FILE)), false,
+  // 「清掉」＝內容清空，**不是**把檔案刪掉：Subtitles.tsx 是靜態 import 它的，
+  // 檔案不在的話 Remotion 連 bundle 都過不了（2026-09-19 出片實際炸在這裡）。
+  assert.equal(fs.existsSync(path.join(app, EMPHASIS_FILE)), true,
+    '檔案本身要留著，否則 Remotion bundle 會失敗');
+  assert.deepEqual(readMarks(root), [],
     '重點詞沒清掉的話，下一支會拿別份腳本的字元索引去標，成品會有無關的字變黃');
   assert.equal(fs.existsSync(path.join(app, 'src/DapanXiaobao/dapan-shots.generated.json')), true,
     '會被 auto-shot 重算的檔案不要動它');
