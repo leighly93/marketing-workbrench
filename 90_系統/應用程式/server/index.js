@@ -2874,7 +2874,9 @@ const server = http.createServer(async (req, res) => {
       job.status = 'queued';
       job.files = inputs;
       saveJob(job);
-      tick();
+      // setImmediate 不是 tick()，理由同 /approve —— doPrepare 也是同步複製完輸入檔
+      // 才交出 event loop，回應要先出去。
+      setImmediate(tick);
       return send(res, 200, { job: publicJob(job, admin) });
     }
 
@@ -3008,7 +3010,9 @@ const server = http.createServer(async (req, res) => {
         + '   不會重新呼叫 HeyGen／MiniMax，也不會重新扣點數。\n'
         + `   帶過來的檔案：${job.files.join('、')}\n`
         + '   直接開始準備（轉字幕、排配圖計畫），跑完會停在「待確認」等你看配圖計畫。\n');
-      tick();
+      // setImmediate 不是 tick()，理由同 /approve —— doPrepare 也是同步複製完輸入檔
+      // 才交出 event loop，回應要先出去。
+      setImmediate(tick);
       return send(res, 200, { job: publicJob(job, admin) });
     }
 
@@ -3196,7 +3200,14 @@ const server = http.createServer(async (req, res) => {
       }
       job.status = 'approved';
       saveJob(job);
-      tick();
+      // ⚠️ 這裡用 setImmediate，不要直接 tick() —— tick() 會同步一路跑到 doRender 的
+      //    第一個 await 為止（restoreWorkspace 複製快照、render-motion 的 spawnSync…），
+      //    那段期間整個 event loop 都停著，這個 200 也發不出去。
+      //    2026-09-21 實際踩到：一段 17.9 秒的動態讓伺服器凍結 32 秒 —— 同事按
+      //    「確認，開始出片」完全沒反應（連 3 秒輪詢都停了），又按了兩次；解凍後那兩次
+      //    才被處理，那時狀態已是 approved，於是跳出「這支工作現在不是待確認狀態」。
+      //    先把回應送出去，出片工作下一輪 tick 再啟動。
+      setImmediate(tick);
       return send(res, 200, { job: publicJob(job, admin) });
     }
 

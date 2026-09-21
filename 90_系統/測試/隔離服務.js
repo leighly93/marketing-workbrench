@@ -72,6 +72,8 @@ function loadServer(root, options = {}) {
     '../../paths': localRequire('../../paths'),
     '../../工作儲存': localRequire('../../工作儲存'),
   };
+  // setImmediate 排進來的工作（見下面 context 那段）
+  const immediates = [];
   const context = {
     __dirname: applicationPath(root, 'server'),
     __filename: applicationPath(root, 'server/index.js'),
@@ -83,6 +85,10 @@ function loadServer(root, options = {}) {
     process: { env: {}, on() {}, cwd: () => applicationPath(root), exit: blocked, kill: blocked },
     Buffer, URL, console,
     setTimeout: options.idleTimers ? () => 0 : blocked,
+    // setImmediate 不是計時器，是「回應先出去、出片工作下一輪才啟動」（見 index.js 的
+    // /approve）。排進佇列、等回應寫完才跑，順序就跟正式服務一樣；同步跑掉的話這裡測到的
+    // 會是它原本那個「同步 tick() 把回應擋住」的舊行為。
+    setImmediate: (fn) => { immediates.push(fn); return 0; },
     setInterval: options.idleTimers ? () => 0 : blocked,
   };
   const operations = vm.runInNewContext(
@@ -103,6 +109,8 @@ function loadServer(root, options = {}) {
     req.emit('end');
     await pending;
     await finished;
+    // 回應寫完才輪到 setImmediate 排的工作（tick）—— 測試讀到的狀態跟正式服務一致。
+    while (immediates.length) immediates.shift()();
     assert.ok(status, '路由必須完成回應');
     const bytes = Buffer.concat(chunks);
     const isJson = (responseHeaders['Content-Type'] || '').startsWith('application/json');
