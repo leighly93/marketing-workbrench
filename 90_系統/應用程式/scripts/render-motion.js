@@ -69,6 +69,8 @@ const argOf = (k, d) => {
 };
 const INPUT = path.resolve(ROOT, argOf('input', 'public/motion.json'));
 const ONLY = argOf('only', '');
+/** 哪個版型。決定要出幾支、安全區要往下讓多少（見 TEMPLATE_MOTION）。 */
+const TEMPLATE = argOf('template', '');
 /** 只算時間、不 render。驗證「每一項落在第幾秒」時用，幾毫秒就跑完。 */
 const DRY = args.includes('--dry-run');
 /**
@@ -77,13 +79,43 @@ const DRY = args.includes('--dry-run');
  */
 const IF_CHANGED = args.includes('--if-changed');
 
-/** 兩個版型的畫布與安全區。要接盤中焦點／美股焦點時在這裡加一筆即可。 */
+/** 兩種畫布與它們的預設安全區。 */
 const ORIENTATIONS = {
   p: { key: 'p', label: '直式', width: 1080, height: 1920, safeTop: 310, safeBottom: 1440,
        composition: 'MotionClipListPortrait' },
   l: { key: 'l', label: '橫式', width: 1178, height: 1080, safeTop: 0, safeBottom: 918,
        composition: 'MotionClipListLandscape' },
 };
+
+/**
+ * 哪個版型出哪幾支、安全區要不要調。
+ *
+ * 只有大盤小報有橫式輸出，其餘版型都只出直式 —— 硬產一支橫式是白花十秒、白佔 1.3MB。
+ *
+ * safeTop 直接沿用各 composition 自己那個量過的值（招牌實心到哪），
+ * 動態要避開的東西跟截圖黃框完全一樣，沒有理由另立一套數字：
+ *   焦點股 y267／三大法人 y278／盤中焦點 y291／大盤小報 y303／美股焦點 y307
+ * 只有美股焦點的膠囊比較高，所以它的 safeTop 是 325 而不是 310。
+ * safeBottom 全部一樣：直式版型共用 Subtitles.tsx，字幕一律從 y1440 起。
+ */
+const TEMPLATE_MOTION = {
+  dapan: { p: {}, l: {} },
+  midday: { p: {} },
+  usstock: { p: { safeTop: 325 } },
+};
+
+/**
+ * 這個版型要出哪幾支。不認得的版型只出直式 —— 橫式是大盤小報獨有的，
+ * 猜錯的代價不對稱：少一支橫式只是沒有，多一支是每次出片都白等。
+ */
+function orientationsFor(template) {
+  const conf = TEMPLATE_MOTION[template];
+  if (!conf) {
+    if (template) log(`ℹ️ 版型 ${template} 還沒登記動態設定，只出直式（要改在 TEMPLATE_MOTION 加一筆）`);
+    return [ORIENTATIONS.p];
+  }
+  return Object.entries(conf).map(([key, over]) => ({ ...ORIENTATIONS[key], ...over }));
+}
 
 const log = (m) => console.log(m);
 /** 丟例外而不是直接 exit —— 這樣純計算函式可以被測試 require 進來驗證。 */
@@ -230,7 +262,7 @@ function main() {
       log(`   ${i + 1}. ${it.text}　→ 第 ${it.atSec} 秒進場${it._fallback ? '（等距，比對不到）' : ''}`));
 
     const rec = { startCharIdx: range.startCharIdx, endCharIdx: range.endCharIdx, _phrase: phrase };
-    for (const o of Object.values(ORIENTATIONS)) {
+    for (const o of orientationsFor(TEMPLATE)) {
       if (ONLY && ONLY !== o.key) continue;
       const file = `motion-${n}-${o.key}.mp4`;
       if (DRY) {
@@ -265,4 +297,4 @@ if (require.main === module) {
 }
 
 // 純計算的部分獨立出來給測試用（不碰檔案系統、不呼叫 remotion）
-module.exports = { resolveRange, resolveItemTimes, keywordOf, ORIENTATIONS };
+module.exports = { orientationsFor, TEMPLATE_MOTION, resolveRange, resolveItemTimes, keywordOf, ORIENTATIONS };

@@ -1651,7 +1651,7 @@ function renderMotionClips() {
   } catch (e) { /* 清不掉不是致命的，下面照跑 */ }
 
   try {
-    run("npm run render-motion");
+    run(`npm run render-motion -- --template=${TEMPLATE}`);
   } catch (e) {
     log("⚠️ 動態小影片生成失敗（不影響出片，只是這支沒有動態）：" + e.message);
     try {

@@ -16,7 +16,8 @@ const { applicationPath } = require('../paths');
 
 const repository = path.resolve(__dirname, '../..');
 const app = applicationPath(repository);
-const { resolveRange, resolveItemTimes, keywordOf, ORIENTATIONS } =
+const { resolveRange, resolveItemTimes, keywordOf, ORIENTATIONS,
+        orientationsFor, TEMPLATE_MOTION } =
   require(path.join(app, 'scripts/render-motion.js'));
 
 /** 造一份好算的字幕：每個字剛好 0.2 秒，第 n 個字從 n×0.2 秒開始。 */
@@ -154,8 +155,12 @@ function 隔離環境(字幕文字) {
     JSON.stringify({ _scriptText: 字幕文字 || '', _scriptCharTimes: times }));
   return dir;
 }
+// ⚠️ MOTION_ENGINE=manual：測試只驗自己的邏輯，不打外部服務。
+//    預設後端在 2026-09-19 改成 claude-cli，不寫死的話這裡每跑一次就叫一次 claude
+//    —— 慢（實測 5.6 秒）、要網路、還吃訂閱額度。要測 engine 本身就自己指定。
 const 跑 = (dir, ...args) =>
-  execFileSync('node', [path.join(dir, 'scripts/render-motion.js'), ...args], { encoding: 'utf-8' });
+  execFileSync('node', [path.join(dir, 'scripts/render-motion.js'), ...args],
+    { encoding: 'utf-8', env: { ...process.env, MOTION_ENGINE: 'manual' } });
 const 產出 = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'src/MotionClip/motion.generated.json'), 'utf-8'));
 
 test('產出檔被刪掉也要跑得起來 —— Remotion 是靜態 import 它的', () => {
@@ -213,7 +218,8 @@ test('命名規則：public 用 ASCII、素材用看得懂的中文名', () => {
     spec: { template: 'list', items: [{ text: '法人賣多少', at: '法人賣多少' },
                                       { text: '融資洗掉沒', at: '融資被洗掉' }] },
   }]));
-  const out = 跑(dir, '--dry-run');
+  // 指定 dapan：只有它有橫式，不指定的話只會出直式（見 orientationsFor）
+  const out = 跑(dir, '--dry-run', '--template=dapan');
   assert.match(out, /public\/motion-1-p\.mp4/, '直式 public 檔名');
   assert.match(out, /public\/motion-1-l\.mp4/, '橫式 public 檔名');
 });
@@ -388,6 +394,57 @@ test('伺服器：queued 階段不補寫 ROOT —— 那會污染別支正在跑
   await request('PUT', `/api/jobs/${id}/motion`, { entries: [{ startCharIdx: 1, endCharIdx: 8 }] });
   assert.equal(fs.existsSync(path.join(appPath(root), 'public', 'motion.json')), false,
     '只有 preparing 才代表這支正佔著 ROOT');
+});
+
+// ── 接到其他版型（2026-09-21）────────────────────────────────
+// 只有大盤小報有橫式輸出，其餘版型都只出直式。安全區沿用各 composition 自己那個
+// 量過的 safeTop（招牌實心到哪）—— 動態要避開的東西跟截圖黃框完全一樣。
+
+/** 版型代號 → 直式 composition 的檔案 */
+const 版型檔案 = {
+  dapan: 'src/DapanXiaobao/DapanComposition.tsx',
+  midday: 'src/MiddayFocus/MiddayFocusComposition.tsx',
+  usstock: 'src/UsStock/UsStockComposition.tsx',
+};
+
+test('只有大盤小報出橫式，其他版型只出直式', () => {
+  assert.deepEqual(orientationsFor('dapan').map((o) => o.key), ['p', 'l']);
+  assert.deepEqual(orientationsFor('midday').map((o) => o.key), ['p']);
+  assert.deepEqual(orientationsFor('usstock').map((o) => o.key), ['p']);
+});
+
+test('不認得的版型只出直式 —— 猜錯的代價不對稱', () => {
+  // 少一支橫式只是沒有；多一支是每次出片都白等十秒、白佔 1.3MB。
+  assert.deepEqual(orientationsFor('還沒接的版型').map((o) => o.key), ['p']);
+  assert.deepEqual(orientationsFor('').map((o) => o.key), ['p']);
+});
+
+test('美股焦點的招牌比較高，安全區要跟著讓', () => {
+  assert.equal(orientationsFor('usstock')[0].safeTop, 325);
+  assert.equal(orientationsFor('midday')[0].safeTop, 310);
+});
+
+test('動態的安全區要跟該版型 composition 自己的 safeTop 一致', () => {
+  // 兩邊各寫一份數字，改了一邊忘了另一邊，動態就會壓到招牌或字幕。
+  // composition 的 safeTop 是量出來的（招牌實心到 y幾），動態沒有理由另立一套。
+  for (const [代號, 檔] of Object.entries(版型檔案)) {
+    const code = fs.readFileSync(path.join(app, 檔), 'utf-8');
+    const m = code.match(/safeTop=\{(\d+)\}/);
+    assert.ok(m, `${檔} 找不到 safeTop`);
+    assert.equal(orientationsFor(代號)[0].safeTop, Number(m[1]),
+      `${代號}：動態的 safeTop 跟 composition 的不一致`);
+  }
+});
+
+test('登記了動態的版型，composition 就要真的貼上去', () => {
+  // 反過來也要成立：TEMPLATE_MOTION 有登記卻沒掛 MotionOverlay 的話，
+  // 每次出片都會 render 出 mp4，然後沒有任何人用它 —— 白花十幾秒而且完全沒有錯誤訊息。
+  for (const 代號 of Object.keys(TEMPLATE_MOTION)) {
+    const 檔 = 版型檔案[代號];
+    assert.ok(檔, `TEMPLATE_MOTION 有 ${代號}，但測試的版型檔案表沒有 —— 補一筆`);
+    const code = fs.readFileSync(path.join(app, 檔), 'utf-8');
+    assert.match(code, /<MotionOverlay/, `${代號} 登記了動態卻沒有貼上去`);
+  }
 });
 
 // ── 動態素材落地（2026-09-21）────────────────────────────────

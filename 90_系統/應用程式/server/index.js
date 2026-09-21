@@ -2060,7 +2060,10 @@ async function doRender(job) {
     // ⚠️ 輸出一定要進 log。跑 run.js 那條路的輸出本來就是 log，只有這裡是 server
     //    自己叫的，以前 pipe 完就丟掉 —— 於是「跳過這段」的原因在前台完全看不到，
     //    成品只是默默沒有動態（2026-09-18 踩過）。用 spawnSync 才拿得到成功時的 stderr。
-    const r = spawnSync('node', [path.join('scripts', 'render-motion.js'), '--if-changed'],
+    // ⚠️ 版型一定要傳：它決定出幾支（只有大盤小報有橫式）與安全區。
+    //    不傳的話這一關會退回「只出直式」，大盤小報的橫式就沒有動態。
+    const r = spawnSync('node',
+      [path.join('scripts', 'render-motion.js'), '--if-changed', `--template=${job.template}`],
       { cwd: ROOT, encoding: 'utf-8', timeout: 300000 });
     const said = [r.stdout, r.stderr].filter((s) => s && s.trim()).join('\n').trim();
     if (said) appendLog(job, `\n${said}\n`);
