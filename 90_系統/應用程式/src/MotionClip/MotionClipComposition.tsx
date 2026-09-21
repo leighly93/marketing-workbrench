@@ -74,11 +74,17 @@ function buildBeats(steps: number, totalFrames: number, fps: number): number[] {
  * 視覺寬度用「中文 1 格、半形 0.55 格」估。中文字寬約等於字級，這個估法夠準，
  * 不需要真的去量文字 —— Remotion 裡量文字要繞一大圈，而且量了也只是算同一件事。
  *
- * @param avail  這一項的文字可以用多寬（已經扣掉圖示、gap、padding）
+ * ⚠️ 不設「不小於原本字級」這種下限。一開始寫成只放大不縮小（下限＝原本的 64／66），
+ *    結果長文字在加了外框、可用寬變窄之後，硬撐原尺寸**反而折行**
+ *    （「三大法人同步站在買方這邊」12 字：66px×12＝792px，可用只有 746px）。
+ *    放不下就該縮，這才是自適應的意思。只保留一個看得清楚的底線。
+ *
+ * @param avail  這一項的文字可以用多寬（已經扣掉圖示、gap、padding、外框）
  * @param texts  同一組項目的所有文字（取最長的那個當基準，各項才會一樣大）
- * @param base   現行字級，也是下限 —— 只放大不縮小，免得動到既有版面
+ * @param base   沒有文字可算時的預設字級
  * @param max    上限
  */
+const ITEM_FONT_MIN = 44;
 function fitFontSize(avail: number, texts: string[], base: number, max: number): number {
   const widest = Math.max(
     1,
@@ -87,7 +93,8 @@ function fitFontSize(avail: number, texts: string[], base: number, max: number):
   // ⚠️ 留 3% 餘裕。實測上限開到 104 時「連2日買力道放大」就折成兩行了 ——
   //    算出來是 785px、可用 782px，差 3px。字寬是估的、字型也不保證每個字剛好一格，
   //    貼著邊界算必然會有折行的那一天，而折行在成品裡很難看。
-  return Math.round(Math.min(max, Math.max(base, (avail * 0.97) / widest)));
+  if (!texts.some((s) => s)) return base;
+  return Math.round(Math.max(ITEM_FONT_MIN, Math.min(max, (avail * 0.97) / widest)));
 }
 
 /**
@@ -406,18 +413,34 @@ const Contrast: React.FC<{ spec: ContrastSpec; beats: number[] }> = ({ spec, bea
 // ── ② 編號條列型：逐項對齊旁白 ──────────────────────────────
 const Bullets: React.FC<{ spec: ListSpec; beats: number[] }> = ({ spec, beats }) => {
   const { fps } = useVideoConfig();
-  // 文字可用寬 = 設計寬 1080 − 左右 pad − 編號徽章(96) − gap(30)
+  // 文字可用寬 = 設計寬 1080 − 左右 pad − 卡片 padding(28×2) − 外框(3×2) − 編號徽章(96) − gap(28)
   const itemFont = fitFontSize(
-    1080 - MC.pad * 2 - 96 - 30, spec.items.slice(0, 5).map((i) => i.text), 66, ITEM_FONT_MAX);
+    1080 - MC.pad * 2 - 56 - 6 - 96 - 28, spec.items.slice(0, 5).map((i) => i.text), 66, ITEM_FONT_MAX);
   return (
-    <>
+    // ⚠️ 包一層：整組變成外層 space-evenly 眼中的**單一** flex item，於是它會被置中，
+    //    項目之間的距離由這裡的 gap 決定。不包的話每一項都是 flex item，
+    //    space-evenly 會把它們拉開到整個主體區，兩項的時候中間空一大塊、下面又空一塊
+    //    （2026-09-21 使用者：「上下不要分這麼開」）。
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 30 }}>
       {spec.items.slice(0, 5).map((it, i) => {
         // atSec 是產線用旁白時間軸算出來的：唸到這一項時它才滑進來。
         // 沒有就退回 beats 的等距節奏（manual 後端貼參數時通常沒有）。
         const at = typeof it.atSec === 'number' ? it.atSec * fps : beats[2 + i] ?? 0;
         return (
           <Enter key={i} at={at} dy={0}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 30 }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 28,
+                // 給每一項自己的框，不然兩行白字掛在大片背景上很單薄
+                //（2026-09-21 使用者：「以為兩點會有各自的外框」）
+                background: 'rgba(255,255,255,0.07)',
+                border: `3px solid rgba(255,216,77,0.55)`,
+                borderRadius: 20,
+                padding: '20px 28px',
+              }}
+            >
               <Pop at={at}>
                 <div
                   style={{
@@ -444,7 +467,7 @@ const Bullets: React.FC<{ spec: ListSpec; beats: number[] }> = ({ spec, beats })
           </Enter>
         );
       })}
-    </>
+    </div>
   );
 };
 
