@@ -121,6 +121,35 @@ const log = (m) => console.log(m);
 /** 丟例外而不是直接 exit —— 這樣純計算函式可以被測試 require 進來驗證。 */
 const die = (m) => { throw new Error(m); };
 
+/**
+ * 講者影片有多長。動態的時間軸就是這支影片的時間軸（_scriptCharTimes 是從它的音訊算的），
+ * 所以「延續到最後」就是延續到這個秒數。讀不到就回 0＝不做延續（寧可維持原行為）。
+ */
+function heygenDurationSec() {
+  try {
+    const f = path.join(ROOT, 'src', 'video-meta.json');
+    const v = JSON.parse(fs.readFileSync(f, 'utf-8'));
+    return Number(v.heygenDurationSec) || 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+/**
+ * 這段動態是不是「做在結尾」—— 拖到腳本最後就算。
+ *
+ * 2026-09-21 使用者定案：做在結尾的話不要淡出回講者，直接延續到影片結束
+ *（本來是閃一下講者然後就沒了，很突兀）。**剩幾秒都延續**，不設上限。
+ *
+ * 容忍最後幾個字是因為拖選很難剛好停在最後一個字上（標點、尾字常會漏掉）。
+ * 反過來說，刻意留一段沒標到的旁白就不會延續 —— 這是使用者可以控制的：
+ * 拖到底＝延續到片尾，留一點＝結尾還是回講者。
+ */
+const TAIL_TOLERANCE_CHARS = 5;
+function endsAtScriptTail(range, subs) {
+  return range.endCharIdx >= subs.times.length - 1 - TAIL_TOLERANCE_CHARS;
+}
+
 function loadSubtitles() {
   if (!fs.existsSync(SUBS)) die(`找不到 ${path.relative(ROOT, SUBS)}（要先跑 transcribe ＋ correct-subtitles）`);
   const d = JSON.parse(fs.readFileSync(SUBS, 'utf-8'));
@@ -184,9 +213,10 @@ function keywordOf(text) {
   return clean.slice(0, 10) || '動態';
 }
 
-function renderOne(o, spec, durationSec, outPath) {
+function renderOne(o, spec, durationSec, outPath, noTailFade) {
   const propsPath = path.join(PUBLIC, `.motion-props-${o.key}.json`);
-  fs.writeFileSync(propsPath, JSON.stringify({ spec, safeTop: o.safeTop, safeBottom: o.safeBottom, durationSec }));
+  fs.writeFileSync(propsPath, JSON.stringify(
+    { spec, safeTop: o.safeTop, safeBottom: o.safeBottom, durationSec, noTailFade: !!noTailFade }));
   try {
     // stdio pipe 不是為了安靜 —— 各版型 timeline 的 debug console.log 會被 Remotion 轉發出來，
     // 一支就洗掉幾十行，把這支自己印的「第幾項落在第幾秒」淹掉。失敗時整包吐出來。
@@ -239,7 +269,11 @@ function main() {
   entries.forEach((entry, idx) => {
     const n = idx + 1;
     const range = resolveRange(entry, subs, idx);
-    const durationSec = Number((range.endSec - range.startSec).toFixed(3));
+    // 做在結尾的話一路演到影片結束，不要中途淡出回講者
+    const heygenEnd = heygenDurationSec();
+    const toEnd = endsAtScriptTail(range, subs) && heygenEnd > range.endSec;
+    const 收尾秒 = toEnd ? heygenEnd : range.endSec;
+    const durationSec = Number((收尾秒 - range.startSec).toFixed(3));
     const phrase = subs.text.slice(range.startCharIdx, range.endCharIdx + 1);
 
     // spec 一律問 engine：manual 後端直接回參數檔裡的 spec，claude-cli 後端讀原文產生。
@@ -256,12 +290,16 @@ function main() {
     const kw = keywordOf(entry.keyword || phrase);
 
     log(`\n🎬 動態 ${n}：charIdx ${range.startCharIdx}–${range.endCharIdx}`
-      + `　${range.startSec.toFixed(2)}s–${range.endSec.toFixed(2)}s（${durationSec} 秒）`);
+      + `　${range.startSec.toFixed(2)}s–${收尾秒.toFixed(2)}s（${durationSec} 秒）`
+      + (toEnd ? `　※ 做在結尾 → 延續到影片結束，不淡出回講者` : ''));
     log(`   原文：${phrase.slice(0, 40)}${phrase.length > 40 ? '…' : ''}`);
     (spec.items || []).forEach((it, i) =>
       log(`   ${i + 1}. ${it.text}　→ 第 ${it.atSec} 秒進場${it._fallback ? '（等距，比對不到）' : ''}`));
 
+    // toEnd 要寫進產出檔：渲染端（motion-timeline.ts）是從 charIdx **重新解析**秒數的，
+    // 不會讀這裡算好的秒數，所以「這段要演到片尾」一定要用明確旗標告訴它。
     const rec = { startCharIdx: range.startCharIdx, endCharIdx: range.endCharIdx, _phrase: phrase };
+    if (toEnd) rec.toEnd = true;
     for (const o of orientationsFor(TEMPLATE)) {
       if (ONLY && ONLY !== o.key) continue;
       const file = `motion-${n}-${o.key}.mp4`;
@@ -269,7 +307,7 @@ function main() {
         log(`   ▷ [dry-run] ${o.label} ${o.width}×${o.height} → public/${file}（未 render）`);
       } else {
         log(`   ▶ render ${o.label} ${o.width}×${o.height} → public/${file}`);
-        renderOne(o, spec, durationSec, path.join(PUBLIC, file));
+        renderOne(o, spec, durationSec, path.join(PUBLIC, file), toEnd);
       }
       if (o.key === 'p') rec.src = file; else rec.srcLandscape = file;
       rec[o.key === 'p' ? '_niceName' : '_niceNameLandscape'] = `動態${n}_${kw}_${o.label}.mp4`;

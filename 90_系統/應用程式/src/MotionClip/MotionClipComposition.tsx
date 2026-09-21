@@ -65,6 +65,40 @@ function buildBeats(steps: number, totalFrames: number, fps: number): number[] {
   return beats;
 }
 
+/**
+ * 條列項目的字級：文字少、空間大就放大（2026-09-21 使用者要求）。
+ *
+ * 只看寬度就夠 —— 垂直方向用 space-evenly 分配，項目變高只是吃掉本來就空著的地方
+ *（實測 contrast 兩項時下半部空了 600 多 px）。真正會出事的是**橫向折行**。
+ *
+ * 視覺寬度用「中文 1 格、半形 0.55 格」估。中文字寬約等於字級，這個估法夠準，
+ * 不需要真的去量文字 —— Remotion 裡量文字要繞一大圈，而且量了也只是算同一件事。
+ *
+ * @param avail  這一項的文字可以用多寬（已經扣掉圖示、gap、padding）
+ * @param texts  同一組項目的所有文字（取最長的那個當基準，各項才會一樣大）
+ * @param base   現行字級，也是下限 —— 只放大不縮小，免得動到既有版面
+ * @param max    上限
+ */
+function fitFontSize(avail: number, texts: string[], base: number, max: number): number {
+  const widest = Math.max(
+    1,
+    ...texts.map((s) => [...(s ?? '')].reduce((n, c) => n + (/[\x20-\x7e]/.test(c) ? 0.55 : 1), 0))
+  );
+  // ⚠️ 留 3% 餘裕。實測上限開到 104 時「連2日買力道放大」就折成兩行了 ——
+  //    算出來是 785px、可用 782px，差 3px。字寬是估的、字型也不保證每個字剛好一格，
+  //    貼著邊界算必然會有折行的那一天，而折行在成品裡很難看。
+  return Math.round(Math.min(max, Math.max(base, (avail * 0.97) / widest)));
+}
+
+/**
+ * 條列項目放大的上限（2026-09-21 使用者從 80／92／104 三版試片挑的）。
+ *
+ * 這是「最大能長到多大」，不是實際字級 —— 放不下的時候 fitFontSize 會自己收斂。
+ * 實測最容易折行的組合（「台積電ADR漲3.5%」97px、「外資買超創今年新高」84px）
+ * 都在一行內，右邊還有約 100px 餘裕。
+ */
+const ITEM_FONT_MAX = 104;
+
 /** 淡入＋上移。at 之前完全不畫，避免短片一開頭就閃一下。 */
 const Enter: React.FC<{
   at: number;
@@ -119,7 +153,9 @@ const Shell: React.FC<{
   children: React.ReactNode;
   safeTop?: number;
   safeBottom?: number;
-}> = ({ kicker, badge, title, foot, beats, showFoot, idle, children, safeTop, safeBottom }) => {
+  noTailFade?: boolean;
+}> = ({ kicker, badge, title, foot, beats, showFoot, idle, children, safeTop, safeBottom,
+        noTailFade }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames, width, height } = useVideoConfig();
   // 2026-09-17 使用者定案：直式與橫式各出一支，共用同一套佈局。
@@ -144,13 +180,18 @@ const Shell: React.FC<{
   const designW = boxW / scale;          // 恆等於 1080
   const designH = contentH / scale;      // 直式比 1080 高一點，讓內容用滿垂直空間
   const left = (width - boxW) / 2;
-  // 頭尾淡出：獨立 mp4 會被貼進主片，切換點要柔一點
-  const fade = interpolate(
-    frame,
-    [0, 0.25 * fps, durationInFrames - 0.3 * fps, durationInFrames],
-    [0, 1, 1, 0],
-    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
-  );
+  // 頭尾淡出：獨立 mp4 會被貼進主片，切換點要柔一點。
+  // ⚠️ 做在結尾那段不淡出尾巴（noTailFade）—— 影片本來就在這裡結束，
+  //    淡出只會讓最後閃一下講者畫面（2026-09-21 使用者指出）。
+  const fade = noTailFade
+    ? interpolate(frame, [0, 0.25 * fps], [0, 1],
+      { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
+    : interpolate(
+      frame,
+      [0, 0.25 * fps, durationInFrames - 0.3 * fps, durationInFrames],
+      [0, 1, 1, 0],
+      { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+    );
   // 主標的 | 之後套品牌黃
   const [t1, t2] = (title ?? '').split('|');
   return (
@@ -262,6 +303,9 @@ const Contrast: React.FC<{ spec: ContrastSpec; beats: number[] }> = ({ spec, bea
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const negAt = beats[2] ?? 0;
+  // 正項的文字可用寬 = 設計寬 1080 − 左右 pad − 卡片 padding(34×2) − 外框(3×2) − 勾勾(56) − gap(20)
+  const posFont = fitFontSize(
+    1080 - MC.pad * 2 - 68 - 6 - 56 - 20, spec.positives.slice(0, 2), 64, ITEM_FONT_MAX);
   // 刪除線用寬度動畫劃過去，比整條直接出現有「打掉」的動作感
   const strike = interpolate(frame, [negAt + 0.25 * fps, negAt + 0.6 * fps], [0, 100], {
     extrapolateLeft: 'clamp',
@@ -330,7 +374,7 @@ const Contrast: React.FC<{ spec: ContrastSpec; beats: number[] }> = ({ spec, bea
               border: `3px solid ${MC.yellow}`,
               borderRadius: 20,
               padding: '22px 34px',
-              fontSize: 64,
+              fontSize: posFont,
               fontWeight: 900,
               color: MC.yellow,
             }}
@@ -362,6 +406,9 @@ const Contrast: React.FC<{ spec: ContrastSpec; beats: number[] }> = ({ spec, bea
 // ── ② 編號條列型：逐項對齊旁白 ──────────────────────────────
 const Bullets: React.FC<{ spec: ListSpec; beats: number[] }> = ({ spec, beats }) => {
   const { fps } = useVideoConfig();
+  // 文字可用寬 = 設計寬 1080 − 左右 pad − 編號徽章(96) − gap(30)
+  const itemFont = fitFontSize(
+    1080 - MC.pad * 2 - 96 - 30, spec.items.slice(0, 5).map((i) => i.text), 66, ITEM_FONT_MAX);
   return (
     <>
       {spec.items.slice(0, 5).map((it, i) => {
@@ -390,7 +437,7 @@ const Bullets: React.FC<{ spec: ListSpec; beats: number[] }> = ({ spec, beats })
                   {i + 1}
                 </div>
               </Pop>
-              <div style={{ fontSize: 66, fontWeight: 800, color: MC.white, lineHeight: 1.2 }}>
+              <div style={{ fontSize: itemFont, fontWeight: 800, color: MC.white, lineHeight: 1.2 }}>
                 {it.text}
               </div>
             </div>
@@ -454,7 +501,9 @@ export const MotionClip: React.FC<{
   spec: MotionClipSpec;
   safeTop?: number;
   safeBottom?: number;
-}> = ({ spec, safeTop, safeBottom }) => {
+  /** 這段做在腳本結尾：演到影片結束，尾端不淡出。由 render-motion 用 --props 傳進來。 */
+  noTailFade?: boolean;
+}> = ({ spec, safeTop, safeBottom, noTailFade }) => {
   const { fps, durationInFrames } = useVideoConfig();
   const totalSec = durationInFrames / fps;
   // 時長不足 5 秒就砍註腳（使用者定案的減步驟規則）；超過 10 秒補 idle 掃光
@@ -473,6 +522,7 @@ export const MotionClip: React.FC<{
       idle={idle}
       safeTop={safeTop}
       safeBottom={safeBottom}
+      noTailFade={noTailFade}
     >
       {spec.template === 'contrast' ? <Contrast spec={spec} beats={beats} /> : null}
       {spec.template === 'list' ? <Bullets spec={spec} beats={beats} /> : null}

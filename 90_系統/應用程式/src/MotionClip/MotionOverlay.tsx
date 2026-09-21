@@ -27,19 +27,23 @@ import type { MotionRun } from './motion-timeline';
  */
 
 /** 進出場淡化。時長由 Sequence 決定，這裡只看相對 frame。 */
-const Clip: React.FC<{ src: string; region: { x: number; y: number; w: number; h: number } }> = ({
-  src,
-  region,
-}) => {
+const Clip: React.FC<{
+  src: string;
+  region: { x: number; y: number; w: number; h: number };
+  /** 這段演到影片結束 → 尾端不淡出（淡出就變成「閃一下講者然後結束」，很突兀） */
+  noTailFade?: boolean;
+}> = ({ src, region, noTailFade }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
   const fade = Math.round(0.3 * fps);
-  const opacity = interpolate(
-    frame,
-    [0, fade, Math.max(fade, durationInFrames - fade), durationInFrames],
-    [0, 1, 1, 0],
-    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
-  );
+  const opacity = noTailFade
+    ? interpolate(frame, [0, fade], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
+    : interpolate(
+      frame,
+      [0, fade, Math.max(fade, durationInFrames - fade), durationInFrames],
+      [0, 1, 1, 0],
+      { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+    );
   return (
     <AbsoluteFill style={{ opacity }}>
       <div
@@ -76,7 +80,7 @@ export const MotionOverlay: React.FC<{
       const { from, durationInFrames } = frameSpan(run.startSec, run.endSec);
       return (
         <Sequence key={`motion-${idx}`} from={from} durationInFrames={durationInFrames}>
-          <Clip src={src} region={region} />
+          <Clip src={src} region={region} noTailFade={run.toEnd} />
         </Sequence>
       );
     })}

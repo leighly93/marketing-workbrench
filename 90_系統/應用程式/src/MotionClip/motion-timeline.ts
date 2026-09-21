@@ -1,5 +1,6 @@
 import subtitleData from '../subtitles.json';
 import generatedMotion from './motion.generated.json';
+import videoMeta from '../video-meta.json';
 
 /**
  * 動態小影片的時間軸：把 `motion.generated.json` 的 charIdx 範圍解成秒數。
@@ -35,6 +36,13 @@ function resolveByCharIdx(
   return { start: startT.start, end: endT.end };
 }
 
+/**
+ * 講者影片有多長。動態的時間軸就是這支影片的時間軸（_scriptCharTimes 是從它的音訊算的），
+ * 所以「做在結尾的那段要演到最後」就是演到這個秒數。
+ */
+const HEYGEN_END_SEC: number =
+  Number((videoMeta as { heygenDurationSec?: number }).heygenDurationSec) || 0;
+
 type GeneratedMotion = {
   /** 直式那支的檔名（相對於 public/） */
   src: string;
@@ -44,6 +52,11 @@ type GeneratedMotion = {
   endCharIdx: number;
   /** 給人看的：這段對應的原稿文字 */
   _phrase?: string;
+  /**
+   * 這段做在腳本結尾 → 演到影片結束，不要淡出回講者（2026-09-21 使用者定案）。
+   * 由 render-motion 判定並寫進來；這裡不自己猜，因為「算到哪裡算結尾」是產線的規則。
+   */
+  toEnd?: boolean;
 };
 
 export type MotionRun = {
@@ -53,6 +66,8 @@ export type MotionRun = {
   endSec: number;
   startCharIdx: number;
   endCharIdx: number;
+  /** 演到影片結束、尾端不淡出 */
+  toEnd?: boolean;
 };
 
 /**
@@ -63,13 +78,17 @@ export const MOTION_RUNS: MotionRun[] = (generatedMotion as GeneratedMotion[])
   .flatMap((g) => {
     const t = resolveByCharIdx(g.startCharIdx, g.endCharIdx);
     if (!t) return [];
+    // 做在結尾的那段延到影片結束。HEYGEN_END_SEC 讀不到（0）或比原本還早時維持原樣 ——
+    // 寧可照舊淡出，也不要因為一個怪數字把動態切掉或拉過頭。
+    const toEnd = !!g.toEnd && HEYGEN_END_SEC > t.end;
     return [{
       src: g.src,
       srcLandscape: g.srcLandscape,
       startSec: t.start,
-      endSec: t.end,
+      endSec: toEnd ? HEYGEN_END_SEC : t.end,
       startCharIdx: g.startCharIdx,
       endCharIdx: g.endCharIdx,
+      toEnd,
     }];
   })
   .sort((a, b) => a.startSec - b.startSec);

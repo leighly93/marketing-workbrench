@@ -396,6 +396,99 @@ test('伺服器：queued 階段不補寫 ROOT —— 那會污染別支正在跑
     '只有 preparing 才代表這支正佔著 ROOT');
 });
 
+// ── 條列字級自適應（2026-09-21）──────────────────────────────
+// 文字少、空間大就放大到上限 104；字多就自己收斂，不能折行。
+// 折行在成品裡很難看，而且是 render 出來才看得到 —— 所以用測試守住算式。
+
+/** 跟 MotionClipComposition 同一套算法（那支是 .tsx，測試 require 不進來） */
+function 算字級(text, { avail, base, max }) {
+  const w = [...text].reduce((n, c) => n + (/[\x20-\x7e]/.test(c) ? 0.55 : 1), 0);
+  return { 字級: Math.round(Math.min(max, Math.max(base, (avail * 0.97) / w))), 視覺寬: w };
+}
+
+test('條列字級：短文字放大到上限，長文字自己收斂且不會折行', () => {
+  // contrast 正項的可用寬 = 1080 − pad×2 − 卡片 padding(68) − 外框(6) − 勾勾(56) − gap(20)
+  const avail = 1080 - 74 * 2 - 68 - 6 - 56 - 20;
+  const 設定 = { avail, base: 64, max: 104 };
+
+  // 實際會出現的字串，包含最容易出事的英數混排
+  for (const s of ['外資870億買超', '連2日買力道放大', '台積電ADR漲3.5%',
+                   '外資買超創今年新高', '三大法人同步站在買方這邊']) {
+    const { 字級, 視覺寬 } = 算字級(s, 設定);
+    assert.ok(字級 <= 104, `${s}：不能超過上限`);
+    assert.ok(字級 >= 64, `${s}：不能比原本還小`);
+    assert.ok(字級 * 視覺寬 <= avail,
+      `${s}：算出 ${字級}px × ${視覺寬} 字 = ${Math.round(字級 * 視覺寬)}px，超過可用的 ${avail}px 會折行`);
+  }
+
+  // 短的要真的有放大（不然這個功能等於沒做）
+  assert.equal(算字級('外資870億買超', 設定).字級, 104);
+  // 長的要真的有縮（12 個中文字塞不下 104）
+  assert.ok(算字級('三大法人同步站在買方這邊', 設定).字級 < 80);
+});
+
+test('條列字級：留 3% 餘裕 —— 貼著邊界算遲早會折行', () => {
+  // 2026-09-21 實際踩到：上限開 104 時「連2日買力道放大」算出 785px、可用 782px，
+  // 差 3px 就折成兩行。字寬是估的（中文 1 格、半形 0.55 格），不可能永遠剛好。
+  const avail = 1000;
+  const 剛好塞滿 = '一二三四五六七八九十';          // 10 格
+  const { 字級 } = 算字級(剛好塞滿, { avail, base: 10, max: 999 });
+  assert.ok(字級 * 10 <= avail * 0.98, `應該留餘裕，實際用了 ${字級 * 10}/${avail}`);
+});
+
+// ── 做在結尾就演到片尾（2026-09-21）──────────────────────────
+// 使用者定案：動態做在腳本結尾的話不要淡出回講者，直接延續到影片結束，剩幾秒都延續。
+// 判定是「拖到腳本最後」，所以使用者自己控制得了：拖到底＝延續，刻意留一段＝照舊回講者。
+
+/** 隔離環境 + 一份講者影片長度 */
+function 隔離環境含片長(字幕文字, heygenDurationSec) {
+  const dir = 隔離環境(字幕文字);
+  fs.writeFileSync(path.join(dir, 'src/video-meta.json'),
+    JSON.stringify({ heygenDurationSec }));
+  return dir;
+}
+
+/** 一段 list 參數，manual 後端直接用（不叫 claude） */
+const 兩項參數 = (startCharIdx, endCharIdx) => JSON.stringify([{
+  startCharIdx, endCharIdx,
+  spec: { template: 'list', kicker: '今日盤勢', title: '重點|兩件事',
+          items: [{ text: '第一件', at: '外資' }, { text: '第二件', at: '買超' }] },
+}]);
+
+test('拖到腳本結尾：演到影片結束，而不是在旁白講完就淡出', () => {
+  // 20 個字 × 0.2 秒 = 旁白 4 秒，但講者影片有 9 秒
+  const 字 = '外資買超八百七十億連續第二天力道放大了喔';
+  const dir = 隔離環境含片長(字, 9);
+  fs.writeFileSync(path.join(dir, 'public/motion.json'), 兩項參數(4, 字.length - 1));
+
+  const out = 跑(dir, '--dry-run');
+  assert.match(out, /做在結尾/, '應該判定成做在結尾');
+  // 0.8s 開始、演到 9s ＝ 8.2 秒，而不是旁白結束的 4 秒
+  assert.match(out, /0\.80s–9\.00s（8\.2 秒）/, `延到片尾的秒數不對：${out}`);
+});
+
+test('沒拖到結尾就照舊 —— 留一段旁白是使用者的選擇', () => {
+  const 字 = '外資買超八百七十億連續第二天力道放大了喔';
+  const dir = 隔離環境含片長(字, 9);
+  // 只標到一半，後面還有 10 個字的旁白
+  fs.writeFileSync(path.join(dir, 'public/motion.json'), 兩項參數(0, 9));
+
+  const out = 跑(dir, '--dry-run');
+  assert.doesNotMatch(out, /做在結尾/, '中間那段不該延續，後面還有旁白要配講者畫面');
+  assert.match(out, /0\.00s–2\.00s（2 秒）/, `不該延長：${out}`);
+});
+
+test('讀不到講者影片長度就維持原樣，不要亂猜', () => {
+  // video-meta.json 不存在（例如還沒 transcribe）。寧可照舊淡出，
+  // 也不要因為一個猜出來的數字把動態拉過頭、蓋掉後面的畫面。
+  const 字 = '外資買超八百七十億連續第二天力道放大了喔';
+  const dir = 隔離環境(字);   // 沒有 video-meta.json
+  fs.writeFileSync(path.join(dir, 'public/motion.json'), 兩項參數(4, 字.length - 1));
+
+  const out = 跑(dir, '--dry-run');
+  assert.doesNotMatch(out, /做在結尾/);
+});
+
 // ── 接到其他版型（2026-09-21）────────────────────────────────
 // 只有大盤小報有橫式輸出，其餘版型都只出直式。安全區沿用各 composition 自己那個
 // 量過的 safeTop（招牌實心到哪）—— 動態要避開的東西跟截圖黃框完全一樣。
