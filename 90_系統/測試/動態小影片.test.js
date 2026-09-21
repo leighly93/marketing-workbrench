@@ -431,6 +431,24 @@ test('條列字級：短文字放大到上限，長文字自己收斂且不會�
   }
 });
 
+test('list 只有一項也要出動態 —— 擋掉的代價是整支都沒有', () => {
+  // 2026-09-21 使用者：「只有一個沒關係！要出動態！」
+  // 原本要求至少兩項（理由是「一項的條列沒有意義」），但那是美感判斷，
+  // 而擋掉等於整支影片沒有動態。實際 render 過，一張卡片置中，版面不會壞。
+  const { validate, buildPrompt } = require(path.join(app, 'scripts/motion-engine.js'));
+
+  const 一項 = validate({ template: 'list', items: [{ text: '外資買超八百七十億', at: '外資' }] });
+  assert.ok(一項, '一項不能被擋掉');
+  assert.equal(一項.items.length, 1);
+
+  // 界線另一端維持原樣
+  assert.equal(validate({ template: 'list', items: [] }), null, '零項沒東西可畫，還是要擋');
+  assert.equal(validate({ template: 'list', items: Array(6).fill({ text: 'x' }) }), null, '超過五項要擋');
+
+  // prompt 也要一致，否則 claude 會為了湊數硬編一個沒內容的點
+  assert.match(buildPrompt('隨便一段旁白'), /只給一項/, 'prompt 要講明可以只給一項');
+});
+
 test('prompt 要求每項最多 9 個字，但驗證**不**擋 —— 擋了就整支沒動態', () => {
   // 2026-09-21 使用者定案：字數只在 prompt 要求，不寫進 validate。
   // 「不能不出動態」—— 驗證擋掉的代價是整支影片沒有動態，比字小得多。

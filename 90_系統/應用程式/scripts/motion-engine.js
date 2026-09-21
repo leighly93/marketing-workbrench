@@ -43,7 +43,9 @@ function buildPrompt(text) {
     '',
     '規則：',
     '1. template 三選一：',
-    '   list     —— 2~5 個並列的點（例：四大關鍵問題、三個觀察重點）',
+    '   list     —— 並列的點，2~5 個最好（例：四大關鍵問題、三個觀察重點）。',
+    '              這段旁白真的只講了一個重點，就**只給一項**，不要為了湊數硬編第二點 ——',
+    '              硬編的那一點通常沒有內容，比只有一項更糟。',
     '   contrast —— 「不是 X，而是 Y」的轉折（例：不是傳統火藥，而是高頻微波）',
     '   quote    —— 一句有力的話，關鍵詞著色（例：大盤摜破4萬6，資安股掀漲停潮）',
     '2. 卡片上放**濃縮後的關鍵詞**，不是旁白原句 —— 原句下方就是字幕，重複會很擠。',
@@ -90,7 +92,11 @@ function validate(spec) {
 
   if (t === 'list') {
     const items = Array.isArray(spec.items) ? spec.items.filter((x) => x && str(x.text)) : [];
-    if (items.length < 2 || items.length > 5) return null;
+    // ⚠️ 一項也算數（2026-09-21 使用者：「只有一個沒關係！要出動態！」）。
+    //    原本要求至少兩項，理由是「一項的條列沒有意義」—— 那是版面上的美感判斷，
+    //    但擋掉的代價是**整支影片沒有動態**，那嚴重得多。真的只有一點就讓它出，
+    //    畫面上就是一張卡片一個重點，不會壞（實際 render 確認過）。
+    if (items.length < 1 || items.length > 5) return null;
     return { ...spec, items: items.map((x) => ({ text: x.text.trim(), at: str(x.at) ? x.at.trim() : undefined })) };
   }
   if (t === 'contrast') {
