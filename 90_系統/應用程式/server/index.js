@@ -250,12 +250,15 @@ function snapshotTargets() {
 const nowISO = () => new Date().toISOString();
 const ensureDir = (d) => fs.mkdirSync(d, { recursive: true });
 
-function copyRecursive(from, to) {
+function copyRecursive(from, to, skipNames) {
   if (!fs.existsSync(from)) return;
   const st = fs.statSync(from);
   if (st.isDirectory()) {
     ensureDir(to);
-    for (const n of fs.readdirSync(from)) copyRecursive(path.join(from, n), path.join(to, n));
+    for (const n of fs.readdirSync(from)) {
+      if (skipNames && skipNames.includes(n)) continue;
+      copyRecursive(path.join(from, n), path.join(to, n), skipNames);
+    }
   } else {
     ensureDir(path.dirname(to));
     fs.copyFileSync(from, to);
@@ -392,6 +395,17 @@ const LOCK = path.join(WORKSPACE_ROOT, '.run.lock');
 const EMPHASIS_FILE = 'src/emphasis.generated.json';
 const MOTION_FILE = 'src/MotionClip/motion.generated.json';
 const MOTION_SIG_FILE = 'src/MotionClip/motion-sig.generated.json';
+/**
+ * 動態小影片存進工作的哪裡（2026-09-21）。
+ *
+ * 放 input/（就是「素材」）底下的子目錄，理由是使用者把它歸類成素材
+ *（「他跟 heygen 影片一樣算是素材」），而**子目錄**這個選擇讓三條路徑自動做對事：
+ *   ・重新出片複製素材時有 isFile() 過濾 → 不會把舊動態帶到新工作（新工作會自己重產）
+ *   ・backupJobArtifacts 同樣有 isFile() 過濾 → 不佔備份空間（motion.json 還在就能重產）
+ *   ・使用者在 Finder 裡一眼看得出這幾支跟截圖、heygen.mp4 不是同一類東西
+ * 唯一要另外處理的是 stageJobInputs 的 copyRecursive（見那裡）。
+ */
+const MOTION_ASSET_DIR = '動態';
 /** 動態可以改到什麼時候：跟重點詞一樣，界線是「還沒開始 render」。 */
 const MOTION_EDITABLE = ['draft', 'queued', 'preparing', 'detached', 'review', 'approved'];
 
@@ -1931,8 +1945,42 @@ function buildCounterfactual(job) {
   }
 }
 
+/**
+ * 把這次 render 出來的動態 mp4 複製進工作的「素材／動態」，回傳 [{name, size}]。
+ *
+ * 為什麼需要：render 出來的檔躺在**共用**工作區的 public/，下一支出片就被清掉 ——
+ * 出一支沒一支。使用者要的是「前期容易失敗、要改手動的時候，有這個可另外下載的素材
+ * 會很方便」，所以在這裡留一份，並用 _niceName 那個看得懂的檔名
+ *（在這之前 _niceName 只被 render-motion 寫出來，全專案沒有人讀它）。
+ *
+ * 抽成獨立函式是為了測得到 —— doRender 整條要真的 render 影片才跑得起來。
+ */
+function collectMotionAssets(job) {
+  // ⚠️ 先清再寫：重跑時這支可能不再有動態，舊檔留著會被當成這次的產物。
+  const dir = jobPath(job.id, 'input', MOTION_ASSET_DIR);
+  rmrf(dir);
+  const clips = [];
+  const gen = JSON.parse(fs.readFileSync(path.join(ROOT, MOTION_FILE), 'utf-8'));
+  for (const clip of Array.isArray(gen) ? gen : []) {
+    // 橫式不一定有 —— 只出直式的版型用 --only=p，那時 srcLandscape 是空的。
+    for (const [srcKey, nameKey] of [['src', '_niceName'], ['srcLandscape', '_niceNameLandscape']]) {
+      if (!clip[srcKey]) continue;
+      const from = path.join(ROOT, 'public', path.basename(clip[srcKey]));
+      if (!fs.existsSync(from)) continue;
+      // basename：_niceName 是拿腳本內容組出來的，不給它機會跳出這個目錄
+      const name = path.basename(clip[nameKey] || clip[srcKey]);
+      ensureDir(dir);
+      fs.copyFileSync(from, path.join(dir, name));
+      clips.push({ name, size: fs.statSync(from).size });
+    }
+  }
+  return clips;
+}
+
 function stageJobInputs(job) {
-  copyRecursive(jobPath(job.id, 'input'), path.join(ROOT, 'public'));
+  // ⚠️ 跳過 input/動態/：那裡放的是**上一次出片的產物**，不是這次的輸入。
+  //    複製進 public/ 只是白佔空間（一支約 3MB），而且 render-motion 本來就會重產。
+  copyRecursive(jobPath(job.id, 'input'), path.join(ROOT, 'public'), [MOTION_ASSET_DIR]);
   copyRecursive(jobPath(job.id, 'input', 'script.txt'), path.join(ROOT, 'public', 'script.txt'));
 }
 
@@ -2084,6 +2132,17 @@ async function doRender(job) {
     }
   }
   if (!job.outputs.length) throw new Error('render 跑完了，但找不到輸出檔案。請看執行記錄。');
+
+  // 動態小影片落地（2026-09-21）。實作在 collectMotionAssets()。
+  // 存不進去不影響影片本身 —— 動態早就貼進成品了，這裡只是多留一份可下載的素材。
+  job.motionClips = [];
+  try {
+    job.motionClips = collectMotionAssets(job);
+    if (job.motionClips.length)
+      appendLog(job, `\n🎬 動態素材 ${job.motionClips.length} 支已存進「素材／動態」，成品頁可以單獨下載\n`);
+  } catch (e) {
+    appendLog(job, `\n⚠️ 動態素材沒能存進工作（影片本身不受影響）：${e.message}\n`);
+  }
 
   job.status = 'done';
   job.archived = job.outputs.map((o) => o.archive).filter(Boolean);
@@ -3230,7 +3289,7 @@ const server = http.createServer(async (req, res) => {
         if (f.startsWith(STORE.directory(job.id) + path.sep) && fs.existsSync(f) && fs.statSync(f).isFile())
           return sendFile(req, res, f, url.searchParams.get('dl') === '1');
       }
-      for (const d of ['out', 'thumbs', 'state/public', 'input']) {
+      for (const d of ['out', 'thumbs', 'state/public', 'input', `input/${MOTION_ASSET_DIR}`]) {
         const f = jobPath(job.id, d, name);
         // isFile：上面成品那條跟下面靜態檔那條本來就有，只有這個迴圈漏了。
         if (fs.existsSync(f) && fs.statSync(f).isFile())

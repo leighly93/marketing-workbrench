@@ -390,6 +390,97 @@ test('伺服器：queued 階段不補寫 ROOT —— 那會污染別支正在跑
     '只有 preparing 才代表這支正佔著 ROOT');
 });
 
+// ── 動態素材落地（2026-09-21）────────────────────────────────
+// render 出來的 mp4 躺在共用工作區，下一支出片就被清掉 —— 出一支沒一支。
+// 所以出片收尾時複製一份進 input/動態/，成品頁可以單獨下載。
+// 放**子目錄**是刻意的：重新出片與備份那兩段都有 isFile() 過濾，子目錄自動被跳過
+//（新工作會自己重產，不需要繼承；備份也不必為可重產的東西佔空間）。
+
+test('成品頁可以下載「素材／動態」裡的動態小影片（檔名是中文）', async (t) => {
+  const root = 沙箱(t);
+  const request = loadServer(root);
+  const 建立 = await request('POST', '/api/jobs', 稿件);
+  const id = 建立.body.job.id;
+
+  const 檔名 = '動態1_外資買超八百七十億_直式.mp4';
+  寫檔(工作檔(root, id, '素材', '動態', 檔名), '假的-mp4-內容');
+
+  const r = await request('GET', `/api/jobs/${id}/file/${encodeURIComponent(檔名)}`);
+  assert.equal(r.status, 200, '路由的候選目錄要含 input/動態，否則成品頁的下載連結會 404');
+  assert.equal(r.headers['Content-Type'], 'video/mp4');
+
+  const dl = await request('GET', `/api/jobs/${id}/file/${encodeURIComponent(檔名)}?dl=1`);
+  assert.ok(/filename\*=UTF-8''/.test(dl.headers['Content-Disposition'] || ''),
+    '中文檔名要走 RFC 5987，不然 Node 會丟 ERR_INVALID_CHAR');
+});
+
+test('出片收尾：把動態 mp4 複製進「素材／動態」，用看得懂的檔名', async (t) => {
+  const root = 沙箱(t);
+  const api = loadServer(root);
+  const 建立 = await api('POST', '/api/jobs', 稿件);
+  const id = 建立.body.job.id;
+
+  const pub = path.join(appPath(root), 'public');
+  寫檔(path.join(pub, 'motion-1-p.mp4'), '直式內容');
+  寫檔(path.join(pub, 'motion-1-l.mp4'), '橫式內容');
+  寫檔(path.join(appPath(root), 'src/MotionClip/motion.generated.json'), [{
+    src: 'motion-1-p.mp4', _niceName: '動態1_外資買超_直式.mp4',
+    srcLandscape: 'motion-1-l.mp4', _niceNameLandscape: '動態1_外資買超_橫式.mp4',
+  }]);
+
+  const clips = api.collectMotionAssets({ id });
+
+  assert.deepEqual(純(clips.map((c) => c.name)),
+    ['動態1_外資買超_直式.mp4', '動態1_外資買超_橫式.mp4']);
+  assert.equal(fs.readFileSync(工作檔(root, id, '素材', '動態', '動態1_外資買超_直式.mp4'), 'utf-8'), '直式內容');
+  assert.equal(fs.readFileSync(工作檔(root, id, '素材', '動態', '動態1_外資買超_橫式.mp4'), 'utf-8'), '橫式內容');
+});
+
+test('出片收尾：只出直式的版型不會生出空的橫式檔', async (t) => {
+  // --only=p 的版型（之後的盤中焦點／美股焦點）srcLandscape 是空的，不能硬湊一個出來。
+  const root = 沙箱(t);
+  const api = loadServer(root);
+  const id = (await api('POST', '/api/jobs', 稿件)).body.job.id;
+  寫檔(path.join(appPath(root), 'public', 'motion-1-p.mp4'), '直式內容');
+  寫檔(path.join(appPath(root), 'src/MotionClip/motion.generated.json'),
+    [{ src: 'motion-1-p.mp4', _niceName: '動態1_只有直式_直式.mp4' }]);
+
+  const clips = api.collectMotionAssets({ id });
+  assert.equal(clips.length, 1);
+  assert.deepEqual(fs.readdirSync(工作檔(root, id, '素材', '動態')), ['動態1_只有直式_直式.mp4']);
+});
+
+test('出片收尾：這支不再有動態時，上一次的檔要被清掉', async (t) => {
+  // 重跑後動態可能被取消或產不出來。舊檔留著的話，成品頁會列出一支
+  // 根本不在這支影片裡的素材（而且下載得到），比沒有更糟。
+  const root = 沙箱(t);
+  const api = loadServer(root);
+  const id = (await api('POST', '/api/jobs', 稿件)).body.job.id;
+  寫檔(工作檔(root, id, '素材', '動態', '上一次的_直式.mp4'), '舊的');
+  寫檔(path.join(appPath(root), 'src/MotionClip/motion.generated.json'), []);
+
+  const clips = api.collectMotionAssets({ id });
+  assert.deepEqual(純(clips), []);   // 純()：沙箱是不同 realm，直接 deepEqual 會誤判
+  assert.equal(fs.existsSync(工作檔(root, id, '素材', '動態')), false, '整個目錄要清掉');
+});
+
+test('出片前把素材搬進工作區時，不要把「動態」子目錄也帶過去', async (t) => {
+  const root = 沙箱(t);
+  const api = loadServer(root);
+  const 建立 = await api('POST', '/api/jobs', 稿件);
+  const id = 建立.body.job.id;
+
+  寫檔(工作檔(root, id, '素材', 'shot1.png'), '假截圖');
+  寫檔(工作檔(root, id, '素材', '動態', '動態1_某段話_直式.mp4'), '上一次出片的產物');
+
+  api.stageJobInputs({ id });
+
+  const pub = path.join(appPath(root), 'public');
+  assert.ok(fs.existsSync(path.join(pub, 'shot1.png')), '真正的素材還是要複製過去');
+  assert.equal(fs.existsSync(path.join(pub, '動態')), false,
+    '動態是上一次的產物不是這次的輸入，複製過去只是白佔空間（一支約 3MB）');
+});
+
 // ── 被 src/ 靜態 import 的產出檔，一律不准刪 ──────────────────────
 // 2026-09-19 同一個症頭連續踩兩次（motion.generated.json、emphasis.generated.json）：
 // 清工作區把檔案「刪掉」而不是「清空」，Remotion bundle 直接失敗，

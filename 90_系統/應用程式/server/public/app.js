@@ -851,6 +851,26 @@ async function loadJob() {
             style: 'text-decoration:none' }, '下載'))));
     }
     const card = el('div', { class: 'card' }, el('h2', {}, '成品'), grid);
+    // 動態素材：貼進影片裡的那幾段，單獨留一份可以下載（2026-09-21 使用者要的）。
+    // ⚠️ 檔名是中文（動態1_…_直式.mp4），跟成品的 output-dapan.mp4 不一樣 ——
+    //    網址一定要 encodeURIComponent，不然「／」之類的字會把路徑切斷。
+    if (job.motionClips && job.motionClips.length) {
+      const mg = el('div', { class: 'outs' });
+      for (const m of job.motionClips) {
+        const href = `/api/jobs/${job.id}/file/${encodeURIComponent(m.name)}`;
+        mg.append(el('figure', {},
+          el('video', { controls: 'controls', src: href }),
+          el('figcaption', {},
+            el('b', {}, m.name),
+            el('span', {}, (m.size / 1048576).toFixed(1) + ' MB'),
+            el('a', { class: 'ghost', href: href + '?dl=1', style: 'text-decoration:none' }, '下載'))));
+      }
+      card.append(
+        el('div', { style: 'margin-top:20px;font-weight:600;font-size:14px' }, '動態素材'),
+        el('div', { class: 'note', style: 'margin:4px 0 10px' },
+          '這幾段已經貼進上面的影片裡了，這裡另外留一份。要自己重剪、或這支影片其他地方要重做時可以直接拿。'),
+        mg);
+    }
     if (job.archived && job.archived.length)
       card.append(el('div', { style: 'margin-top:16px;font-size:12.5px;color:var(--dim)' },
         '也存進成品庫了（不會自動清）：　' + job.archived.join('　/　')));
