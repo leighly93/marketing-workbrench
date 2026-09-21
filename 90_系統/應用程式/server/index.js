@@ -30,7 +30,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');   // 重新出片沿用 OCR 結果時，比對截圖 md5 用
 const { workspaceRoot, dataPath, resolveDataReference } = require('../../paths');
-const { spawn, spawnSync, execFileSync } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 // 「你教過的東西」記憶庫。memKeyOf／mergeRuns 一定要跟 auto-shot.js 共用同一份實作 ——
 // 這裡負責寫、auto-shot 負責讀，鍵值算法漂掉的話學到的東西下次就對不上（2026-08-21）。
 const SHOT_MEMORY = require('../scripts/shot-memory');
@@ -665,6 +665,61 @@ function runPipeline(job, args) {
       code === 0 ? resolve() : reject(new Error(`run.js 結束碼 ${code}，詳見執行記錄`));
     });
   });
+}
+
+/** 動態渲染跑太久就停掉。沒有這道上限的話，卡死的子程序會讓 busy 永遠是 true、整條佇列停擺。 */
+const MOTION_TIMEOUT_MS = 300000;
+
+/** 正在跑的動態渲染 { jobId, child, stopped }。busy 擋著，同時只會有一支 */
+let motionRun = null;
+
+/**
+ * 跑一次 render-motion.js，不阻塞 event loop。
+ *
+ * ⚠️ 2026-09-21 從 spawnSync 改過來。一段 17.9 秒的動態要渲 31 秒，spawnSync 會把整個
+ *    event loop 綁住那麼久 —— 前台完全沒反應（連 3 秒輪詢都停了），同事同時在標注或
+ *    傳截圖也一起卡住。理由與寫法都跟 runFfmpeg 一樣（2026-08 為了 ffmpeg 改過一次）。
+ * ⚠️ stdout 與 stderr 都要收進 log：render-motion 成功時會把「這段為什麼跳過」寫在
+ *    stderr，那是前台唯一看得到的線索（2026-09-18 踩過）。
+ * ⚠️ 子程序要記在 motionRun 上 —— 取消鍵只認得 run.js（stopRunJs 靠 job.pid），
+ *    動態這支是 server 自己 spawn 的，不記起來就殺不到（見 stopMotion）。
+ * ⚠️ 版型一定要傳：它決定出幾支（只有大盤小報有橫式）與安全區。
+ *    不傳的話這一關會退回「只出直式」，大盤小報的橫式就沒有動態。
+ */
+function runMotion(job) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('node',
+      [path.join('scripts', 'render-motion.js'), '--if-changed', `--template=${job.template}`],
+      { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], timeout: MOTION_TIMEOUT_MS, killSignal: 'SIGTERM' });
+    const run = { jobId: job.id, child, stopped: false };
+    motionRun = run;
+    let said = '';
+    const collect = (b) => { said = (said + b.toString()).slice(-20000); };
+    child.stdout.on('data', collect);
+    child.stderr.on('data', collect);
+    const clear = () => { if (motionRun === run) motionRun = null; };
+    child.on('error', (e) => { clear(); reject(e); });
+    child.on('close', (code, signal) => {
+      clear();
+      if (said.trim()) appendLog(job, `\n${said.trim()}\n`);
+      if (run.stopped) return reject(new Error('動態渲染已被取消'));
+      if (signal) return reject(new Error(`render-motion 被 ${signal} 中止（超過 ${MOTION_TIMEOUT_MS / 1000} 秒沒跑完？）`));
+      if (code !== 0) return reject(new Error(`render-motion 結束碼 ${code}`));
+      resolve();
+    });
+  });
+}
+
+/**
+ * 停掉正在跑的動態渲染（取消鍵用）。
+ *
+ * stopRunJs 殺的是 run.js，靠的是 job.pid；動態這支不在 job 上，所以要另外一條。
+ * 只停這一支工作自己的 —— 取消排隊中的 B 不能把正在跑的 A 打斷。
+ */
+function stopMotion(job) {
+  if (!motionRun || motionRun.jobId !== job.id) return false;
+  motionRun.stopped = true;
+  try { motionRun.child.kill('SIGTERM'); return true; } catch (_) { return false; }
 }
 
 // ── 配圖計畫：讀取／縮圖／寫回 ──────────────
@@ -2057,17 +2112,8 @@ async function doRender(job) {
     const motion = readJobMotion(job);
     if (motion.length) fs.writeFileSync(mf, JSON.stringify(motion, null, 2) + '\n');
     else rmrf(mf);
-    // ⚠️ 輸出一定要進 log。跑 run.js 那條路的輸出本來就是 log，只有這裡是 server
-    //    自己叫的，以前 pipe 完就丟掉 —— 於是「跳過這段」的原因在前台完全看不到，
-    //    成品只是默默沒有動態（2026-09-18 踩過）。用 spawnSync 才拿得到成功時的 stderr。
-    // ⚠️ 版型一定要傳：它決定出幾支（只有大盤小報有橫式）與安全區。
-    //    不傳的話這一關會退回「只出直式」，大盤小報的橫式就沒有動態。
-    const r = spawnSync('node',
-      [path.join('scripts', 'render-motion.js'), '--if-changed', `--template=${job.template}`],
-      { cwd: ROOT, encoding: 'utf-8', timeout: 300000 });
-    const said = [r.stdout, r.stderr].filter((s) => s && s.trim()).join('\n').trim();
-    if (said) appendLog(job, `\n${said}\n`);
-    if (r.status !== 0) throw new Error(r.error ? r.error.message : `render-motion 結束碼 ${r.status}`);
+    // 輸出進 log、子程序可被取消、跑太久會被停掉，全都在 runMotion 裡。
+    await runMotion(job);
     // 報**實際產出**的段數，不是前台標了幾段 —— 參數產不出來時 render-motion 會寫入空陣列，
     // 印設定的數字就變成「log 說有 1 段、影片裡卻什麼都沒有」（2026-09-19 踩過）。
     let made = 0;
@@ -2078,8 +2124,19 @@ async function doRender(job) {
         : `\n⚠️ 標了 ${motion.length} 段動態，但一段都沒產出（原因見上面）——這支影片不會有動態\n`);
     }
   } catch (e) {
-    appendLog(job, `\n⚠️ 動態小影片重算失敗（不影響出片，只是這支沒有動態）：${e.message}\n`);
-    try { fs.writeFileSync(path.join(ROOT, MOTION_FILE), '[]\n'); } catch (_) {}
+    // 取消不是「失敗」—— 照原樣寫成「這支沒有動態」會讓人以為出片還在跑、只是少了動態。
+    if (job.status !== 'cancelled') {
+      appendLog(job, `\n⚠️ 動態小影片重算失敗（不影響出片，只是這支沒有動態）：${e.message}\n`);
+      try { fs.writeFileSync(path.join(ROOT, MOTION_FILE), '[]\n'); } catch (_) {}
+    }
+  }
+  // ⚠️ 動態渲染那段時間取消鍵是**按得動的**（2026-09-21 改成非同步之後才會這樣；
+  //    以前 event loop 被 spawnSync 綁住，請求根本進不來）。按了就到此為止 ——
+  //    再往下走會 applyPlanEdits、真的出片，最後一句 job.status = 'done' 還會把
+  //    cancelled 蓋掉，變成「按了取消卻拿到成品」，而且製作快照已經被取消那邊刪了。
+  if (job.status === 'cancelled') {
+    appendLog(job, '\n⛔ 動態渲染已停止，這支不再往下出片\n');
+    return;
   }
   if (job.pendingEdits && job.pendingEdits.length) {
     applyPlanEdits(job, job.pendingEdits);
@@ -3201,8 +3258,8 @@ const server = http.createServer(async (req, res) => {
       job.status = 'approved';
       saveJob(job);
       // ⚠️ 這裡用 setImmediate，不要直接 tick() —— tick() 會同步一路跑到 doRender 的
-      //    第一個 await 為止（restoreWorkspace 複製快照、render-motion 的 spawnSync…），
-      //    那段期間整個 event loop 都停著，這個 200 也發不出去。
+      //    第一個 await 為止（restoreWorkspace 要同步複製整份快照），那段期間整個
+      //    event loop 都停著，這個 200 也發不出去。
       //    2026-09-21 實際踩到：一段 17.9 秒的動態讓伺服器凍結 32 秒 —— 同事按
       //    「確認，開始出片」完全沒反應（連 3 秒輪詢都停了），又按了兩次；解凍後那兩次
       //    才被處理，那時狀態已是 approved，於是跳出「這支工作現在不是待確認狀態」。
@@ -3261,7 +3318,13 @@ const server = http.createServer(async (req, res) => {
       if (job.status === 'cancelled') return send(res, 200, { job: publicJob(job, admin) });
       if (['done', 'failed'].includes(job.status))
         return send(res, 400, { error: '這支已經結束了，要清掉請用列表的刪除' });
-      const stopped = stopRunJs(job);
+      // ⚠️ 兩種子程序都要停：產線的 run.js，以及動態渲染。
+      //    動態那 30 秒以前按不到取消（event loop 被 spawnSync 綁住，請求進不來），
+      //    2026-09-21 改成非同步之後按得到了 —— 只殺 run.js 的話它會繼續渲完、繼續往下
+      //    真的出片，最後把這裡設的 cancelled 蓋成 done（doRender 那邊也有一道檢查）。
+      //    兩個都要叫，不能用 || 短路 —— 一支停不掉不代表另一支不用停。
+      const stoppedMotion = stopMotion(job);
+      const stopped = stopRunJs(job) || stoppedMotion;
       // ⚠️ 要在改 status 之前立旗標：殺掉 run.js 會讓 runPipeline 的 close 以非 0 結束碼
       //    reject，tick() 的 .catch 接著把工作標成 failed —— 那會蓋掉這裡的 cancelled，
       //    使用者按了取消卻看到「失敗」。

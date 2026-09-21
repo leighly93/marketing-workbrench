@@ -713,3 +713,113 @@ test('清工作區只能清空、不能刪掉被 src/ 靜態 import 的 generate
   assert.deepEqual(被刪掉的, [],
     '這些檔被 src/ 靜態 import，rmrf 掉會讓 Remotion bundle 失敗；改成寫入空值');
 });
+
+// ── 動態渲染不能綁住 event loop，而且要停得下來（2026-09-21）──────────────
+//
+// 2026-09-18 接動態時用了 spawnSync，一段 17.9 秒的動態把整個伺服器凍結 31 秒 ——
+// 前台按「確認，開始出片」完全沒反應（連 3 秒輪詢都停了），同事連按三次，
+// 解凍後那幾次才被處理，跳出「這支工作現在不是待確認狀態」。改成非同步之後，
+// 那 30 秒裡取消鍵**變成按得動的**，所以取消那條路要一起補：只殺 run.js 的話，
+// 動態會繼續渲完、繼續往下真的出片，最後把 cancelled 蓋成 done。
+
+const { EventEmitter } = require('node:events');
+
+/** 一支假的 render-motion 子程序：close 由測試決定什麼時候發。 */
+function 假動態程序() {
+  const child = new EventEmitter();
+  child.pid = 5151;
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  child.kill = () => { child.killed = true; child.emit('close', null, 'SIGTERM'); return true; };
+  return child;
+}
+
+/** 記下每一次 spawn；render-motion 給假的、run.js 給一支永遠不結束的。 */
+function 假子程序() {
+  const 叫過 = [];
+  let 動態 = null;
+  return {
+    叫過,
+    get 動態() { return 動態; },
+    execFileSync: () => '',
+    spawn(cmd, args) {
+      叫過.push((args || []).join(' '));
+      if ((args || []).some((a) => String(a).includes('render-motion.js'))) {
+        動態 = 假動態程序();
+        return 動態;
+      }
+      // run.js：立刻正常結束，讓 doRender 跑完（不然 await 會永遠掛著）
+      return { pid: 4242, unref() {}, on(ev, cb) { if (ev === 'close') setImmediate(() => cb(0, null)); } };
+    },
+  };
+}
+
+/** 擺一支可以直接跑 doRender 的工作（製作快照要在，restoreWorkspace 才不會丟例外）。 */
+function 待出片工作(root, id = '20260921-112923-ssai') {
+  寫檔(path.join(root, '工作紀錄', id, '_製作資料', 'job.json'), {
+    id, template: 'dapan', owner: '莉莉', title: '合成標題',
+    status: 'approved', createdAt: '2026-09-21T03:29:23.090Z',
+    approvedAt: '2026-09-21T03:32:24.246Z', approvedBy: '莉莉',
+    skipGenerate: true, pendingEdits: [],
+  });
+  寫檔(path.join(root, '工作紀錄', id, '_製作資料', '快照', 'public', 'heygen.mp4'), '講者影片');
+  return id;
+}
+
+test('動態渲染跑到一半按取消：不往下出片，也不會被蓋成完成', { timeout: 10000 }, async (t) => {
+  const root = 沙箱(t);
+  const id = 待出片工作(root);
+  const 子程序 = 假子程序();
+  const api = loadServer(root, { childProcess: 子程序, idleTimers: true });
+
+  const job = api.getJob(id);
+  const 出片 = api.doRender(job);
+  await new Promise((r) => setImmediate(r));   // 讓 doRender 跑到 await runMotion
+
+  assert.ok(子程序.動態, '這時候動態渲染應該已經起來了');
+  assert.equal(子程序.動態.killed, false);
+
+  const 取消 = await api('POST', `/api/jobs/${id}/cancel`);
+  assert.equal(取消.status, 200);
+  assert.equal(取消.body.stopped, true, '取消要回報「有停到東西」——動態那支也算');
+  assert.equal(子程序.動態.killed, true, '取消必須連動態渲染一起殺掉');
+
+  await 出片;
+
+  assert.equal(job.status, 'cancelled', 'cancelled 不能被 done 蓋掉');
+  assert.ok(!子程序.叫過.some((a) => a.includes('run.js')),
+    '取消之後不能再往下叫 run.js 真的出片，實際叫過：' + JSON.stringify(子程序.叫過));
+
+  const log = fs.readFileSync(path.join(root, '工作紀錄', id, '_製作資料', 'log.txt'), 'utf-8');
+  assert.match(log, /動態渲染已停止/);
+  assert.doesNotMatch(log, /動態小影片重算失敗/,
+    '取消不是失敗 —— 寫成「這支沒有動態」會讓人以為出片還在跑');
+});
+
+test('取消排隊中的另一支，不能打斷正在跑的那支動態', { timeout: 10000 }, async (t) => {
+  const root = 沙箱(t);
+  const id = 待出片工作(root);
+  const 別支 = '20260921-090000-zzzz';
+  寫檔(path.join(root, '工作紀錄', 別支, '_製作資料', 'job.json'), {
+    id: 別支, template: 'dapan', owner: '莉莉', title: '排隊中的另一支',
+    status: 'queued', createdAt: '2026-09-21T01:00:00.000Z',
+  });
+  const 子程序 = 假子程序();
+  const api = loadServer(root, { childProcess: 子程序, idleTimers: true });
+
+  const job = api.getJob(id);
+  const 出片 = api.doRender(job);
+  await new Promise((r) => setImmediate(r));
+
+  const 取消 = await api('POST', `/api/jobs/${別支}/cancel`);
+  assert.equal(取消.status, 200);
+  assert.equal(子程序.動態.killed, false, '取消 B 不能殺掉 A 正在跑的動態');
+
+  子程序.動態.emit('close', 0, null);   // 動態正常跑完，出片繼續
+  // 合成環境裡沒有真的成品檔，所以 doRender 最後會以「找不到輸出檔案」收尾。
+  // 這支要證明的是「它有繼續往下走」，不是它出得了片。
+  await assert.rejects(出片, /找不到輸出檔案/);
+  assert.ok(子程序.叫過.some((a) => a.includes('run.js')), 'A 應該照常往下出片');
+  assert.notEqual(job.status, 'cancelled', 'A 不該被 B 的取消波及');
+});
