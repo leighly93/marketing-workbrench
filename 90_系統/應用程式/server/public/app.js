@@ -134,7 +134,7 @@ function statusText(j) {
 
 // tpl 的初始值只是「還沒收到 /api/health 之前」的暫時值；boot2() 收到 TPLS 之後
 // 會把它校正成「可選清單的第一個」（2026-08-31 使用者要求：焦點股日報移到最後，預設改成第一個）。
-let TPLS = {}, BRANDS = [], ADMIN = false, brand = null, tpl = null, view = 'new', openJob = null;
+let TPLS = {}, ADMIN = false, tpl = null, view = 'new', openJob = null;
 
 // 配音語氣（2026-09-14）：[值, 按鈕文字]。**值要跟 server/index.js 的 EMOTIONS 白名單一字不差**，
 // 由 90_系統/測試/配音語氣.test.js 綁住 —— 這裡多塞一個 whisper 之類的值，
@@ -433,7 +433,6 @@ $('#heygenPicker').onchange = (e) => { setHeygen(e.target.files[0]); e.target.va
 async function boot() {
   const h = await api('/api/health');
   TPLS = h.templates;
-  BRANDS = h.brands || [];
   // 修正紀錄只給管理者（本機連進來的人）看。
   // ⚠️ 2026-08-21：「進階」整塊已經沒有了 —— 裡面唯一的「用現成的講者影片」開放給所有人
   //    （那是唯一不花點數的出片路徑，鎖起來等於逼同事每試一次就燒點數）。
@@ -473,15 +472,8 @@ function boot2() {
   // 2026-08-31：tpl 的初始值改成 null（預設＝清單第一個），所以這裡不能再假設它一定指到一個版型
   // ——「全部版型都被關掉」時 tpl 會留在 null，下面幾行直接 .flags 會整頁掛掉。
   const cur = TPLS[tpl] || {};
-  $('#wrapWithAd').style.display = (cur.flags || []).includes('with-ad') ? 'flex' : 'none';
-  // 投廣模板要再選品牌（起漲K線／籌碼K線）—— 外框、logo、片尾、BGM 都不一樣
-  const showBrands = !!cur.brands && BRANDS.length > 0;
-  $('#brands').style.display = showBrands ? 'flex' : 'none';
-  if (showBrands) {
-    if (!BRANDS.includes(brand)) brand = BRANDS[0];
-    $('#brands').replaceChildren(...BRANDS.map((b) =>
-      el('div', { class: b === brand ? 'on' : '', onclick: () => { brand = b; boot2(); } }, b)));
-  } else brand = null;
+  // 2026-09-22：投廣套框版勾選框（with-ad）與品牌選擇（起漲K線／籌碼K線）隨著
+  // 焦點股日報、投廣模板一起移除 —— 現存三個版型都沒有這兩個旗標。
   drawHeygenMode();
   drawEmotion();
   drawTitle();   // 換版型 → 標題行數／字數限制不同
@@ -567,8 +559,8 @@ async function poll() {
 //    不會跟著更新 —— 沿用舊工作等於把改過的腳本配到舊稿子上。
 let pending = null;   // { id, sig, done: [已上傳的檔名], total }
 function formSig() {
-  return JSON.stringify([tpl, brand, emotion, $('#owner').value, titleLines(), $('#body').value,
-    $('#voice').value, $('#skipGenerate').checked, $('#withAd').checked,
+  return JSON.stringify([tpl, emotion, $('#owner').value, titleLines(), $('#body').value,
+    $('#voice').value, $('#skipGenerate').checked,
     slots.map((f) => f && [f.name, f.size, f.lastModified]),
     heygenFile && [heygenFile.name, heygenFile.size, heygenFile.lastModified]]);
 }
@@ -619,7 +611,7 @@ $('#submit').onclick = async () => {
           // noSpeed 的勾選框 2026-08-19 拿掉了（加速已經改在 HeyGen 生成端做，正常出片不會重複）。
           // run.js 的 --no-speed 旗標還在，要用就在終端機下。
           skipGenerate: $('#skipGenerate').checked,
-          withAd: $('#withAd').checked, autoApprove: false, brand, emotion,
+          autoApprove: false, emotion,
         }),
       });
       jobId = job.id;
@@ -753,7 +745,9 @@ async function loadJob() {
 
   const head = el('div', { class: 'card' },
     el('div', { style: 'display:flex;align-items:center;gap:12px;flex-wrap:wrap' },
-      el('h2', { style: 'margin:0' }, (TPLS[job.template] || {}).label + '　' + (job.title || '').replace(/\n/g, ' ')),
+      // ⚠️ fallback 是必要的：2026-09-22 移除三大法人等版型後，那些舊工作的 template
+      //    在 TPLS 裡查不到。沒有 fallback 的話這裡會顯示成「undefined　標題」。
+      el('h2', { style: 'margin:0' }, ((TPLS[job.template] || {}).label || job.template || '已移除的版型') + '　' + (job.title || '').replace(/\n/g, ' ')),
       el('span', { class: 'st ' + job.status },
         statusText(job) + (job.queuePosition > 0 ? `（前面還有 ${job.queuePosition} 支）` : '')),
       el('span', { style: 'flex:1' }),

@@ -37,14 +37,18 @@ function job(root, id, extra = {}) {
   return value;
 }
 
-test('健康檢查從工作根讀取品牌固定素材，程式區不需要另一份 assets', async (t) => {
+// 2026-09-22：投廣模板移除後，/api/health 不再回傳 brands。
+// ⚠️ 這裡刻意反過來斷言「不回傳」：原本的 listBrands() 是掃「共用素材/ 底下有 frame.png
+//    的資料夾」，未來節目改名成籌K／起K 系列、素材夾裡放了 frame.png 的話，
+//    復活那個函式就會把節目誤當成投廣品牌列出來。要重做品牌選擇請用明確的設定，不要掃資料夾。
+test('健康檢查不再回傳品牌清單，程式區也不需要另一份 assets', async (t) => {
   const root = fixture(t);
   write(path.join(root, '共用素材/合成品牌甲/frame.png'), 'synthetic-frame-a');
   write(path.join(root, '共用素材/合成品牌乙/frame.png'), 'synthetic-frame-b');
   write(path.join(root, '共用素材/無框素材/logo.png'), 'synthetic-logo');
   const response = await loadServer(root)('GET', '/api/health');
   assert.equal(response.status, 200);
-  assert.deepEqual(response.body.brands.sort(), ['合成品牌甲', '合成品牌乙'].sort());
+  assert.equal(response.body.brands, undefined, '品牌清單已隨投廣模板移除，不該再出現在 health');
   assert.equal(fs.existsSync(applicationPath(root, '共用素材')), false);
 });
 

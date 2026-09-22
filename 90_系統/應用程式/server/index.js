@@ -105,13 +105,14 @@ const ARCHIVE_DIR = JOBS_DIR;
 //      但如果使用者說「字太小 / 擠出去了」，回來一起看。
 const TEMPLATES = {
   // ⚠️ 這個物件的「宣告順序＝前台版型清單的顯示順序」（index.html 用 Object.entries(TPLS) 畫）。
-  // 2026-08-31 使用者要求：盤中焦點 → 大盤小報 → 三大法人 → 焦點股日報（焦點股日報放最後）。
+  // 2026-08-31 使用者要求：盤中焦點 → 大盤小報。
   // 2026-09-15 使用者指定美股焦點「放最右邊」＝可見項目的最後一個，所以排在大盤小報之後。
-  //（institution / focusstock / default 都標了 hidden、前台不畫，所以美股焦點就是最右邊那個。）
   // 要調順序就搬這裡的區塊，不要去 index.html 排序。
-  // ⚠️ 2026-09-11 起前台實際只看得到**盤中焦點與大盤小報**兩個（2026-09-15 起再加上美股焦點）—— 三大法人、焦點股日報、
-  //    投廣模板都標了 hidden。宣告順序與內容全部保留，拿掉 hidden 就原地回來。
-  //    /api/health 仍然回傳**全部**版型：工作列表要靠它顯示舊工作的版型名稱（見 public/app.js 的 pickable）。
+  // ⚠️ 2026-09-22：三大法人（institution）、焦點股日報（focusstock）、投廣模板（default）整組移除
+  //    —— 使用者確認是階段性任務、不會再使用。它們原本只是標 hidden 留著，現在連同 composition、
+  //    素材、專屬 scripts 一起刪了。要找回來：git log --diff-filter=D -- '90_系統/應用程式/src/Institution'
+  //    ⚠️ 既有的 3 支 institution 舊工作仍留在 工作紀錄/，但版型已不存在 —— 前台一律以代號顯示
+  //       並擋掉重跑（見 public/app.js 的 tplLabel 與本檔重跑處的檢查）。
   midday: {
     // 2026-08-31 新增。版面照大盤小報直式複製一份，所以標題規格跟大盤小報一樣（兩行、每行 10 字參考值）。
     // ⚠️ 2026-09-14 使用者把參考值從 9 改成 10，並指定「一樣置中，可以參考圖片很靠邊沒關係」——
@@ -159,71 +160,13 @@ const TEMPLATES = {
     planKind: 'shots',
     flags: [],
   },
-  institution: {
-    title: { lines: 2, per: 11, wrap: true, where: '開場第一秒' },
-    label: '三大法人',
-    // 2026-09-11 使用者：「目前都用不到了」→ 從前台選版型清單拿掉。
-    // 跟投廣模板同一個做法：**整條產線原封不動保留**（render:institution、auto-focus、
-    // MINIMAX_FIXED_ANCHOR_VOICES.institution、planKind: 'focus' 那套寫回規則全都還在），
-    // 這裡只是不給前台選。要重新開放：刪掉這行 hidden 就會回到清單。
-    // ⚠️ 沒有加 disabled —— 舊工作照樣能開、能改配圖、能重跑，只是開不了新的。
-    //    真要連 API 建立都擋掉再補 disabled: true（見 default 那個先例與 POST 建立處的檢查）。
-    hidden: true,
-    hint: '',
-    outputs: ['out/output-institution.mp4'],
-    plan: 'src/Institution/institution-focus.generated.json',
-    // focus＝「區塊帶 + 黃框」而不是「一張截圖」，寫回規則跟 shots 不同（見 planItemsOf 上方註解）。
-    // 2026-08-21 起跟另外兩個一樣可以線上改（使用者：「配圖計劃也改人手工，因為現在配的還是不好」）。
-    planKind: 'focus',
-    flags: [],
-  },
-  focusstock: {
-    // 2026-08-17 使用者定案：可以超過六個字、可以換行，但字級一律不變。
-    // FocusstockComposition 的「超長就縮小」邏輯已經拿掉，改成自然折行：
-    // 145px 字級 ÷ 1000px 可用寬 ≈ 一行 7 字，14 字剛好折成兩行、版面還有空間。
-    title: { lines: 1, per: 14, wrap: true, where: '開場第一秒（超過 7 字會折行，字級不變）' },
-    label: '焦點股日報',
-    // 2026-09-11 使用者：「目前都用不到了」→ 從前台選版型清單拿掉（同 institution，見上面那段註解）。
-    // 這支的客製版／投廣套框版兩條輸出、--with-ad 旗標都照原樣留著。
-    hidden: true,
-    // 2026-08-13 使用者定案：只出客製版。要投廣套框版才勾選項（run.js 的 --with-ad）。
-    hint: '',
-    outputs: ['out/output-focusstock.mp4', 'out/output-focusstock-ad.mp4'],
-    outputLabels: { 'output-focusstock.mp4': '', 'output-focusstock-ad.mp4': '投廣版' },
-    plan: 'src/Focusstock/focusstock-shots.generated.json',
-    planKind: 'shots',
-    // 2026-08-13 使用者：投廣套框版的選項先不要顯示。
-    // 程式碼整條都留著（job.withAd → run.js --with-ad → render:focusstock-ad），
-    // 只是這裡不宣告 with-ad，前台就不會畫那個勾選框。要恢復把 'with-ad' 加回來即可。
-    flags: [],
-  },
-  default: {
-    title: { lines: 2, per: 12, wrap: false, where: '上方 bar 全程顯示' },
-    label: '投廣模板',
-    // 投廣模板先收起來（2026-08-18 變灰不給點 → 2026-08-20 使用者要求連選項都拿掉），**未來可能會回來**。
-    // 整條產線（render:marketing、品牌素材、投廣套框）全部原封不動保留，這裡只是不給前台選。
-    // 要重新開放：刪掉 hidden 就會出現在清單、再刪 disabled 就能點。
-    hidden: true,
-    disabled: true,
-    // 起漲K線 / 籌碼K線：差在 frame・logo・outro・bgm・deeplinks，都在 assets/<品牌>/。
-    // 清單是掃資料夾來的 —— 之後多一個品牌就多一個資料夾，不用改程式。
-    brands: true,
-    hint: '',
-    outputs: ['out/output.mp4'],
-    plan: 'src/marketing-shots.generated.json',
-    planKind: 'shots',
-    flags: [],
-  },
 };
 
-/** 投廣模板可選的品牌 = assets/ 底下有 frame.png 的資料夾 */
-function listBrands() {
-  const dir = path.join(WORKSPACE_ROOT, '共用素材');
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && fs.existsSync(path.join(dir, e.name, 'frame.png')))
-    .map((e) => e.name);
-}
+// ⚠️ 2026-09-22：listBrands()（掃 共用素材/ 底下有 frame.png 的資料夾當投廣品牌清單）
+//    隨投廣模板一起移除。素材資料夾 共用素材/起漲K線、共用素材/籌碼K線 **留著**，
+//    未來節目改名為籌K／起K 系列時要沿用那套外框與 deeplink。
+//    ⚠️ 要重新做品牌選擇時別直接復活這個函式：它是「掃資料夾名」的，
+//       節目資料夾一旦放了 frame.png 就會混進品牌清單。
 
 // public/ 裡屬於「套版素材」的檔案，清場時不要動（run.js 會自己重新複製，
 // 但留著可以少複製一次；字型更是絕對不能刪）。跟 analyze-app-images.js 同一條規則。
@@ -475,11 +418,9 @@ function restoreWorkspace(job) {
 // 修法不是改渲染，是在「收成品」這一步用 ffmpeg 轉一次交付檔。
 // ⚠️ 渲染流程一個字都沒動 —— run.js／remotion.config.ts／npm run render:* 全部原樣。
 //
-// 只有下面白名單裡的輸出會轉（2026-08-21 使用者點名的三個直式，2026-08-31 加上盤中焦點共四個）：
-//   （2026-09-15 起加上美股焦點共五個）
-//   橫式（output-dapan-landscape）過不了規格第 4 項「1080×1920 直式、不加黑邊」，硬套只會加黑邊或裁切；
-//   投廣版（output-focusstock-ad）與投廣模板（output.mp4）使用者定案不套。
-//   不在名單裡的照舊直接 copyFileSync。
+// 舊規則（已被下面那段取代，留著看沿革）：只有白名單裡的直式會轉交付規格，
+//   橫式（output-dapan-landscape）過不了規格第 4 項「1080×1920 直式、不加黑邊」；
+//   投廣版與投廣模板（output.mp4）使用者定案不套 —— 那兩個版型 2026-09-22 已整組移除。
 /**
  * 2026-09-17 使用者定案：**所有成品都做收尾**，不再分「只有直式要轉」。
  * 舊規則是為了完整交付規格那 23 秒的成本才挑著做；現在收尾只要 0.6 秒（視訊 copy），
@@ -757,7 +698,12 @@ function shotsOf(plan) {
   return Array.isArray(plan) ? plan : plan.shots || [];
 }
 
-// ── 三大法人的計畫（planKind: 'focus'）──────────────
+// ── 計畫 planKind: 'focus' ──────────────
+// ⚠️ 2026-09-22：唯一用到 focus 的版型（三大法人）已移除，現存版型全是 'shots'，
+//    所以這一段目前**沒有任何呼叫路徑會走到**。之所以留著不刪：它是「區塊帶＋黃框」
+//    那套寫回規則的完整說明，未來版型參數化要重做配圖時還用得上。
+//    要徹底清掉的話，連同各處 `planKind === 'focus'` 的分支一起處理。
+// 以下是原本的說明：
 // 跟另外兩個版型不一樣的地方，動這段之前先看懂：
 //  1. 一列不是「一張截圖」，是「版面圖上的一個區塊帶 ＋ 一個黃框」。所以 focus 檔裡**沒有 src**
 //     （永遠是那張版面截圖），只有 `section`（區塊代號）＋ `cellText`（要框住的字）。
@@ -1989,8 +1935,8 @@ function buildCounterfactual(job) {
     if (!shots.length) return;
 
     const out = jobPath(job.id, 'auto-noannots.json');
-    const script = TEMPLATES[job.template].planKind === 'focus' ? 'auto-focus.js' : 'auto-shot.js';
-    execFileSync('node', [path.join('scripts', script), '--write', '--out', out, '--no-annots'],
+    // 2026-09-22：planKind 'focus'（三大法人）移除後只剩 auto-shot.js 這一條路。
+    execFileSync('node', [path.join('scripts', 'auto-shot.js'), '--write', '--out', out, '--no-annots'],
       { cwd: ROOT, stdio: 'ignore', timeout: 120000 });
 
     const n = JSON.parse(fs.readFileSync(out, 'utf-8')).length;
@@ -2058,10 +2004,8 @@ async function doPrepare(job) {
   }
 
   const args = [`--template=${job.template}`, '--stop-before-render'];
-  if (job.brand) args.push(`--brand=${job.brand}`);
   if (job.skipGenerate) args.push('--skip-generate');
   if (job.noSpeed) args.push('--no-speed');
-  if (job.withAd) args.push('--with-ad');
   // 一律明講，不靠 run.js 的預設 —— 出片當下用的是哪個語氣要留在執行記錄裡（run.js 配音那行會印）。
   args.push(`--emotion=${normalizeEmotion(job.emotion)}`);
   await runPipeline(job, args);
@@ -2147,7 +2091,6 @@ async function doRender(job) {
   }
 
   const args = [`--template=${job.template}`, '--render-only'];
-  if (job.withAd) args.push('--with-ad');
   const renderFrom = Date.now() - 3000; // 容忍一點時鐘誤差
   await runPipeline(job, args);
 
@@ -2665,7 +2608,7 @@ const server = http.createServer(async (req, res) => {
         externalLock: !busy && fs.existsSync(LOCK),
         lockAgeMin: fs.existsSync(LOCK)
           ? Math.round((Date.now() - fs.statSync(LOCK).mtimeMs) / 60000) : null,
-        templates: TEMPLATES, brands: listBrands(), reasonTags: REASON_TAGS,
+        templates: TEMPLATES, reasonTags: REASON_TAGS,
         startedAt: STARTED_AT, codeChangedAt: codeChangedAt(),
         // 前台檔案本身的時間戳。已經開著的分頁不會自己重抓 index.html，
         // 所以要讓它自己發現「我手上這份網頁過期了」→ 跳「請重新整理」（2026-08-21）。
@@ -2986,6 +2929,14 @@ const server = http.createServer(async (req, res) => {
         jobPath(src.id, 'input', 'heygen.mp4'),
         jobPath(src.id, 'state', 'public', 'heygen.mp4'),
       ].find((p) => fs.existsSync(p));
+
+      // 版型被移除的舊工作不能重跑：composition、素材與 parse/use script 都不在了，
+      // 硬跑只會在 remotion 那一步失敗，不如在這裡講清楚（2026-09-22 移除三大法人等三個版型）。
+      if (!TEMPLATES[src.template]) {
+        return send(res, 400, {
+          error: `這支工作的版型「${src.template}」已經移除，不能重跑。工作與成品都還在，可以照常查看與下載。`,
+        });
+      }
 
       const missing = [];
       if (!fs.existsSync(scriptFrom)) missing.push('稿件.txt');

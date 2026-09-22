@@ -74,15 +74,7 @@ test('對照組有排、只是沒排到這一句 → 才是「AI 本來不配圖
   assert.match(row.autoWhy, /本來一張圖都不會配/);
 });
 
-test('focus 版型的對照組沒有 src → 要補成版面截圖，不能算成「AI 本來不配圖」', async (t) => {
-  const root = fixture(t);
-  const ID = '20260914-090000-cccc';
-  建立待確認工作(root, { id: ID, template: 'institution', 版面圖: '版面.png',
-    // auto-focus 真實輸出的形狀：section ＋ cellText，沒有 src
-    對照組: [{ section: 'sec1', cellText: '+304.97', startCharIdx: 0, endCharIdx: 旁白.length - 1, _auto: true }] });
-
-  const row = await 取人工標記(root, ID);
-  assert.equal(row.autoKind, 'covered');
-  assert.equal(row.from, '版面.png', '對照組明明有配這一句，「原本」卻是空的');
-  assert.doesNotMatch(row.autoWhy, /本來一張圖都不會配/);
-});
+// 2026-09-22：唯一的 focus 版型（三大法人）已移除，所以「focus 版型的對照組沒有 src」
+// 這個案例不再有真實的觸發路徑，測試一併移除。
+// server/index.js 裡 planKind === 'focus' 的分支仍留著（見該檔 focus 段落的說明），
+// 未來若重新啟用 focus 版型，把這個測試從這個 commit 的 diff 撿回來即可。

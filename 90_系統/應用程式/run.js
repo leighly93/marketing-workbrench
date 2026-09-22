@@ -20,27 +20,29 @@ const PROJECT_DIR = __dirname;
 const tradToSimpConverter = OpenCC.Converter({ from: "t", to: "s" });
 
 // ── 版型選擇（2026-08-06 新增）──────────────
-// 用法：node run.js --template=dapan（不帶參數 = 預設既有 MarketingVideo 流程，行為完全不變）
-// 大盤小報是獨立 composition，不走 use-brand.js 品牌切換、不走隨機 avatar 池、
+// 用法：node run.js --template=dapan
+// ⚠️ 2026-09-22 起 --template 是**必填**：原本不帶參數會走 default（投廣模板 MarketingVideo），
+//    那個版型連同三大法人、焦點股日報一起移除了，沒有可以沿用的預設值。
+//    少帶參數寧可在這裡停住，也不要默默跑一條不存在的產線。
+// 各版型是獨立 composition，不走隨機 avatar 池，
 // 最後跑的 parse-script / render 也是專用版本（parse-script:dapan / render:dapan）。
 const TEMPLATE_ARG = process.argv.find((a) => a.startsWith("--template="));
-const TEMPLATE = TEMPLATE_ARG ? TEMPLATE_ARG.split("=")[1] : "default";
-if (!["default", "dapan", "institution", "focusstock", "midday", "usstock"].includes(TEMPLATE)) {
-  console.error(`❌ 不認得的 --template=${TEMPLATE}（目前支援：default / dapan / institution / focusstock / midday / usstock）`);
+const TEMPLATE = TEMPLATE_ARG ? TEMPLATE_ARG.split("=")[1] : "";
+if (!["dapan", "midday", "usstock"].includes(TEMPLATE)) {
+  console.error(`❌ 不認得的 --template=${TEMPLATE || "（未指定）"}（目前支援：dapan / midday / usstock）`);
   process.exit(1);
 }
-// 大盤小報／三大法人／焦點股日報／盤中焦點／美股焦點是「同一個模子」的五條固定主播產線：固定 avatar、125% 加速。
+// 大盤小報／盤中焦點／美股焦點是「同一個模子」的三條固定主播產線：固定 avatar、125% 加速。
 // 配音 2026-08-24 起走 MiniMax + HeyGen 音訊驅動對嘴（原本是 HeyGen 文字驅動，--heygen-voice 可退回）。
 // 大盤小報／盤中焦點在 2026-09-11 當天曾短暫改回 HeyGen 內建語音，同日又改回 MiniMax（換了新 clone 聲音），
-// 所以現在**四條線一致走 MiniMax**（見 HEYGEN_VOICE_ONLY_TEMPLATES，那個集合現在是空的）。
-// 用這個集合統一判斷，避免每處都寫 (dapan || institution || focusstock || midday || usstock)。
+// 所以現在**三條線一致走 MiniMax**（見 HEYGEN_VOICE_ONLY_TEMPLATES，那個集合現在是空的）。
 // ⚠️ 這個集合是「加速只跑一次」的守門依據：generateHeygenVideo() 末尾的加速用 !FIXED_ANCHOR_TEMPLATE
-//    擋掉，固定主播三條線一律只走 main() 內那一次。新增固定主播版型時只要加進這個集合即可，
+//    擋掉，固定主播產線一律只走 main() 內那一次。新增固定主播版型時只要加進這個集合即可，
 //    不要再另外寫 TEMPLATE !== "xxx" 的個別判斷（2026-08-17 的雙重加速 bug 就是這樣來的）。
+// ⚠️ 2026-09-22 移除 default／institution／focusstock 之後，現存三個版型**全部**都是固定主播，
+//    所以這個值目前恆為 true。集合本身保留：它是守門的語意，不是湊巧成立的條件。
 const FIXED_ANCHOR_TEMPLATE =
   TEMPLATE === "dapan" ||
-  TEMPLATE === "institution" ||
-  TEMPLATE === "focusstock" ||
   TEMPLATE === "midday" ||
   TEMPLATE === "usstock";
 
@@ -75,18 +77,11 @@ const SKIP_GENERATE = process.argv.includes("--skip-generate");
 //                 所以預設維持 Avatar IV。要再評估請用正式長度的稿子比，別用 5 秒短片）
 const NO_SPEED = process.argv.includes("--no-speed");
 
-// 焦點股日報：2026-08-13 使用者定案「之後只要出客製版，不用多出投廣套框版」。
-// 所以預設不出投廣版；真的要的時候加 --with-ad。
-// （--no-ad 保留但已是預設值，舊指令照打不會出事。）
-const WITH_AD = process.argv.includes("--with-ad");
-const NO_AD = !WITH_AD;
-
-// 投廣模板（default）的品牌：起漲K線 / 籌碼K線。
-// 這兩個差在 frame.png / logo.png / outro.mp4 / bgm.wav / deeplinks.json，
-// 都放在 共用素材/<品牌>/。以前要自己先跑 node scripts/use-brand.js <品牌>，
-// 忘了跑就會沿用上一支的外框（2026-08-13 接前台時補上）。
-const BRAND_ARG = process.argv.find((a) => a.startsWith("--brand="));
-const BRAND = BRAND_ARG ? BRAND_ARG.split("=").slice(1).join("=") : null;
+// ⚠️ 2026-09-22：--with-ad（焦點股日報投廣套框版）與 --brand=（投廣模板品牌切換）隨著
+//    那兩個版型一起移除。旗標本身還會被前台的舊 job.json 帶進來，收下但不做事，
+//    這樣重跑舊工作不會因為「多一個不認得的參數」就掛掉。
+//    品牌素材 共用素材/起漲K線、共用素材/籌碼K線 **刻意留著**：未來節目改名為
+//    籌K／起K 系列時要沿用那套外框與 deeplink。
 
 // ── 兩段式出片（2026-08-13 前台網頁需要）──
 //   --stop-before-render：跑到「算出配圖計畫」就停，不 render。
@@ -340,16 +335,9 @@ const DAPAN_AVATAR = { id: "5bad6432678c4157aeaf245021a2326e", gender: "female" 
 //    不然那兩支測的是舊聲音。
 const DAPAN_HEYGEN_VOICE_ID = "dc529e16819846b2a0ba986a7fc51a85";
 
-// 三大法人：跟大盤小報同一個模子（固定主播、HeyGen 文字驅動、125% 加速），只在 TEMPLATE === "institution" 用。
-// 2026-08-10 使用者提供：avatar 57d5790b…、中文女聲 voice e96f2834…。
-const INSTITUTION_AVATAR = { id: "57d5790b64e34472a932d6c7d0b4f64b", gender: "female" };
-const INSTITUTION_HEYGEN_VOICE_ID = "e96f2834052f404c9c3725b4fd6ee55a";
-
-// 焦點股日報：同一個模子（固定主播、HeyGen 文字驅動、125% 加速），只在 TEMPLATE === "focusstock" 用。
-// 2026-08-11 使用者提供：avatar 7765f68a…、中文女聲 voice 65b04eff…。
-// 一次跑會出兩支：客製版（Focusstock，藍色版型有開場卡）＋投廣套框版（FocusstockAd，籌碼K線外框＋片尾、無開場）。
-const FOCUSSTOCK_AVATAR = { id: "7765f68aaa6a4b658b95f4e5357c21d5", gender: "female" };
-const FOCUSSTOCK_HEYGEN_VOICE_ID = "65b04effe83f423dbb1f66317318c37f";
+// ⚠️ 2026-09-22：三大法人（INSTITUTION_AVATAR 57d5790b…／voice e96f2834…）與
+//    焦點股日報（FOCUSSTOCK_AVATAR 7765f68a…／voice 65b04eff…）隨版型一起移除。
+//    真要找回那兩組 HeyGen id，翻這個 commit 的 diff 就有。
 
 // 盤中焦點：2026-08-31 新增。使用者定案「跟現有的大盤小報很像…只改 heygen photo id，
 // voice id 一樣」—— 所以 avatar 換成使用者提供的這一支，配音（MiniMax 與 HeyGen 內建語音）
@@ -399,8 +387,6 @@ const USSTOCK_HEYGEN_VOICE_ID = "";
 //    重跑：node scripts/tts-ab.js --voice-id=<id> --text-file=<稿子> --dict --emotion=happy --trad-only
 const MINIMAX_FIXED_ANCHOR_VOICES = {
   dapan: "moss_audio_b47d71d2-ada4-11f1-8900-9edb4a3ef07d",       // 大盤小報（2026-09-11 換，原 e9e9da93…）
-  institution: "moss_audio_ad826960-9f57-11f1-8aea-1268c6bb306c", // 三大法人
-  focusstock: "moss_audio_3a75102e-54db-11f1-981b-8a143315d498",  // 焦點股日報（＝既有 MINIMAX_VOICE_ID）
   midday: "moss_audio_f85dc873-ada4-11f1-a626-8a59b47fb1f9",      // 盤中焦點（2026-09-11 換，原本與大盤小報共用 e9e9da93…）
   usstock: "moss_audio_3a75102e-54db-11f1-981b-8a143315d498",     // 美股焦點（2026-09-15 使用者提供）
   // ⚠️ 美股焦點與焦點股日報目前是**同一支 MiniMax 聲音**（使用者指定，不是複製貼上的失誤）。
@@ -582,33 +568,16 @@ function reuseAppImages(shots, pub) {
  * 回傳 Promise 或 null（該版型沒有要分析的圖）。
  */
 function startImageAnalysis() {
-  // 三大法人：固定版面資訊圖 → 用①②③④編號推區塊帶（供聚焦/高亮效果）
-  if (TEMPLATE === "institution") {
-    // 資訊圖檔名不挑：使用者常丟 0812.png 這種日期命名。
-    // （2026-08-12 踩到：這裡寫死 image.png → 判定沒有圖而略過偵測，
-    //   regions 停在舊圖、composition 又找不到檔案 → render 404。）
-    const fsx = require("fs");
-    const pubDir = resolve(PROJECT_DIR, "public");
-    const ASSET = /^(dapan|focusstock|institution|midday|usstock)-|^(frame|logo)\.png$|^NotoSans/i;
-    const found = fsx.existsSync(pubDir)
-      ? fsx
-          .readdirSync(pubDir)
-          .filter((f) => /\.(png|jpg|jpeg)$/i.test(f) && !ASSET.test(f))
-          .sort()
-      : [];
-    if (found.length === 0) {
-      log("ℹ️ public/ 沒有資訊圖，略過版面偵測");
-      return null;
-    }
-    log(`   資訊圖：${found.includes("image.png") ? "image.png" : found[0]}`);
-    log("🔎 開始資訊圖版面偵測（與 HeyGen 生成平行進行）");
-    return runBackground("npm run analyze:institution", "版面偵測");
-  }
-  // 其餘版型（大盤小報／焦點股／投廣）：變動版面的 APP 截圖
+  // ⚠️ 2026-09-22：三大法人那條「固定版面資訊圖 → 用①②③④編號推區塊帶」的分支
+  //    隨版型移除（它呼叫的是已刪除的 analyze:institution）。現存版型全走下面這條。
+  // 現存版型（大盤小報／盤中焦點／美股焦點）：變動版面的 APP 截圖
   //   → 判斷是哪一頁、哪一檔股票，並存下逐字框座標，供之後框數字／局部放大用。
   const fs2 = require("fs");
   const pub = resolve(PROJECT_DIR, "public");
   // 截圖檔名不限（使用者常直接丟手機相機命名的檔），排除套版素材即可
+  // ⚠️ focusstock-／institution- 這兩個前綴**刻意留著**：那兩個版型 2026-09-22 移除了，
+  //    但同事機器上的 public/ 可能還躺著它們的舊素材。regex 認得＝當成套版素材略過；
+  //    拿掉的話那些殘留會被當成「使用者上傳的截圖」送進 OCR。
   const TEMPLATE_ASSET = /^(dapan|focusstock|institution|midday|usstock)-|^(frame|logo)\.png$|^NotoSans/i;
   const shots = fs2.existsSync(pub)
     ? fs2.readdirSync(pub).filter(
@@ -1530,21 +1499,15 @@ async function main() {
 
   const templateLabel =
     TEMPLATE === "dapan" ? "📰 大盤小報"
-    : TEMPLATE === "institution" ? "🏦 三大法人"
-    : TEMPLATE === "focusstock" ? "🔍 焦點股日報"
     : TEMPLATE === "midday" ? "⏱ 盤中焦點"
-    : TEMPLATE === "usstock" ? "🇺🇸 美股焦點"
-    : "🎬 預設（起漲K線／籌碼K線投廣模板）";
+    : "🇺🇸 美股焦點";
   log(`版型：${templateLabel}${SKIP_GENERATE ? "（跳過生成，用現有 public/heygen.mp4）" : ""}`);
 
   // 先清掉 public/ 裡「非當前版型」的殘留素材，維持精簡（源頭都在 共用素材/，可再複製回來）
   cleanStaleStaging(PROJECT_DIR, TEMPLATE);
 
   // 固定主播版型：先把套版素材（intro-frame.jpg / header-overlay.png / bgm.wav）複製進 public/
-  if (TEMPLATE === "default" && BRAND) {
-    log(`複製投廣品牌素材：${BRAND}`);
-    run(`node scripts/use-brand.js "${BRAND}"`);
-  } else if (TEMPLATE === "dapan") {
+  if (TEMPLATE === "dapan") {
     log("複製大盤小報套版素材");
     run("npm run use-dapan-assets");
   } else if (TEMPLATE === "midday") {
@@ -1553,16 +1516,6 @@ async function main() {
   } else if (TEMPLATE === "usstock") {
     log("複製美股焦點套版素材");
     run("npm run use-usstock-assets");
-  } else if (TEMPLATE === "institution") {
-    log("複製三大法人套版素材");
-    run("npm run use-institution-assets");
-  } else if (TEMPLATE === "focusstock") {
-    log("複製焦點股日報套版素材（客製版）");
-    run("npm run use-focusstock-assets");
-    if (WITH_AD) {
-      log("複製籌碼K線投廣素材（外框／片尾／BGM）");
-      run("npm run use-focusstock-ad-assets");
-    }
   }
 
   const heygenPath = resolve(PROJECT_DIR, "public/heygen.mp4");
@@ -1689,29 +1642,6 @@ function prepareShots() {
     } catch (e) {
       log("⚠️ 自動配圖失敗（不影響出片，只是這支不會插圖）：" + e.message);
     }
-  } else if (TEMPLATE === "institution") {
-    run("npm run parse-script:institution");
-    // 自動聚焦：不用在 script.txt 標注，程式比對「旁白數字 ↔ 圖上數字」自己決定
-    // 哪一句要聚焦哪一區、框哪一格。手寫的 (focus:) 標記優先，自動只補其餘句子。
-    try {
-      run("npm run auto-focus");
-    } catch (e) {
-      log("⚠️ 自動聚焦失敗（不影響出片，只是這支不會有聚焦效果）：" + e.message);
-    }
-  } else if (TEMPLATE === "focusstock") {
-    run("npm run parse-script:focusstock");
-    try {
-      run("npm run auto-shot");
-    } catch (e) {
-      log("⚠️ 自動配圖失敗（不影響出片，只是這支不會插圖）：" + e.message);
-    }
-  } else {
-    run("npm run parse-script");
-    try {
-      run("npm run auto-shot:default");
-    } catch (e) {
-      log("⚠️ 自動配圖失敗（不影響出片，只是這支不會插圖）：" + e.message);
-    }
   }
 }
 
@@ -1731,22 +1661,6 @@ function renderTemplate() {
     // 美股焦點跟盤中焦點一樣只出直式
     run("npm run render:usstock");
     log("✅ 完成！輸出影片在 90_系統/暫存/產線輸出/output-usstock.mp4");
-  } else if (TEMPLATE === "institution") {
-    run("npm run render:institution");
-    log("✅ 完成！輸出影片在 90_系統/暫存/產線輸出/output-institution.mp4");
-  } else if (TEMPLATE === "focusstock") {
-    // 同一份 heygen／字幕／腳本出兩支（2026-08-11 使用者定案）：
-    //   客製版 = 藍色版型＋開場卡；投廣版 = 籌碼K線外框＋片尾、無開場卡。
-    run("npm run render:focusstock");
-    if (WITH_AD) {
-      run("npm run render:focusstock-ad");
-      log("✅ 完成！客製版 90_系統/暫存/產線輸出/output-focusstock.mp4、投廣版 90_系統/暫存/產線輸出/output-focusstock-ad.mp4");
-    } else {
-      log("✅ 完成！90_系統/暫存/產線輸出/output-focusstock.mp4（只出客製版；要投廣版請加 --with-ad）");
-    }
-  } else {
-    run("npm run render");
-    log("✅ 完成！輸出影片在 90_系統/暫存/產線輸出/output.mp4");
   }
 }
 
@@ -1862,102 +1776,18 @@ async function generateHeygenVideo(heygenPath) {
       videoUrl = await generateTextDrivenVideo(cleanedScript, USSTOCK_AVATAR.id, USSTOCK_HEYGEN_VOICE_ID, "marketing-auto-usstock");
     }
     await downloadVideo(videoUrl, heygenPath);
-  } else if (TEMPLATE === "institution") {
-    // ── 三大法人單人 path：跟大盤小報同一套（預設 MiniMax 配音 + HeyGen 音訊驅動對嘴）──
-    if (!FIXED_ANCHOR_USE_MINIMAX && !INSTITUTION_HEYGEN_VOICE_ID) {
-      console.error("❌ 三大法人要用 HeyGen 內建語音，但 INSTITUTION_HEYGEN_VOICE_ID 還是空值。");
-      console.error("   去 HeyGen 後台「Voice Library」或呼叫 GET https://api.heygen.com/v3/voices 找一個中文女聲 voice_id，填進 run.js 的 INSTITUTION_HEYGEN_VOICE_ID 常數。");
-      process.exit(1);
-    }
-    let cleanedScript = cleanScript(rawScript);
-    for (const rule of voiceRules) {
-      cleanedScript = cleanedScript.split(rule.from).join(rule.to);
-    }
-    log(`清洗後腳本（繁）：\n  ${cleanedScript}`);
-
-    log(`固定 avatar（三大法人）：${INSTITUTION_AVATAR.id}`);
-
-    let videoUrl;
-    if (FIXED_ANCHOR_USE_MINIMAX) {
-      log(`配音來源：MiniMax voice ${MINIMAX_FIXED_ANCHOR_VOICES.institution}`);
-      videoUrl = await generateAudioDrivenVideo(cleanedScript, INSTITUTION_AVATAR.id, MINIMAX_FIXED_ANCHOR_VOICES.institution, "marketing-auto-institution");
-    } else {
-      log("⏳ 正在呼叫 HeyGen（文字驅動），請勿重複執行此腳本...");
-      log("   預計等待 3-5 分鐘，請耐心等候 ☕");
-      videoUrl = await generateTextDrivenVideo(cleanedScript, INSTITUTION_AVATAR.id, INSTITUTION_HEYGEN_VOICE_ID, "marketing-auto-institution");
-    }
-    await downloadVideo(videoUrl, heygenPath);
-  } else if (TEMPLATE === "focusstock") {
-    // ── 焦點股日報單人 path：同大盤小報／三大法人（預設 MiniMax 配音 + HeyGen 音訊驅動對嘴）──
-    if (!FIXED_ANCHOR_USE_MINIMAX && !FOCUSSTOCK_HEYGEN_VOICE_ID) {
-      console.error("❌ 焦點股日報要用 HeyGen 內建語音，但 FOCUSSTOCK_HEYGEN_VOICE_ID 還是空值。");
-      process.exit(1);
-    }
-    let cleanedScript = cleanScript(rawScript);
-    for (const rule of voiceRules) {
-      cleanedScript = cleanedScript.split(rule.from).join(rule.to);
-    }
-    log(`清洗後腳本（繁）：\n  ${cleanedScript}`);
-    log(`固定 avatar（焦點股日報）：${FOCUSSTOCK_AVATAR.id}`);
-
-    let videoUrl;
-    if (FIXED_ANCHOR_USE_MINIMAX) {
-      log(`配音來源：MiniMax voice ${MINIMAX_FIXED_ANCHOR_VOICES.focusstock}`);
-      videoUrl = await generateAudioDrivenVideo(cleanedScript, FOCUSSTOCK_AVATAR.id, MINIMAX_FIXED_ANCHOR_VOICES.focusstock, "marketing-auto-focusstock");
-    } else {
-      log("⏳ 正在呼叫 HeyGen（文字驅動），請勿重複執行此腳本...");
-      log("   預計等待 3-5 分鐘，請耐心等候 ☕");
-      videoUrl = await generateTextDrivenVideo(cleanedScript, FOCUSSTOCK_AVATAR.id, FOCUSSTOCK_HEYGEN_VOICE_ID, "marketing-auto-focusstock");
-    }
-    await downloadVideo(videoUrl, heygenPath);
-  } else {
-    // ── 單人 path（投廣模板）──
-    // 2026-08-17 起預設走 HeyGen 內建語音（文字驅動），跟固定主播三條線同一條路。
-    // 加 --minimax 可退回原本的「MiniMax 配音 + HeyGen 音訊驅動」。
-    let cleanedScript = cleanScript(rawScript);
-    for (const rule of voiceRules) {
-      cleanedScript = cleanedScript.split(rule.from).join(rule.to);
-    }
-
-    const avatar = randomAvatar();
-
-    if (USE_MINIMAX) {
-      log(`清洗後腳本（繁）：\n  ${cleanedScript}`);
-      log(`抽到 avatar：${avatar.id}（${avatar.gender === "male" ? "男" : "女"}）`);
-      // 2026-08-24：這段原本自己攤開寫（繁→簡 → minimaxTTS → 備份 → upload → 音訊驅動），
-      // 現在收斂成 generateAudioDrivenVideo()，跟固定主播三條線共用同一支，行為不變。
-      const videoUrl = await generateAudioDrivenVideo(
-        cleanedScript,
-        avatar.id,
-        SOLO_VOICES[avatar.gender],
-        "marketing-auto"
-      );
-      await downloadVideo(videoUrl, heygenPath);
-    } else {
-      log(`清洗後腳本（繁，直接送 HeyGen，不轉簡體、不經 MiniMax）：\n  ${cleanedScript}`);
-      // 跟 MiniMax 時代一樣：抽到的 avatar 性別決定配音，只是 voice 換成 HeyGen 的。
-      const heygenVoiceId = HEYGEN_SOLO_VOICES[avatar.gender];
-      log(`抽到 avatar：${avatar.id}（${avatar.gender === "male" ? "男" : "女"}）→ HeyGen voice ${heygenVoiceId}`);
-
-      log("⏳ 正在呼叫 HeyGen（文字驅動），請勿重複執行此腳本...");
-      log("   預計等待 3-5 分鐘，請耐心等候 ☕");
-      const videoUrl = await generateTextDrivenVideo(
-        cleanedScript,
-        avatar.id,
-        heygenVoiceId,
-        "marketing-auto"
-      );
-      await downloadVideo(videoUrl, heygenPath);
-    }
   }
 
-  // 加速 heygen.mp4 125%（保持音調）── 既有投廣模板（default）專用
-  // 固定主播五條線（dapan／institution／focusstock／midday／usstock）在 main() 內統一加速，這裡一律擋掉，
-  // 避免同一支影片被加速兩次。2026-08-17 修正：原本只擋 dapan，institution／focusstock 漏網。
+  // 加速 heygen.mp4 125%（保持音調）
+  // 固定主播三條線（dapan／midday／usstock）在 main() 內統一加速，這裡一律擋掉，
+  // 避免同一支影片被加速兩次。2026-08-17 修正：原本只擋 dapan，其他版型漏網。
+  // ⚠️ 2026-09-22：唯一走「這裡加速」的版型是投廣模板（default），已隨版型移除，
+  //    所以 FIXED_ANCHOR_TEMPLATE 恆為 true、這段目前不會執行。保留守門語意，
+  //    未來新增非固定主播版型時這裡就會重新生效。
   if (!FIXED_ANCHOR_TEMPLATE && NO_SPEED) {
     log("⏩ 已指定 --no-speed，跳過 125% 加速（保留原始速度）");
   } else if (!FIXED_ANCHOR_TEMPLATE) {
-    speedUpHeygen(heygenPath, "投廣模板");
+    speedUpHeygen(heygenPath, "非固定主播版型");
   }
 }
 

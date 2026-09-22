@@ -12,7 +12,7 @@
 | `PAGE_RULES` | `v1` | `v2` 使用第二版頁型規則，並擴充個股／清單頁分類；不是 `v2` 的值走第一版。 |
 | `SHOT_MEMORY` | `single` | `multi` 從同頁型的多筆框位挑選相似旁白；找不到或最高分平手，退回最新單筆框位。其他值走單筆模式。 |
 
-OCR 共用入口為 [ocr-engine.js](../應用程式/scripts/ocr-engine.js)，供 APP 截圖、三大法人圖片與定位器使用。Tesseract 需要 CLI 與適用的語言資料；Vision 只支援 macOS，首次使用或 Swift 原始碼更新時嘗試以 `swiftc` 編譯。裁切辨識使用 `ffmpeg`；Vision 的裁切路徑不使用 Tesseract 的單行模式與字元白名單參數。
+OCR 共用入口為 [ocr-engine.js](../應用程式/scripts/ocr-engine.js)，供 APP 截圖與定位器使用。Tesseract 需要 CLI 與適用的語言資料；Vision 只支援 macOS，首次使用或 Swift 原始碼更新時嘗試以 `swiftc` 編譯。裁切辨識使用 `ffmpeg`；Vision 的裁切路徑不使用 Tesseract 的單行模式與字元白名單參數。
 
 ## 頁型與框位的分工
 
@@ -22,7 +22,7 @@ OCR 共用入口為 [ocr-engine.js](../應用程式/scripts/ocr-engine.js)，供
 
 `auto-shot.js` 預設只將人工標註寫入正式配圖計畫；`--with-auto` 才納入自動段。`--no-annots` 也會保留自動段，用於對照組，須以 `--out` 指向獨立檔案。人工滑動段的 `titleY` 仍可來自 OCR 的 `topicBox`，不能承諾換引擎完全不影響成品。
 
-對照組的兩種格式不可混用：`auto-shot.js` 的段落帶 `src`，`auto-focus.js`（三大法人）的自動段只有 `section` 與 `cellText`，圖固定是版面截圖。修正紀錄比對時須以版面圖補齊圖名，否則整批會被誤記為「AI 本來不配圖」。對照組整份 0 段代表沒有比較基準（多半是頁型未辨識），與「AI 判斷不需要配圖」是不同結論，紀錄以 `autoKind` 區分。
+對照組現在只有 `auto-shot.js` 一種格式，段落一律帶 `src`。（2026-09-22 之前還有 `auto-focus.js`（三大法人）那種只有 `section` 與 `cellText`、圖固定是版面截圖的格式，隨該版型一起移除。）對照組整份 0 段代表沒有比較基準（多半是頁型未辨識），與「AI 判斷不需要配圖」是不同結論，紀錄以 `autoKind` 區分。
 
 ## 事後補上傳的截圖與同名分析
 
@@ -44,7 +44,7 @@ OCR 共用入口為 [ocr-engine.js](../應用程式/scripts/ocr-engine.js)，供
 可以只有箭頭、沒有任何框。
 
 **支援的版型：大盤小報、盤中焦點、美股焦點**（`TEMPLATES` 的 `arrow: true` 旗標）。
-焦點股日報、三大法人、投廣的 timeline 還沒接 `arrow`，前台會把箭頭欄位藏起來 ——
+現存三個版型的 timeline 都已接上 `arrow`。新增版型若沒接，前台會把箭頭欄位藏起來 ——
 **旗標與 timeline 必須同進退**：標了旗標卻沒接 timeline，就是「畫得出來、成品沒有」的
 靜默失效（2026-09-16 使用者在盤中焦點實際踩到，當時是 timeline 漏接）。
 

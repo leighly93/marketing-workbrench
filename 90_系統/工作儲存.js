@@ -11,6 +11,9 @@ function folderName(job) {
   return `${date}_${title}_${id}`;
 }
 
+// ⚠️ institution／focusstock／output.mp4（投廣）這幾個名字**刻意留著**：
+//    那三個版型 2026-09-22 移除了，但它們的舊工作還在 工作紀錄/，成品仍要查得到、下載得了。
+//    這個函式是「檔名 → 人看得懂的名字」的對應表，不是版型清單 —— 拿掉就等於讓舊成品掉回原始檔名。
 function outputName(name) {
   if (/landscape/i.test(name)) return '橫式.mp4';
   if (/-ad\.mp4$/i.test(name) || name === 'output.mp4') return '投廣版.mp4';

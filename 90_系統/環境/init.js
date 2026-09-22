@@ -19,11 +19,6 @@ const generated = {
   'DapanXiaobao/dapan-shots.generated.json': [],
   'MiddayFocus/midday-shots.generated.json': [],
   'UsStock/usstock-shots.generated.json': [],
-  'Focusstock/focusstock-shots.generated.json': [],
-  'Focusstock/focusstock-assets.generated.json': { hasBgm: false, bgmFile: '' },
-  'Institution/institution-shots.generated.json': [],
-  'Institution/institution-focus.generated.json': [],
-  'Institution/institution-regions.generated.json': { imageFile: '', imageWidth: 1, imageHeight: 1, sections: {}, words: [] },
 };
 
 function initialize(root) {

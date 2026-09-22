@@ -1,9 +1,7 @@
 import React from 'react';
 import { Composition } from 'remotion';
 import './fonts'; // side-effect：載入 public/ 內的字體檔
-import { MarketingVideo } from './MarketingVideo';
 import {
-  VIDEO_DURATION_SEC,
   VIDEO_FPS,
   VIDEO_HEIGHT,
   VIDEO_WIDTH,
@@ -15,11 +13,6 @@ import {
   DAPAN_TOTAL_DURATION_SEC,
   DAPAN_LANDSCAPE_DURATION_SEC,
 } from './DapanXiaobao/dapan-timeline';
-import { InstitutionComposition } from './Institution/InstitutionComposition';
-import { INSTITUTION_TOTAL_DURATION_SEC } from './Institution/institution-timeline';
-import { FocusstockComposition } from './Focusstock/FocusstockComposition';
-import { FOCUSSTOCK_TOTAL_DURATION_SEC } from './Focusstock/focusstock-timeline';
-import { FocusstockAdComposition } from './Focusstock/FocusstockAdComposition';
 import { MiddayFocusComposition } from './MiddayFocus/MiddayFocusComposition';
 import { MIDDAY_TOTAL_DURATION_SEC } from './MiddayFocus/midday-timeline';
 import { UsStockComposition } from './UsStock/UsStockComposition';
@@ -37,15 +30,7 @@ import {
 export const RemotionRoot: React.FC = () => {
   return (
     <>
-      <Composition
-        id="MarketingVideo"
-        component={MarketingVideo}
-        durationInFrames={secToFrame(VIDEO_DURATION_SEC)}
-        fps={VIDEO_FPS}
-        width={VIDEO_WIDTH}
-        height={VIDEO_HEIGHT}
-      />
-      {/* 大盤小報：獨立 composition，跟 MarketingVideo 互不影響（詳見 99_封存/2026-09-10_第一批整理/舊說明與Agent紀錄/docs/tasks.md 第 3 節） */}
+      {/* 大盤小報：獨立 composition（詳見 99_封存/2026-09-10_第一批整理/舊說明與Agent紀錄/docs/tasks.md 第 3 節） */}
       <Composition
         id="DapanXiaobao"
         component={DapanComposition}
@@ -80,34 +65,6 @@ export const RemotionRoot: React.FC = () => {
         id="UsStock"
         component={UsStockComposition}
         durationInFrames={secToFrame(USSTOCK_TOTAL_DURATION_SEC)}
-        fps={VIDEO_FPS}
-        width={VIDEO_WIDTH}
-        height={VIDEO_HEIGHT}
-      />
-      {/* 三大法人：獨立直式 composition（金橘版型、固定主播），跟大盤小報同模子但互不影響。 */}
-      <Composition
-        id="Institution"
-        component={InstitutionComposition}
-        durationInFrames={secToFrame(INSTITUTION_TOTAL_DURATION_SEC)}
-        fps={VIDEO_FPS}
-        width={VIDEO_WIDTH}
-        height={VIDEO_HEIGHT}
-      />
-      {/* 焦點股日報：獨立直式 composition（藍色版型、固定主播），同模子互不影響。 */}
-      <Composition
-        id="Focusstock"
-        component={FocusstockComposition}
-        durationInFrames={secToFrame(FOCUSSTOCK_TOTAL_DURATION_SEC)}
-        fps={VIDEO_FPS}
-        width={VIDEO_WIDTH}
-        height={VIDEO_HEIGHT}
-      />
-      {/* 焦點股日報「投廣套框版」：與客製版共用同一支 heygen/字幕，改套籌碼K線外框＋接片尾，
-          無開頭。時長 = heygen + outro（= VIDEO_DURATION_SEC）。 */}
-      <Composition
-        id="FocusstockAd"
-        component={FocusstockAdComposition}
-        durationInFrames={secToFrame(VIDEO_DURATION_SEC)}
         fps={VIDEO_FPS}
         width={VIDEO_WIDTH}
         height={VIDEO_HEIGHT}

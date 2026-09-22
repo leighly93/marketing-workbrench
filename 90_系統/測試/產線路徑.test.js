@@ -51,9 +51,11 @@ require('node:http').request = require('node:https').request = blocked;
   return { root, app, run };
 }
 
+// 2026-09-22：三大法人／焦點股日報／投廣模板整組移除，這裡只剩現存的三個版型。
+// use-brand.js 留著 —— 它服務的是 gen-video.js（Lumina）那條線，不是被刪的投廣版型。
 test('固定素材從 workspace/共用素材 複製到 app/public，保留內容且不產生第二份來源', (t) => {
-  const templates = [['dapan', '大盤小報'], ['midday', '盤中焦點'], ['usstock', '美股焦點'], ['institution', '三大法人'], ['focusstock', '焦點股日報']];
-  const { root, app, run } = fixture(t, [...templates.map(([name]) => `use-${name}-assets.js`), 'use-focusstock-ad-assets.js', 'use-brand.js']);
+  const templates = [['dapan', '大盤小報'], ['midday', '盤中焦點'], ['usstock', '美股焦點']];
+  const { root, app, run } = fixture(t, [...templates.map(([name]) => `use-${name}-assets.js`), 'use-brand.js']);
   for (const [template, brand] of templates) {
     for (const name of ['intro-frame.jpg', 'header-overlay.png', 'bgm.wav', 'intro-frame_Horizontal.png']) {
       write(path.join(root, '共用素材', brand, name), Buffer.from(`合成素材:${brand}:${name}\0\xff`));
@@ -64,15 +66,16 @@ test('固定素材從 workspace/共用素材 複製到 app/public，保留內容
     }
   }
   for (const name of ['frame.png', 'outro.mp4', 'bgm.wav']) write(path.join(root, '共用素材', '籌碼K線', name), `合成品牌素材:${name}`);
-  run('use-focusstock-ad-assets.js');
   run('use-brand.js', ['籌碼K線']);
   assert.equal(fs.readFileSync(path.join(app, 'public', 'frame.png'), 'utf8'), '合成品牌素材:frame.png');
   assert.equal(fs.existsSync(path.join(app, 'assets')), false);
   assert.equal(fs.existsSync(path.join(root, 'public')), false);
 });
 
-test('六種稿件解析沿用原 marker 契約，生成檔只寫 app/src', (t) => {
-  const parsers = ['parse-dapan-script.js', 'parse-midday-script.js', 'parse-usstock-script.js', 'parse-institution-script.js', 'parse-focusstock-script.js', 'parse-script.js'];
+// 2026-09-22：parse-institution-script.js／parse-focusstock-script.js 隨版型移除。
+// parse-script.js 留著 —— 它寫的 overlays／textcards.generated.json 仍被共用的 timeline.ts 靜態 import。
+test('四種稿件解析沿用原 marker 契約，生成檔只寫 app/src', (t) => {
+  const parsers = ['parse-dapan-script.js', 'parse-midday-script.js', 'parse-usstock-script.js', 'parse-script.js'];
   const { root, app, run } = fixture(t, [...parsers, 'script-utils.js']);
   write(path.join(app, 'public', 'script.txt'), script);
   for (const name of parsers) run(name);
