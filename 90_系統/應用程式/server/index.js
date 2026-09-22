@@ -698,86 +698,17 @@ function shotsOf(plan) {
   return Array.isArray(plan) ? plan : plan.shots || [];
 }
 
-// ── 計畫 planKind: 'focus' ──────────────
-// ⚠️ 2026-09-22：唯一用到 focus 的版型（三大法人）已移除，現存版型全是 'shots'，
-//    所以這一段目前**沒有任何呼叫路徑會走到**。之所以留著不刪：它是「區塊帶＋黃框」
-//    那套寫回規則的完整說明，未來版型參數化要重做配圖時還用得上。
-//    要徹底清掉的話，連同各處 `planKind === 'focus'` 的分支一起處理。
-// 以下是原本的說明：
-// 跟另外兩個版型不一樣的地方，動這段之前先看懂：
-//  1. 一列不是「一張截圖」，是「版面圖上的一個區塊帶 ＋ 一個黃框」。所以 focus 檔裡**沒有 src**
-//     （永遠是那張版面截圖），只有 `section`（區塊代號）＋ `cellText`（要框住的字）。
-//  2. **自動列的框不在檔案裡** —— 檔案只寫 `section` 與 `cellText`，真正的座標是渲染時
-//     由 `institution-timeline.ts` 拿 OCR 逐字框去比對算出來的。這就是「框到隔壁格」的來源。
-//     所以要讓人看到 AI 到底框到哪、才能拖著改，這裡必須把座標**先解出來給前台看**
-//     （`focusRowView()`），但**不寫回檔案** —— 寫回去會讓沒被碰過的自動列變成人工列、
-//     少掉 `cellPad()` 的自動留白，畫面就跟原本不一樣了。
-//  3. `(shot:)` 標記的全螢幕截圖段在**另一份檔**（institution-shots.generated.json）。
-//     前台只能有一份列表，所以下面把兩份併成一份。
-const INSTITUTION_SHOTS_PLAN = 'src/Institution/institution-shots.generated.json';
-const INSTITUTION_REGIONS = 'src/Institution/institution-regions.generated.json';
-
-function institutionRegions(baseDir) {
-  try { return JSON.parse(fs.readFileSync(path.join(baseDir, INSTITUTION_REGIONS), 'utf-8')); }
-  catch (_) { return null; }
-}
-
 /**
  * 計畫的「一列」清單。
  * ⚠️ buildPlanView 與 applyPlanEdits **一定要都走這支** —— 前台回傳的 `e.i` 是這個陣列的索引，
  *    兩邊併的順序只要差一點，人改的東西就會套到別一列上去。
+ * 2026-09-22：planKind 'focus'（三大法人那套「區塊帶＋黃框」，一列不是一張截圖、
+ * 座標靠 OCR 逐字框在渲染時算出來）隨該版型移除，現存版型全是 'shots'，所以這裡只剩一條路。
+ * 那套寫回規則連同 focusRowView()／findCellIn() 一起刪了，要看原樣翻這個 commit 的 diff。
  */
 function planItemsOf(baseDir, tpl) {
   const plan = readPlanFrom(baseDir, tpl);
-  if ((TEMPLATES[tpl] || {}).planKind !== 'focus') return { plan, items: shotsOf(plan) };
-  let shots = [];
-  try {
-    shots = JSON.parse(fs.readFileSync(path.join(baseDir, INSTITUTION_SHOTS_PLAN), 'utf-8')) || [];
-  } catch (_) {}
-  const items = [
-    ...shotsOf(plan),
-    // (shot:) 的段沒有框、就是整張蓋滿 → 併進來時標成 wholePage，語意跟另外兩個版型一致
-    ...(Array.isArray(shots) ? shots : []).map((s) => ({ ...s, wholePage: true, _fromShots: true })),
-  ].sort((a, b) => (a.startCharIdx ?? 0) - (b.startCharIdx ?? 0));
-  return { plan, items };
-}
-
-/**
- * 在區塊帶內找 OCR 逐字框裡包含 cellText 的字。
- * ⚠️ 這段是 `src/Institution/institution-timeline.ts` 的 `findCellBox()` 的**第二份實作**
- *    （一份 TS 給渲染用、一份 JS 給前台預覽用）。規則要一致：信心 ≥30、文字包含、
- *    中心點落在帶內、取信心最高的那個。**改一邊一定要同步改另一邊**，不然前台看到的框
- *    跟實際渲染出來的框會不一樣 —— 那比沒有預覽更糟。
- */
-function findCellIn(reg, cellText, band) {
-  if (!reg || !cellText || !band) return null;
-  const cy = (w) => w.y + w.h / 2;
-  const cands = (reg.words || [])
-    .filter((w) => w.c >= 30 && String(w.t).includes(cellText))
-    .filter((w) => cy(w) >= band.top && cy(w) <= band.bottom);
-  if (!cands.length) return null;
-  const best = cands.sort((a, b) => b.c - a.c)[0];
-  return { x: best.x, y: best.y, w: best.w, h: best.h };
-}
-
-/** focus 的一列 → 前台看得懂的樣子（把 section/cellText 解成實際座標）。**只影響顯示，不寫檔。** */
-function focusRowView(s, reg) {
-  if (!reg) return s;
-  const src = s.src || reg.imageFile;
-  const isLayout = src === reg.imageFile;
-  // 手動列自己就有 region；自動列要拿 section 去查區塊帶
-  const band = s.region
-    ? { top: s.region.y, bottom: s.region.y + s.region.h }
-    : (isLayout ? (reg.sections || {})[s.section] : null);
-  const region = s.region
-    || (band ? { x: 0, y: band.top, w: reg.imageWidth, h: band.bottom - band.top } : null);
-  const cell = s.cell || (isLayout ? findCellIn(reg, s.cellText, band) : null);
-  return {
-    ...s, src, region, cell,
-    imageWidth: s.imageWidth || (isLayout ? reg.imageWidth : null),
-    imageHeight: s.imageHeight || (isLayout ? reg.imageHeight : null),
-    wholePage: !!s.wholePage || (!region && !cell),
-  };
+  return { plan, items: shotsOf(plan) };
 }
 
 /**
@@ -989,11 +920,7 @@ function buildPlanView(job) {
       return JSON.parse(fs.readFileSync(path.join(state, 'src/subtitles.json'), 'utf-8'))._scriptCharTimes || [];
     } catch (_) { return charTimes(); }
   })();
-  const kind = TEMPLATES[job.template].planKind;
-  const reg = kind === 'focus' ? institutionRegions(state) : null;
-  // focus 的自動列在檔案裡只有 section/cellText，要先解成座標前台才畫得出來、才拖得動
-  const shots = planItemsOf(state, job.template).items
-    .map((s) => (kind === 'focus' ? focusRowView(s, reg) : s));
+  const shots = planItemsOf(state, job.template).items;
   const thumbDir = jobPath(job.id, 'thumbs');
   ensureDir(thumbDir);
 
@@ -1093,9 +1020,6 @@ function applyPlanEdits(job, edits) {
   const f = path.join(state, cfg.plan);
   const { plan, items: shots } = planItemsOf(state, job.template);
   if (!plan) throw new Error('找不到配圖計畫檔');
-  // 三大法人：一列是「區塊帶 + 黃框」而不是「一張截圖」，寫回的規則不一樣（見 planItemsOf 上方註解）
-  const FOCUS = cfg.planKind === 'focus';
-  const reg = FOCUS ? institutionRegions(state) : null;
 
   let images = [];
   try {
@@ -1129,37 +1053,13 @@ function applyPlanEdits(job, edits) {
     // 新增的段一定要有出現範圍，否則是半成品，跳過
     if (e._added && !(typeof e.startCharIdx === 'number' || typeof e.from === 'number')) return;
     if (e._added) { s.src = ''; s._auto = false; s._added = true; }
-    // ⚠️ focus 檔的自動列**沒有被碰過就原封不動放回去**。
-    //    不能讓它走下面那段（把前台傳回來的 cell/region 寫進檔案）—— 前台看到的框是
-    //    `focusRowView()` 幫它解出來的，寫回去等於把自動列變成人工列：`institution-timeline.ts`
-    //    看到 `f.cell` 就會設 `cellManual: true`、跳過 `cellPad()` 的自動留白，
-    //    於是「我什麼都沒改，框卻變瘦了」。判斷只認前台明確標記的 `_manual`／`_added`。
-    if (FOCUS && !e._manual && !e._added) {
-      const orig = { ...s };
-      delete orig._fromShots;
-      // src 一律補齊（渲染端本來就是 `f.src || 版面圖`，補了語意不變，但下面裁切要靠它比對同一張圖）
-      if (!orig.src && reg) orig.src = reg.imageFile;
-      keep.push(orig);
-      return;
-    }
-    if (FOCUS) {
-      // 換圖／加圖：三大法人沒有 app-images 的 topicBox 那套推算，尺寸直接用前台量到的原圖尺寸
-      if (e.src) s.src = e.src;
-      if (!s.src && reg) s.src = reg.imageFile;
-      if (typeof e.imgW === 'number' && e.imgW > 0) s.imageWidth = e.imgW;
-      if (typeof e.imgH === 'number' && e.imgH > 0) s.imageHeight = e.imgH;
-      // 人工列不再靠 section／cellText 查表（那是「框到隔壁格」的來源），座標直接寫進去
-      delete s.section; delete s.cellText; delete s._auto; delete s._ambiguous; delete s._cappedAt;
-      delete s._fromShots;
-    }
-    if (!FOCUS && e.src && e.src !== s.src) {
+    if (e.src && e.src !== s.src) {
       const img = images.find((m) => m.file === e.src);
       s.src = e.src;
       // ⚠️ 事後補上傳的圖不在 app-images.generated.json 裡（那支分析是在 doPrepare 一開頭
       //    跟 HeyGen 平行跑的），`img` 會是 undefined → imageWidth 沒有值 →
       //    ShotFocus.tsx 直接退成「整張顯示」，**使用者拉的框靜默失效**。
-      //    退到前台量到的原圖尺寸（openEditor 存的 natW/natH），跟 FOCUS 那條分支同一個做法。
-      //    2026-09-01（三大法人那邊 2026-08-21 就這樣做了，這裡一直沒補上）。
+      //    退到前台量到的原圖尺寸（openEditor 存的 natW/natH）。2026-09-01 補上。
       // ⚠️ 2026-09-14：更糟的是「查得到、但那筆是**上一支工作**的同名圖」（見
       //    invalidateStaleAnalysis 的說明）—— 尺寸是別張圖的，框會整塊位移＋縮放。
       //    前台量到的 natW/natH 必定屬於這支工作正在看的那張圖，所以它一律優先。
@@ -1319,16 +1219,6 @@ function applyPlanEdits(job, edits) {
 
   const next = Array.isArray(plan) ? kept : { ...plan, shots: kept };
   fs.writeFileSync(f, JSON.stringify(next, null, 2));
-  // 三大法人：(shot:) 那份檔的內容已經併進 focus 檔了（帶著 src ＋ wholePage），
-  // 不清掉就會兩邊各畫一次、同一個時間疊兩層。**只在原本真的有東西時才寫**，
-  // 免得每支工作都去動一個沒必要動的產物檔。
-  if (FOCUS) {
-    const sf = path.join(state, INSTITUTION_SHOTS_PLAN);
-    try {
-      const had = JSON.parse(fs.readFileSync(sf, 'utf-8'));
-      if (Array.isArray(had) && had.length) fs.writeFileSync(sf, '[]\n');
-    } catch (_) {}
-  }
   return kept.length;
 }
 
@@ -1372,7 +1262,7 @@ function allCorrections() {
   }
   // 2026-09-14 起「人工標記」會自己寫 autoKind。它之前的紀錄沒有這個欄位，
   // 其中 focus 版型（三大法人）那批的「原本」一律是空的 —— 不是 AI 沒配圖，
-  // 是比對時拿了對照組根本沒有的 `src` 欄位（見 recordCorrections 的 cfSrc）。
+  // 是比對時拿了對照組根本沒有的 `src` 欄位。
   // append-only 的歷史檔不改，這裡只在回應裡標成「舊紀錄不可信」，讓頁面不要再講假話。
   // 另一種空白：那一輪對照組整份是 0 段（不是「AI 判斷這裡不用配圖」，是根本沒有基準可比）。
   // 舊紀錄裡看不出來，只能回頭看工作的 auto-noannots.json；工作被刪就維持原樣。
@@ -1389,7 +1279,10 @@ function allCorrections() {
   };
   for (const r of rows) {
     if (r.type !== '人工標記' || r.autoKind || r.from) continue;
-    if ((TEMPLATES[r.template] || {}).planKind === 'focus') r.autoKind = 'legacyNoSrc';
+    // ⚠️ 認代號、不查 TEMPLATES：三大法人 2026-09-22 移除了，查 TEMPLATES 會一律落空，
+    //    那批舊紀錄就會掉進下面的 cfIsEmpty 或完全不標記 —— 頁面又開始講「AI 本來不配圖」的假話。
+    //    'institution' 是歷來唯一的 focus 版型，歷史紀錄裡的代號不會再變。
+    if (r.template === 'institution') r.autoKind = 'legacyNoSrc';
     else if (cfIsEmpty(r.job)) r.autoKind = 'noCounterfactual';
   }
   return rows;
@@ -1422,7 +1315,6 @@ function suggestCellsFor(job, items) {
   const map = {};
   try {
     if (!Array.isArray(items) || !items.length) return map;
-    if ((TEMPLATES[job.template] || {}).planKind === 'focus') return map;  // 三大法人走 auto-focus，另案
     const st = jobPath(job.id, 'state');
     const script = path.join(st, 'public', 'script.txt');
     const images = path.join(st, 'src', 'app-images.generated.json');
@@ -1642,17 +1534,13 @@ function recordCorrections(job, before, edits) {
       jobPath(job.id, 'input', 'annotations.json'), 'utf-8')).shots || [];
     const cf = JSON.parse(fs.readFileSync(
       jobPath(job.id, 'auto-noannots.json'), 'utf-8')) || [];
-    // focus 版型（三大法人）的對照組段落**沒有 src** —— 圖永遠是那張版面截圖，
-    // auto-focus 只寫 section／cellText（見 planItemsOf 上方那段說明）。
-    // 2026-09-14 修：以前直接拿 `c.src` 比對，focus 的段落全部比出 undefined，
-    // `from` 變成空字串，修正紀錄頁就一律顯示「（AI 本來不配圖）」——
-    // 明明 AI 有配，紀錄卻說沒配，institution 的 38 筆全是這樣來的。
-    const FOCUS_CF = (TEMPLATES[job.template] || {}).planKind === 'focus';
-    const cfReg = FOCUS_CF ? institutionRegions(jobPath(job.id, 'state')) : null;
-    // 拿不到版面圖檔名（舊工作沒留快照）也不能退回 undefined —— 寧可寫「版面截圖」這個
-    // 說得出口的名字，也不要讓它變成「不配圖」。
-    const cfSrc = (c) => (c && c.src) || (FOCUS_CF ? ((cfReg && cfReg.imageFile) || '版面截圖') : null);
-    // 對照組整份是空的（auto-shot／auto-focus 這一輪一段都沒排，多半是頁型沒認出來）
+    // ⚠️ 現存版型的對照組段落一律帶 src，所以這裡直接比對就好。
+    //    2026-09-14 曾為 focus 版型（三大法人）補過一條例外：它的段落沒有 src、圖永遠是
+    //    那張版面截圖，直接比會全部比出 undefined、`from` 變空字串，修正紀錄頁就一律顯示
+    //    「（AI 本來不配圖）」—— institution 的 38 筆全是這樣來的。該版型 2026-09-22 移除，
+    //    例外一併拿掉；那 38 筆歷史紀錄改由 correctionRows() 認代號標成 legacyNoSrc。
+    const cfSrc = (c) => (c && c.src) || null;
+    // 對照組整份是空的（auto-shot 這一輪一段都沒排，多半是頁型沒認出來）
     // ＝ 這支根本沒有可比的基準，不是「AI 判斷這裡不用配圖」。兩者要分開講。
     const noCf = !Array.isArray(cf) || !cf.length;
     for (const a of ann) {

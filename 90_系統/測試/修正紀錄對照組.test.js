@@ -7,6 +7,8 @@
 //   3. focus 版型（三大法人）的對照組段落**沒有 src** —— 圖永遠是那張版面截圖，
 //      auto-focus 只寫 section／cellText。以前直接拿 c.src 比對，整批比出 undefined、
 //      `from` 變空字串，於是 institution 的每一筆都被寫成「AI 本來不配圖」（2026-09-14 修）。
+//      ⚠️ 2026-09-22 該版型移除，出片路徑上的那條例外跟著刪了，但**歷史紀錄還在**，
+//         改由 correctionRows() 認 'institution' 代號標成 legacyNoSrc（見本檔最後一個測試）。
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -78,3 +80,30 @@ test('對照組有排、只是沒排到這一句 → 才是「AI 本來不配圖
 // 這個案例不再有真實的觸發路徑，測試一併移除。
 // server/index.js 裡 planKind === 'focus' 的分支仍留著（見該檔 focus 段落的說明），
 // 未來若重新啟用 focus 版型，把這個測試從這個 commit 的 diff 撿回來即可。
+
+// ── 已移除版型的歷史紀錄（2026-09-22）────────────────────────────
+// 三大法人是歷來唯一的 focus 版型，它的對照組段落沒有 src，所以 2026-09-14 之前
+// 留下的那 38 筆「人工標記」的「原本」欄一律是空的 —— 不是 AI 沒配圖，是比對時
+// 拿了對照組根本沒有的欄位。append-only 的歷史檔不改，靠 correctionRows() 在回應裡
+// 標成 legacyNoSrc，頁面才不會講「AI 本來不配圖」的假話。
+//
+// ⚠️ 這個測試存在的理由：那段判斷原本寫成「查 TEMPLATES[r.template].planKind === 'focus'」，
+//    版型一移除就永遠落空、假話會自己回來。改成認 'institution' 這個代號之後，
+//    用這個測試綁住 —— 別再改回去查 TEMPLATES。
+test('已移除版型的舊紀錄要標成 legacyNoSrc —— 版型沒了，假話不能跟著回來', async (t) => {
+  const root = fixture(t);
+  const ID = '20260901-120000-dddd';
+  write(workFile(root, ID, 'job.json'), {
+    id: ID, title: '三大法人舊工作', status: 'done', template: 'institution',
+    createdAt: '2026-09-01', approvedAt: '2026-09-01T04:00:00.000Z', owner: '合成測試',
+    // 2026-09-14 之前的紀錄：沒有 autoKind，from 也是空的
+    corrections: [{ type: '人工標記', at: '2026-09-01T04:00:00.000Z', from: '', to: 'shot1.png' }],
+  });
+  const request = loadServer(root, { childProcess: 假子程序(), idleTimers: true });
+  const res = await request('GET', '/api/corrections');
+  assert.equal(res.status, 200);
+  const row = (res.body.rows || []).find((r) => r.job === ID && r.type === '人工標記');
+  assert.ok(row, '修正紀錄裡找不到那支舊工作');
+  assert.equal(row.autoKind, 'legacyNoSrc',
+    'institution 是已移除的 focus 版型，舊紀錄的空白「原本」要標成「比不出來」而不是「AI 本來不配圖」');
+});
