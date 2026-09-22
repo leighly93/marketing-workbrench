@@ -965,9 +965,9 @@ function buildPlanView(job) {
   }
   const totalSec = ct.length ? ct[ct.length - 1].end : null;
   return {
-    kind,
-    // 2026-08-21 起三大法人也能線上改（使用者：「配圖計劃也改人手工，因為現在配的還是不好」）。
-    // 前台的閘門改看 editable，不要再用 `kind !== 'shots'` 判斷。
+    // 2026-08-21 起配圖計畫一律能線上改（使用者：「配圖計劃也改人手工，因為現在配的還是不好」）。
+    // 前台的閘門看 editable。舊的 kind 欄位（TEMPLATES[].planKind）已於 2026-09-22 隨 focus
+    // 分支一起移除 —— 當時漏刪這裡的簡寫，準備中算計畫時會 ReferenceError（2026-09-22 修）。
     editable: true,
     // 三大法人的聚焦是「捲到區塊帶 + 壓暗其餘」，沒有「往下滑動」這回事 ——
     // 勾了也不會有任何效果，所以前台不要畫那個勾選框（靜默失效比沒有更糟）。
