@@ -178,3 +178,13 @@ test('前台色票與成品色票是同一組', () => {
   assert.ok(成品.length >= 4, `色票看起來不對：${成品}`);
   assert.deepEqual(前台, 成品, '選色盤兩邊不一致，使用者選的顏色會跟成品不同');
 });
+
+test('直式配圖寬度：前台參考線／箭頭換算跟成品端同一個數字', () => {
+  // 2026-09-24 使用者定案不滿版的直式配圖一律 1070 寬。前台拿這個數字畫「字幕壓到／看不到」
+  // 兩條參考線，對不上的話標注頁的線就會跟成品差一截。
+  const 成品 = /verticalImageWidth:\s*(\d+)/.exec(讀('src/ShotFocus.tsx'));
+  const 前台 = /const SHOT_W\s*=\s*(\d+)/.exec(讀('server/public/app.js'));
+  assert.ok(成品, 'ShotFocus.tsx 找不到 SHOT_FOCUS.verticalImageWidth');
+  assert.ok(前台, 'app.js 找不到 SHOT_W');
+  assert.equal(Number(前台[1]), Number(成品[1]), '直式配圖寬度兩邊不一致');
+});

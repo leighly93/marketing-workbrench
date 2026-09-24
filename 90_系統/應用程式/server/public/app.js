@@ -42,6 +42,11 @@ const ARROW_MIN_RATIO = 0.04;
 // 與各 composition 的 safeTop/safeBottom 一致；改那邊就要改這裡，不然預覽又會跟成品對不起來。
 const ARROW_CANVAS_W = 1080, ARROW_CANVAS_H = 1920;
 const ARROW_SAFE_H = 1120;                 // safeBottom 1430 − safeTop 310
+// 直式配圖的擺法（2026-09-24，src/ShotFocus.tsx 的 fitVertical）：不滿版的圖寬度固定 SHOT_W，
+// 放大後比安全框高就上緣貼齊 SHOT_SAFE_TOP 往下長。字幕條從 SHOT_SUB_TOP 起（Subtitles.tsx 的 paddingTop）。
+// ⚠️ 美股焦點的 safeTop 是 325，這裡統一用 310 —— 參考線差 15 畫面 px，預覽用不影響判斷。
+const SHOT_W = 1070;                       // SHOT_FOCUS.verticalImageWidth
+const SHOT_SAFE_TOP = 310, SHOT_SUB_TOP = 1440;
 const ARROW_SHAFT = 11, ARROW_HEAD_RATIO = 30 / 11, ARROW_HEAD_W_RATIO = 38 / 11;
 const ARROW_ROUND_RATIO = 3 / 11;          // headRound ÷ width（箭鏃圓角）
 const ARROW_COVER_KEEP = 0.75;             // SHOT_FOCUS.wholePageCoverKeep
@@ -60,13 +65,37 @@ const ARROW_COVER_KEEP = 0.75;             // SHOT_FOCUS.wholePageCoverKeep
 function arrowShownWidth(natW, natH, region) {
   if (!(natW > 0) || !(natH > 0)) return ARROW_CANVAS_W;
   if (region && region.w > 0 && region.h > 0) {
-    return natW * Math.min(ARROW_CANVAS_W / region.w, ARROW_SAFE_H / region.h);
+    return natW * SHOT_W / region.w;
   }
   const ar = natW / natH, boxAr = ARROW_CANVAS_W / ARROW_CANVAS_H;
   const keep = Math.min(ar, boxAr) / Math.max(ar, boxAr);
   return keep >= ARROW_COVER_KEEP
     ? natW * Math.max(ARROW_CANVAS_W / natW, ARROW_CANVAS_H / natH)   // 滿版
-    : natW * Math.min(ARROW_CANVAS_W / natW, ARROW_SAFE_H / natH);    // 整張縮進安全框
+    : SHOT_W;                                                         // 整張放成固定寬度
+}
+
+/**
+ * 標注頁的參考線（2026-09-24 使用者要的）：成品畫面上「字幕從這裡開始」與「畫面底部」
+ * 各落在原圖的哪個 y。只算直式、不滿版的圖（圈了顯示區域，或沒圈但整張放成固定寬度）——
+ * 滿版的手機截圖會跟著黃框捲動，位置不固定，不畫。
+ * 回傳 [{ y, label, cut }]，y 是原圖像素；線落在那一塊外面（例如扁的圖整塊都在字幕上方）就不回。
+ */
+function shotGuideLines(natW, natH, region) {
+  if (!(natW > 0) || !(natH > 0)) return [];
+  let r = region && region.w > 0 && region.h > 0 ? region : null;
+  if (!r) {
+    const ar = natW / natH, boxAr = ARROW_CANVAS_W / ARROW_CANVAS_H;
+    if (Math.min(ar, boxAr) / Math.max(ar, boxAr) >= ARROW_COVER_KEEP) return [];   // 滿版
+    r = { x: 0, y: 0, w: natW, h: natH };
+  }
+  const s = SHOT_W / r.w;
+  const rh = r.h * s;
+  const top = rh <= ARROW_SAFE_H ? SHOT_SAFE_TOP + (ARROW_SAFE_H - rh) / 2 : SHOT_SAFE_TOP;
+  return [
+    { screenY: SHOT_SUB_TOP, label: '直式：以下會被字幕壓到', cut: false },
+    { screenY: ARROW_CANVAS_H, label: '直式：以下成品看不到', cut: true },
+  ].map((g) => ({ ...g, y: r.y + (g.screenY - top) / s }))
+    .filter((g) => g.y < r.y + r.h && g.y > r.y);
 }
 
 /**
@@ -1863,6 +1892,16 @@ function drawEdBox() {
       // ⚠️ 線寬要用**圖片**的顯示寬換算，不是容器寬 —— 容器會被上面那排縮圖撐寬
       //    （drawEdBox 開頭那段註解講的同一件事）。
       arrowShaftPx(iw, edCtx.natW, edCtx.natH, edCtx.region)));
+  }
+  // 參考線：跟著顯示區域算，沒圈就用整張圖（見 shotGuideLines）。線只畫在那一塊的寬度內。
+  {
+    const r = edCtx.region && edCtx.region.w > 0
+      ? edCtx.region : { x: 0, y: 0, w: edCtx.natW, h: edCtx.natH };
+    for (const g of shotGuideLines(edCtx.natW, edCtx.natH, edCtx.region)) {
+      wrap.append(el('div', { class: 'bx guide' + (g.cut ? ' cut' : ''), style:
+        `left:${ox + (r.x / edCtx.natW) * iw}px;top:${oy + (g.y / edCtx.natH) * ih}px;`
+        + `width:${(r.w / edCtx.natW) * iw}px` }, [el('span', {}, [g.label])]));
+    }
   }
   const hasR = !!(edCtx.region && edCtx.region.w > 0), hasC = !!(edCtx.cell && edCtx.cell.w > 0);
   $('#edRegionState').textContent = hasR ? '已畫' : '沒有';

@@ -27,6 +27,11 @@ import { AbsoluteFill, Img, interpolate, staticFile, useCurrentFrame } from 'rem
  *   → **沒圈顯示區域就一律不壓暗**（使用者：「不要再壓上下黑色塊」）。壓暗只剩 region 那條路，
  *     而那條的亮區本來就緊貼圈選範圍。
  *
+ * ⚠️ 2026-09-24 使用者定案（**直式限定**，橫式不動）：不滿版的圖寬度一律 1070
+ *   （SHOT_FOCUS.verticalImageWidth），不再被 310~1430 的高度卡住。
+ *   → 扁的照舊在安全框裡置中；直的上緣貼齊 bar 往下長，壓到字幕沒關係、超出畫面底部就裁掉。
+ *   → 黃框／箭頭跟著圖走，落到字幕底下也不推。擺法集中在 fitVertical()。
+ *
  * 座標來源是 OCR（scripts/analyze-app-images.js）＋規則庫（scripts/app-locators.json），
  * 全部相對於圖片本身，不寫死螢幕座標，所以換手機／解析度都適用。
  */
@@ -116,6 +121,12 @@ export const SHOT_FOCUS = {
    */
   wholePageCoverKeep: 0.75,
   /**
+   * 直式不滿版的圖（圈了顯示區域、或沒圈但整張縮進去的那種）一律放成這個寬度（2026-09-24 使用者定案）。
+   * 畫布 1080，左右各留 5px。高度照比例算，擺法見 fitVertical()。
+   * ⚠️ 前台 server/public/app.js 的 SHOT_W 要跟這裡一致（箭頭粗細換算、標注頁的字幕／裁切參考線）。
+   */
+  verticalImageWidth: 1070,
+  /**
    * 黃框相對目標框的外擴（**畫面座標 px**，不乘 sc）—— 人工框、OCR 自動框一律同一個值。
    * 2026-09-07 使用者定案「所有黃框不論人工或 OCR 都用人工框那組」。
    * 在這之前自動框另有一組 26×18 **圖片座標** px（會再乘 sc）：同一個框在 720 寬截圖上
@@ -203,6 +214,24 @@ function arrowGeom(a: ShotArrow, sc2: number, ox: number, oy: number) {
     cy: (y1 + y2) / 2,
     len: Math.hypot(x2 - x1, y2 - y1),
     ang: Math.atan2(y2 - y1, x2 - x1),
+  };
+}
+
+/**
+ * 直式擺法（2026-09-24 使用者定案）：把原圖上 w×h 的一塊（顯示區域，或整張圖）放進安全框。
+ *   寬度固定 SHOT_FOCUS.verticalImageWidth、水平置中。
+ *   放大後高度 ≤ 安全框 → 在安全框裡上下置中（扁的維持原本的樣子）。
+ *   放大後高度 > 安全框 → 上緣貼齊 boxY（bar 底下）往下長，壓到字幕沒關係，超出畫面底部直接裁掉。
+ * 兩條在「剛好等高」時位置相同，所以圈的範圍從扁變直，畫面不會跳。
+ * 在這之前是 min(boxW/w, boxH/h) —— 直的一塊會被 310~1430 的高度卡住、寬度縮小。
+ */
+function fitVertical(w: number, h: number, boxX: number, boxW: number, boxY: number, boxH: number) {
+  const s = SHOT_FOCUS.verticalImageWidth / w;
+  const rh = h * s;
+  return {
+    s,
+    left: boxX + (boxW - w * s) / 2,
+    top: rh <= boxH ? boxY + (boxH - rh) / 2 : boxY,
   };
 }
 
@@ -306,8 +335,18 @@ export const ShotFocusImage: React.FC<{
       imgAR > 0 && boxAR > 0 ? Math.min(imgAR, boxAR) / Math.max(imgAR, boxAR) : 0;
     const fullBleed = margin === 0 && coverKeep >= SHOT_FOCUS.wholePageCoverKeep;
     const useSafeBox = !fullBleed && margin === 0 && hasSafe;
-    const fitTop = useSafeBox ? (safeTop as number) : margin;
-    const fitHeight = useSafeBox ? (safeBottom as number) - (safeTop as number) : fullH;
+    let fitLeft = imgX;
+    let fitTop = useSafeBox ? (safeTop as number) : margin;
+    let fitWidth = imgW;
+    let fitHeight = useSafeBox ? (safeBottom as number) - (safeTop as number) : fullH;
+    // 直式縮進安全框那條改成固定寬度（2026-09-24，見 fitVertical）。讀不到尺寸就維持 contain。
+    if (useSafeBox && imgAR > 0) {
+      const f = fitVertical(run.imageWidth!, run.imageHeight!, imgX, imgW, fitTop, fitHeight);
+      fitLeft = f.left;
+      fitTop = f.top;
+      fitWidth = run.imageWidth! * f.s;
+      fitHeight = run.imageHeight! * f.s;
+    }
     return (
       <AbsoluteFill style={{ opacity: appear }}>
         <div
@@ -321,9 +360,9 @@ export const ShotFocusImage: React.FC<{
         <div
           style={{
             position: 'absolute',
-            left: imgX,
+            left: fitLeft,
             top: fitTop,
-            width: imgW,
+            width: fitWidth,
             height: fitHeight,
           }}
         >
@@ -348,6 +387,8 @@ export const ShotFocusImage: React.FC<{
   const boxW = imgW;
   const boxY = safeTop != null && safeBottom != null && safeBottom > safeTop ? safeTop : 0;
   const boxH = safeTop != null && safeBottom != null && safeBottom > safeTop ? safeBottom - safeTop : height;
+  // 直式＝有安全框、沒有左右留白（大盤小報／盤中焦點／美股焦點直式）。橫式 margin=20，不進這條。
+  const verticalFit = margin === 0 && safeTop != null && safeBottom != null && safeBottom > safeTop;
 
   // ── 沒圈顯示區域 ＝ 黃框不影響圖片怎麼放（2026-09-15 使用者定案）──
   // 使用者：「沒有圈選顯示範圍的圖片要整張圖完整顯示，就算有框黃框。」
@@ -422,11 +463,14 @@ export const ShotFocusImage: React.FC<{
     // 沒圈 region 但整張放得進去（wholeRegion）的也走這條 —— 差別只在「region 是整張圖」。
     const reg = c.region || wholeRegion;
     if (reg) {
-      const s2 = Math.min(boxW / reg.w, boxH / reg.h);
+      // 直式（有安全框、沒左右留白）走固定寬度（2026-09-24，見 fitVertical）；
+      // 橫式維持「整塊縮進安全框」。
+      const vf = verticalFit ? fitVertical(reg.w, reg.h, boxX, boxW, boxY, boxH) : null;
+      const s2 = vf ? vf.s : Math.min(boxW / reg.w, boxH / reg.h);
       const rw2 = reg.w * s2;
       const rh2 = reg.h * s2;
-      const bandLeft = boxX + (boxW - rw2) / 2;
-      const bandTop = boxY + (boxH - rh2) / 2;
+      const bandLeft = vf ? vf.left : boxX + (boxW - rw2) / 2;
+      const bandTop = vf ? vf.top : boxY + (boxH - rh2) / 2;
       const imgLeft = bandLeft - reg.x * s2;
       const imgTop = bandTop - reg.y * s2;
       const pad = SHOT_FOCUS.pad;

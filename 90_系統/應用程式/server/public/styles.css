@@ -237,6 +237,12 @@
     max-width:min(620px, calc(100vw - 432px));width:auto;height:auto}
   .ed-img .bx{position:absolute;border:3px solid #FFE600;border-radius:3px;pointer-events:none}
   .ed-img .bx.region{border-color:#3ba0ff;border-style:dashed}
+  /* 參考線（2026-09-24）：成品裡字幕從哪開始、畫面底部在哪。只是提示，不擋拖曳。 */
+  .ed-img .bx.guide{height:0;border:0;border-top:2px dashed #ff9f43;border-radius:0}
+  .ed-img .bx.guide.cut{border-top-color:#ff453a}
+  .ed-img .bx.guide span{position:absolute;right:0;top:2px;font-size:11px;line-height:1.4;
+    padding:0 5px;border-radius:3px;background:rgba(0,0,0,.65);color:#ff9f43;white-space:nowrap}
+  .ed-img .bx.guide.cut span{color:#ff453a}
   /* 箭頭：矩形畫不出來，疊一層 SVG（.bx 一起被 drawEdBox 清掉，所以共用那個 class） */
   .ed-img .bx.arrow{position:absolute;border:0;border-radius:0;pointer-events:none;overflow:visible}
   /* 色票：六色寫死，跟 ShotFocus.tsx 的 SHOT_FOCUS.arrow.palette 一致 */
