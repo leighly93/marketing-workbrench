@@ -25,8 +25,8 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  parseVoiceRules,
   getBodyAfterVoice,
+  getBodyWithVoiceMap,
   cleanBodyWithIndex,
 } = require('./script-utils');
 
@@ -455,7 +455,11 @@ function applyCrossWordReplace(words, from, to) {
 // 若 fallback 先跑，會把「四點三九」攔截成「4.39」，讓反向規則的「百分之四點三九 → 4.39%」失效。
 // 2026-08-19：反向還原也要「長的先做」。短的先還原會把長規則的產出拆掉，
 // 字幕就變成半還原的怪字串（同 applyVoiceRulesForward 那條註解的道理）。
-const voiceRules = parseVoiceRules(scriptRaw)
+// 2026-09-30：只還原「這支稿件真的有換到」的規則。共用詞庫整包帶進每支稿件，
+// 若照單全收，一條內文根本沒出現的規則也會把字幕裡剛好等於它 to 的字改掉 ——
+// 詞庫有一條寫反的「強談→強彈」，稿件沒有「強談」、TTS 沒換任何字，
+// 字幕卻被它把正確的「強彈」改成「強談」。
+const voiceRules = getBodyWithVoiceMap(scriptRaw).usedRules
   .sort((a, b) => (b.to || '').length - (a.to || '').length);
 for (const seg of subs.segments) {
   if (!seg.words) continue;

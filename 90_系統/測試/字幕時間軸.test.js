@@ -75,7 +75,7 @@ test('Adapter 吃 padSec：whisper 回來的時間戳寫出去之前就已經減
 // ── 出片前的時間軸檢查 ──────────────────────────────────
 
 /** 造一個只有 correct-subtitles 需要的檔案的假工作區，跑一次，回傳 { code, out }。 */
-function runCorrect(body, segments) {
+function runCorrect(body, segments, voice = '') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'subcheck-'));
   try {
     fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
@@ -85,13 +85,14 @@ function runCorrect(body, segments) {
       fs.copyFileSync(path.join(APP, 'scripts', name), path.join(dir, 'scripts', name));
     }
     // script.txt 的格式：發音詞庫 === === 標題 === 內文
-    fs.writeFileSync(path.join(dir, 'public', 'script.txt'), ['', '===', '===', '標題', '===', body, ''].join('\n'));
+    fs.writeFileSync(path.join(dir, 'public', 'script.txt'), [voice, '===', '===', '標題', '===', body, ''].join('\n'));
     fs.writeFileSync(path.join(dir, 'src', 'subtitles.json'), JSON.stringify({
       language: 'zh', text: segments.map((s) => s.text).join(''), segments,
     }));
     try {
       const out = execFileSync('node', [path.join(dir, 'scripts', 'correct-subtitles.js')], { encoding: 'utf8', stdio: 'pipe' });
-      return { code: 0, out };
+      const subs = JSON.parse(fs.readFileSync(path.join(dir, 'src', 'subtitles.json'), 'utf8'));
+      return { code: 0, out, text: subs.segments.map((s) => s.text).join('') };
     } catch (e) {
       return { code: e.status, out: (e.stdout || '') + (e.stderr || '') };
     }
@@ -116,6 +117,23 @@ test('時間軸正常的字幕照樣寫回去，不會被誤擋', () => {
   ]);
   assert.equal(code, 0, out);
   assert.match(out, /Forced alignment 完成/);
+});
+
+// 2026-09-30 出片事故：共用詞庫有一條寫反的「強談→強彈」。稿件只有「強彈」，
+// 送 TTS 時一個字都沒換，字幕反向還原卻把對好的「強彈」改成「強談」。
+test('發音規則沒在內文換到，就不能拿來反向改字幕', () => {
+  const body = '比較像是指數強彈之後資金開始重新選股';
+  const { code, out, text } = runCorrect(body, [evenSegment(0, body, 0, 0.3)], '強談→強彈\n反彈→反談');
+  assert.equal(code, 0, out);
+  assert.equal(text, body);
+});
+
+test('有在內文換到的發音規則，字幕照樣還原回原字', () => {
+  const body = '指數反彈之後資金開始重新選股';
+  const spoken = '指數反談之後資金開始重新選股';
+  const { code, out, text } = runCorrect(body, [evenSegment(0, spoken, 0, 0.3)], '反彈→反談');
+  assert.equal(code, 0, out);
+  assert.equal(text, body);
 });
 
 test('whisper 少轉一大段 → 稿件剩下的字全擠在最後一顆 word，要擋下來', () => {

@@ -73,6 +73,7 @@ function applyVoiceRulesForwardWithMap(text, rules) {
   let out = '';
   const srcStart = [];
   const srcStop = [];
+  const used = new Set();
   let i = 0;
   while (i < text.length) {
     let hit = null;
@@ -80,6 +81,7 @@ function applyVoiceRulesForwardWithMap(text, rules) {
       if (text.startsWith(r.from, i)) { hit = r; break; }
     }
     if (hit) {
+      used.add(hit);
       for (let k = 0; k < hit.to.length; k++) { srcStart.push(i); srcStop.push(i + hit.from.length); }
       out += hit.to;
       i += hit.from.length;
@@ -89,7 +91,9 @@ function applyVoiceRulesForwardWithMap(text, rules) {
       i += 1;
     }
   }
-  return { out, srcStart, srcStop };
+  // usedRules：真的有在內文換到的規則（照原本順序）。字幕反向還原只能用這些 ——
+  // 見 correct-subtitles.js 第 10 步的說明。
+  return { out, srcStart, srcStop, usedRules: list.filter((r) => used.has(r)) };
 }
 
 /**
@@ -110,11 +114,12 @@ function getBodyWithVoiceMap(scriptRaw) {
   const parts = scriptRaw.split('===');
   const bodyRaw = parts.length >= 3 ? parts[parts.length - 1] : (parts[1] ?? scriptRaw);
   const rules = parseVoiceRules(scriptRaw);
-  const { out, srcStart, srcStop } = applyVoiceRulesForwardWithMap(bodyRaw, rules);
+  const { out, srcStart, srcStop, usedRules } = applyVoiceRulesForwardWithMap(bodyRaw, rules);
   return {
     body: out,
     bodyOrig: bodyRaw,
     rules,
+    usedRules,
     /**
      * 替換後的 [a, b) 區間 → 原文對應的那段字。
      * 範圍只切到某個被替換詞的一半時，回傳的是那個詞的完整原文（見上面對照表的說明）。
