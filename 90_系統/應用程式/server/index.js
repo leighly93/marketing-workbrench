@@ -174,9 +174,12 @@ const TEMPLATE_ASSET = /^(dapan|focusstock|institution|midday|usstock)-|^(frame|
 
 // 快照要保存哪些檔案：public/ 整包 ＋ src/ 底下的產出物。
 // 這些是「上一段跑完的成果」，後半段 render 完全靠它們。
-function snapshotTargets() {
+// base：拍快照時掃工作區（ROOT），還原時要掃**快照本身** —— 2026-10-01 踩過：
+//   還原時掃 ROOT 的話，clearWorkspaceInputs 剛刪掉的動態指紋檔就不在清單裡，
+//   快照裡有也不還原，--if-changed 永遠判成「有變」，確認後動態一定重做、字卡被重寫。
+function snapshotTargets(base = ROOT) {
   const list = ['public'];
-  const src = path.join(ROOT, 'src');
+  const src = path.join(base, 'src');
   const walk = (dir, rel) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const r = rel ? rel + '/' + e.name : e.name;
@@ -403,7 +406,7 @@ function restoreWorkspace(job) {
   const src = jobPath(job.id, 'state');
   if (!fs.existsSync(src)) throw new Error('找不到這支工作的快照，可能已被清理。請重新建立。');
   clearWorkspaceInputs();
-  for (const rel of snapshotTargets()) {
+  for (const rel of snapshotTargets(src)) {
     const from = path.join(src, rel);
     if (fs.existsSync(from)) copyRecursive(from, path.join(ROOT, rel));
   }

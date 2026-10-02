@@ -823,3 +823,38 @@ test('取消排隊中的另一支，不能打斷正在跑的那支動態', { tim
   assert.ok(子程序.叫過.some((a) => a.includes('run.js')), 'A 應該照常往下出片');
   assert.notEqual(job.status, 'cancelled', 'A 不該被 B 的取消波及');
 });
+
+// 2026-10-01：restoreWorkspace 先 clearWorkspaceInputs（刪掉指紋檔）、再掃 ROOT 決定要還原哪些檔，
+// 指紋檔剛被刪就不在清單裡 → 快照裡明明有也不還原 → --if-changed 永遠判成「有變」，
+// 確認後動態一定重做，claude-cli 重寫的字卡跟計畫頁預覽的不一樣。20 支工作 0 次沿用。
+test('還原快照：動態指紋檔要拿回來，--if-changed 才沿用得到計畫頁那一版', (t) => {
+  const root = 沙箱(t);
+  const id = 待出片工作(root);
+  const 快照 = path.join(root, '工作紀錄', id, '_製作資料', '快照');
+  寫檔(path.join(快照, 'src', 'MotionClip', 'motion-sig.generated.json'), 'de1c1b3536118141');
+  寫檔(path.join(快照, 'src', 'MotionClip', 'motion.generated.json'), [{ file: 'motion-1-p.mp4' }]);
+  // 工作區留著上一支的指紋：還原後必須換成這支自己的
+  const 工作區 = applicationPath(root);
+  寫檔(path.join(工作區, 'src', 'MotionClip', 'motion-sig.generated.json'), '上一支的指紋');
+  寫檔(path.join(工作區, 'src', 'MotionClip', 'motion.generated.json'), []);
+
+  const api = loadServer(root);
+  api.restoreWorkspace(api.getJob(id));
+
+  assert.equal(fs.readFileSync(path.join(工作區, 'src', 'MotionClip', 'motion-sig.generated.json'), 'utf-8'),
+    'de1c1b3536118141', '指紋要從快照還原，不然出片時動態一定重做');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(工作區, 'src', 'MotionClip', 'motion.generated.json'), 'utf-8')),
+    [{ file: 'motion-1-p.mp4' }]);
+});
+
+test('還原快照：工作區沒有的 generated 檔，快照有就要還原', (t) => {
+  const root = 沙箱(t);
+  const id = 待出片工作(root);
+  寫檔(path.join(root, '工作紀錄', id, '_製作資料', '快照', 'src', 'DapanXiaobao', 'only-in-snapshot.generated.json'), { ok: true });
+
+  const api = loadServer(root);
+  api.restoreWorkspace(api.getJob(id));
+
+  assert.deepEqual(JSON.parse(fs.readFileSync(
+    path.join(applicationPath(root), 'src', 'DapanXiaobao', 'only-in-snapshot.generated.json'), 'utf-8')), { ok: true });
+});
