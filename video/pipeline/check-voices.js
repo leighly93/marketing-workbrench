@@ -3,7 +3,7 @@
  * 查 HeyGen voice 的能力：support_pause（吃不吃 <break> 標籤）、support_locale、engine。
  *
  * 用法：
- *   npm run check-voices                 # 查各版型（registry）與雙人 path 的 voice
+ *   npm run check-voices                 # 查各版型（registry）的 HeyGen 內建語音
  *   npm run check-voices -- <voice_id>   # 查任意一支
  *
  * 只讀不寫，不耗生成額度。
@@ -20,9 +20,6 @@ const { TEMPLATES } = require('../templates/registry');
 const KNOWN = [
   ...Object.entries(TEMPLATES).filter(([, t]) => t.anchor.heygenVoiceId)
     .map(([id, t]) => ({ label: `${t.label} ${id}`, id: t.anchor.heygenVoiceId })),
-  // run.js 雙人 path（HEYGEN_DUAL_VOICES）用的兩支
-  { label: "雙人 A（女聲）", id: "65b04effe83f423dbb1f66317318c37f" },
-  { label: "雙人 B（男聲）", id: "c223c1b3c779490ca14f4525eb30006e" },
 ];
 
 async function fetchVoice(voiceId) {

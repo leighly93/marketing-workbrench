@@ -244,43 +244,51 @@ test('dry-run 不會寫壞既有的 motion.generated.json', () => {
 // run.js 不能 require（它會直接跑 main），所以這幾條是讀原始碼做結構檢查。
 // 脆弱歸脆弱，但擋得住「重構時把 try/catch 拿掉」這種會靜默吃掉成品的改動。
 
-test('run.js：動態排在字幕之後、停在出片前之前', () => {
+test('run.js：動態排在字幕與配圖之後、停在出片前之前', () => {
   // 之前：沒有 _scriptCharTimes 就算不出每一項的秒數。
   // 之後：--stop-before-render 停下來時，配圖計畫頁才看得到動態、可以預覽與棄用。
+  // run.js 只做編排，這條順序就是它的契約。
   const src = fs.readFileSync(path.join(repository, 'video/run.js'), 'utf-8');
-  const 字幕 = src.indexOf('transcribeWithRetry();');
-  const 動態 = src.indexOf('renderMotionClips();');
-  const 停下 = src.indexOf('if (STOP_BEFORE_RENDER)');
-  assert.ok(字幕 > 0 && 動態 > 字幕, '動態必須排在轉字幕之後');
-  assert.ok(停下 > 動態, '動態必須在「停在出片前」之前跑完');
+  const at = (s) => src.indexOf(s, src.indexOf('async function main('));
+  assert.ok(at('transcribeWithRetry(') < at('prepareShots(opts)'));
+  assert.ok(at('prepareShots(opts)') < at('renderMotionClips('), '動態必須排在轉字幕與配圖之後');
+  assert.ok(at('renderMotionClips(') < at('if (opts.stopBeforeRender)'), '動態必須在「停在出片前」之前跑完');
 });
 
-test('run.js：動態失敗要降級，而且要清空 generated 檔', () => {
-  // 不清空的話會沿用上一支的 motion.generated.json ——
-  // 這支影片會貼上**別支的動態畫面**，而且完全沒有錯誤訊息。
-  const src = fs.readFileSync(path.join(repository, 'video/run.js'), 'utf-8');
-  const i = src.indexOf('function renderMotionClips()');
-  assert.ok(i > 0, 'run.js 找不到 renderMotionClips');
-  const fn = src.slice(i, src.indexOf('\nfunction ', i + 10));
-  assert.match(fn, /catch\s*\(/, '沒有 catch —— 動態掛掉會讓整支出片失敗');
-  assert.match(fn, /不影響出片/, 'catch 裡要留下可辨識的記錄');
-  assert.match(fn, /writeFileSync\(\s*motionGenerated/, '降級時必須清空 motion.generated.json');
-});
+describe('steps/motion：renderMotionClips', () => {
+  const { renderMotionClips } = require('../steps/motion');
+  const 工作區 = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'motion-step-'));
+    fs.mkdirSync(path.join(dir, 'public'));
+    fs.mkdirSync(path.join(dir, 'src', 'MotionClip'), { recursive: true });
+    return dir;
+  };
 
-test('run.js：清殘留的 regex 只打中動態檔，不能誤刪講者影片或套版素材', () => {
-  // 這個 regex 會直接 unlinkSync。打太寬的話會刪掉 heygen.mp4 ——
-  // 那是花了 HeyGen 額度生出來的，刪掉就得重跑。
-  const src = fs.readFileSync(path.join(repository, 'video/run.js'), 'utf-8');
-  const m = src.match(/if \((\/\^motion[^/]*\/)\.test\(f\)\)/);
-  assert.ok(m, 'run.js 找不到清殘留的 regex');
-  const re = new RegExp(m[1].slice(1, -1));
-  for (const 該刪 of ['motion-1-p.mp4', 'motion-2-l.mp4', 'motion-10-p.mp4']) {
-    assert.ok(re.test(該刪), `${該刪} 應該要被清掉`);
-  }
-  for (const 不該刪 of ['heygen.mp4', 'outro.mp4', 'dapan-bgm.wav', 'shot1.png',
-                        'motion.json', 'minimax.mp3', 'motion-1-p.mp4.bak']) {
-    assert.ok(!re.test(不該刪), `${不該刪} 不該被清掉`);
-  }
+  test('動態失敗要降級（不丟出），而且要清空 generated 檔', () => {
+    // 不清空的話會沿用上一支的 motion.generated.json —— 這支影片會貼上別支的動態畫面，而且完全沒有錯誤訊息。
+    const dir = 工作區();
+    const generated = path.join(dir, 'src', 'MotionClip', 'motion.generated.json');
+    fs.writeFileSync(generated, '[{"上一支":1}]');
+    const logs = [];
+    const ok = renderMotionClips({ projectDir: dir, template: 'dapan', run: () => { throw new Error('render 爆了'); }, log: (m) => logs.push(m) });
+    assert.equal(ok, false);
+    assert.equal(fs.readFileSync(generated, 'utf8'), '[]\n');
+    assert.match(logs.join('\n'), /不影響出片/);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('清殘留只刪動態檔，不能誤刪講者影片或套版素材', () => {
+    // 這裡會直接刪檔。打太寬的話會刪掉 heygen.mp4 —— 那是花了 HeyGen 額度生出來的。
+    const dir = 工作區();
+    const 該刪 = ['motion-1-p.mp4', 'motion-2-l.mp4', 'motion-10-p.mp4'];
+    const 不該刪 = ['heygen.mp4', 'outro.mp4', 'dapan-bgm.wav', 'shot1.png', 'motion.json', 'minimax.mp3', 'motion-1-p.mp4.bak'];
+    for (const f of [...該刪, ...不該刪]) fs.writeFileSync(path.join(dir, 'public', f), '');
+    const calls = [];
+    renderMotionClips({ projectDir: dir, template: 'midday', run: (c) => calls.push(c), log: () => {} });
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'public')).sort(), [...不該刪].sort());
+    assert.deepEqual(calls, ['npm run render-motion -- --template=midday']);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 // ── 伺服器端（2026-09-18）─────────────────────────────────────

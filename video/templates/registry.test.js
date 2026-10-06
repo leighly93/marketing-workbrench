@@ -16,6 +16,8 @@ describe('版型設定表', () => {
     expect(t.anchor.avatar.id).toMatch(/^[0-9a-f]{32}$/);
     expect(t.anchor.minimaxVoiceId).toMatch(/^moss_audio_/);
     expect(['9:16', '16:9']).toContain(t.anchor.aspectRatio);
+    expect(['minimax', 'heygen']).toContain(t.anchor.voice);
+    if (t.anchor.voice === 'heygen') expect(t.anchor.heygenVoiceId).toBeTruthy();
     expect(Object.keys(t.motion).every((k) => k === 'p' || k === 'l')).toBe(true);
   });
 

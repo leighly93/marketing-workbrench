@@ -24,7 +24,7 @@ function parseVoiceReplacements(raw) {
  * 像是 - 就不要，或許送配音前 - 可以先刪掉？但最後字幕還是要出現。」
  *
  * 為什麼這裡是對的位置：配音跟字幕走的是**兩條不同的清洗函式** ——
- * TTS 走本檔的 cleanScript()／cleanSegmentText()，字幕走 script-utils.js 的 cleanBodyWithIndex()。
+ * TTS 走本檔的 cleanScript()，字幕走 script-utils.js 的 cleanBodyWithIndex()。
  * 在 TTS 這條刪掉減號，字幕那條完全不受影響 → 螢幕上照樣是「世芯-KY」，
  * 而且**不需要**靠共用詞庫的 `-KY→KY` ＋ correct-subtitles 第 10 步反向還原繞一圈
  * （那條路只認 -KY，而且反向還原沒有詞邊界，會把字幕裡單獨的 KY 也塞成 -KY）。
@@ -49,7 +49,7 @@ function stripSpeechHyphens(text) {
  * 「兩千零二十六」，台灣唸法要逐字「二零二六」。而指數 45,832、價格 1,205、
  * 百分比 6% 本來就唸得對，沒有非開 TN 不可的理由。
  *
- * 位置與 stripSpeechHyphens() 同一個理由：TTS 走 cleanScript()／cleanSegmentText()，
+ * 位置與 stripSpeechHyphens() 同一個理由：TTS 走 cleanScript()，
  * 字幕走 script-utils.js 的 cleanBodyWithIndex() —— 在這裡轉，螢幕上照樣顯示「2026」。
  *
  * ⚠️ **股號那條規則已經拿掉，不要加回來。** 原本還有一條「獨立的 4 位數 → 逐字唸」
@@ -94,70 +94,4 @@ function cleanScript(raw) {
   return cleaned;
 }
 
-// ── 雙人 path：腳本解析 ─────────────────
-// detectMode: 偵測腳本是否含 [A]/[B] 行首標記 → 'dual' 或 'solo'
-// 沒有 [A]/[B] → 走現有單人 path（100% 向後相容）
-function detectMode(rawScript) {
-  const parts = rawScript.split("===");
-  const body = parts.length >= 3 ? parts[parts.length - 1] : (parts[1] ?? rawScript);
-  return /^[ \t]*\[([AaBb])\]/m.test(body) ? "dual" : "solo";
-}
-
-// splitByRole: 把 script.txt 內文依 [A]/[B] 行首標記切段、合併連續同角色段
-// 沒標的第一段預設 A；沒標的後續行承襲上一段角色
-// 回傳 [{ role: 'A'|'B', text: <已清洗的對話文字> }, ...]
-function splitByRole(rawScript, voiceRules) {
-  const parts = rawScript.split("===");
-  const body = parts.length >= 3 ? parts[parts.length - 1] : (parts[1] ?? rawScript);
-
-  // 套發音替換（保持繁中，跟單人 path 同邏輯）
-  let bodyAfterVoice = body;
-  for (const rule of voiceRules) {
-    bodyAfterVoice = bodyAfterVoice.split(rule.from).join(rule.to);
-  }
-
-  const lines = bodyAfterVoice.split("\n");
-  let currentRole = "A"; // 預設第一段為 A
-  let currentText = "";
-  const segments = [];
-
-  function flushSegment() {
-    const cleaned = cleanSegmentText(currentText);
-    if (cleaned) segments.push({ role: currentRole, text: cleaned });
-    currentText = "";
-  }
-
-  for (const line of lines) {
-    const m = line.match(/^[ \t]*\[([AaBb])\][ \t]*(.*)$/);
-    if (m) {
-      const newRole = m[1].toUpperCase();
-      if (newRole !== currentRole && currentText.trim()) flushSegment();
-      currentRole = newRole;
-      currentText += (currentText ? " " : "") + m[2];
-    } else {
-      currentText += (currentText ? " " : "") + line;
-    }
-  }
-  flushSegment();
-  return segments;
-}
-
-// cleanSegmentText: 單段對話的清洗（跟 cleanScript 同精神，但已切段、只處理單段文字）
-function cleanSegmentText(text) {
-  let out = text
-    .replace(/\(text:[^)]*\)[\s\S]*?\(\/text\)/gi, "")
-    .replace(/\([a-z0-9]+\)/gi, "")
-    .replace(/\(shot:[^)]*\)/gi, "");
-  out = out.replace(/[\[{【（][^\]}\]）】]*[\]}\]）】]/g, "");
-  out = out.replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
-  // 跟單人 path 一致：減號不進 TTS、年份轉中文
-  out = stripSpeechHyphens(out);
-  out = numFix(out);
-  return out;
-}
-
-
-module.exports = {
-  parseVoiceReplacements, stripSpeechHyphens, digitsToCn, numFix, cleanScript,
-  detectMode, splitByRole, cleanSegmentText,
-};
+module.exports = { parseVoiceReplacements, stripSpeechHyphens, digitsToCn, numFix, cleanScript };

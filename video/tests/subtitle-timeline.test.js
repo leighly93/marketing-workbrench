@@ -182,18 +182,36 @@ test('判定失敗時不能把半成品寫回 subtitles.json', () => {
 // ── 重轉階梯 ────────────────────────────────────────────
 
 test('重轉階梯：第一次不墊靜音（維持原本行為），後面每次墊不同秒數', () => {
-  const src = fs.readFileSync(path.join(VIDEO, 'run.js'), 'utf8');
-  const m = src.match(/const SUBTITLE_PAD_LADDER = \[([^\]]+)\]/);
-  assert.ok(m, 'run.js 找不到 SUBTITLE_PAD_LADDER');
-  const ladder = m[1].split(',').map((s) => Number(s.trim()));
+  const { SUBTITLE_PAD_LADDER: ladder } = require('../steps/transcribe');
   assert.equal(ladder[0], 0, '第一次一定不能墊 —— 墊了等於改掉所有影片的字幕結果');
   assert.equal(new Set(ladder).size, ladder.length, '每次墊的秒數要不一樣，墊一樣的等於原樣重轉（whisper 是確定性的）');
   // 2026-09-18 使用者調整：原本是 [0, 0.5]（只轉兩次），當天出片一直卡在時間軸判定失敗，
   // 改成四次、每次墊的秒數拉開。要再改得是新的決定，不是順手調參。
   assert.deepEqual(ladder, [0, 0.8, 1.5, 2.5]);
-  assert.ok(ladder.length >= 2, '至少要有重轉一次的機會');
-  // 只有「時間軸判定失敗」(exit 3) 才重轉，其他錯誤照舊往上丟
-  assert.match(src, /e\.status !== 3/);
+});
+
+test('重轉階梯：只有時間軸判定失敗（exit 3）才墊靜音重轉，成功就停', () => {
+  const { transcribeWithRetry } = require('../steps/transcribe');
+  const calls = [];
+  let fails = 2;
+  const run = (cmd) => {
+    calls.push(cmd);
+    if (cmd === 'npm run correct-subtitles' && fails-- > 0) throw Object.assign(new Error('壞'), { status: 3 });
+  };
+  assert.equal(transcribeWithRetry({ run, log: () => {} }), 1.5);
+  assert.deepEqual(calls, [
+    'npm run transcribe', 'npm run correct-subtitles',
+    'npm run transcribe -- --pad=0.8', 'npm run correct-subtitles',
+    'npm run transcribe -- --pad=1.5', 'npm run correct-subtitles',
+  ]);
+});
+
+test('重轉階梯：其他錯誤直接丟出；四次都壞就停在出片前並說明不要按重新出片', () => {
+  const { transcribeWithRetry } = require('../steps/transcribe');
+  const other = () => { throw Object.assign(new Error('缺檔'), { status: 1 }); };
+  assert.throws(() => transcribeWithRetry({ run: (c) => { if (c.includes('correct')) other(); }, log: () => {} }), /缺檔/);
+  const always = (c) => { if (c.includes('correct')) throw Object.assign(new Error('壞'), { status: 3 }); };
+  assert.throws(() => transcribeWithRetry({ run: always, log: () => {} }), /連續 4 次都判定壞掉[\s\S]*不要按「重新出片」/);
 });
 
 test('transcribe.sh 的 --pad 會一路傳到 Adapter，時長偵測不受影響', () => {

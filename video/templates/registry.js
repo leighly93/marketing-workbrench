@@ -13,7 +13,9 @@
  *   srcDir / planFile Remotion 專案裡這個版型的資料夾與配圖計畫檔（src/<srcDir>/<planFile>）
  *   outputs           要渲染的成品：composition、產線輸出檔名、前台標籤
  *   assets            storage/shared-assets/<dir>/ 的檔案 → public/ 的目標檔名（帶版型前綴，避免撞名）
- *   anchor            固定主播：HeyGen avatar、畫面比例、HeyGen 內建語音（退路）、MiniMax 聲音（預設）
+ *   anchor            固定主播：HeyGen avatar、畫面比例、配音來源、HeyGen 內建語音、MiniMax 聲音
+ *                     voice：'minimax'＝MiniMax 配音＋HeyGen 音訊驅動對嘴（2026-08-24 起預設，HeyGen 的中文 TTS 腔調不對）；
+ *                            'heygen'＝HeyGen 內建語音的文字驅動。單次要退回 HeyGen 內建語音就加 --heygen-voice。
  *   motion            動態小影片要出哪些方向（p 直式、l 橫式）與安全區覆寫
  *   ui                前台：標題規則（使用者拍板的數字，不是從字級回推）、箭頭、提示、旗標
  */
@@ -24,7 +26,7 @@
  *   label: string, emoji: string, srcDir: string, planFile: string,
  *   outputs: TemplateOutput[],
  *   assets: { dir: string, files: Record<string, string> },
- *   anchor: { avatar: { id: string, gender: string }, aspectRatio: '9:16' | '16:9', heygenVoiceId: string, minimaxVoiceId: string },
+ *   anchor: { avatar: { id: string, gender: string }, aspectRatio: '9:16' | '16:9', voice: 'minimax' | 'heygen', heygenVoiceId: string, minimaxVoiceId: string },
  *   motion: Record<string, { safeTop?: number, safeBottom?: number }>,
  *   ui: { title: TitleRule, arrow: boolean, hint: string, flags: string[] },
  * }} TemplateConfig
@@ -51,6 +53,7 @@ const TEMPLATES = {
       // 2026-09-14 換 look（原 b1be6a97…）。這支是否為直式素材還沒驗：出片後 heygen.mp4 上下有邊，才改 16:9。
       avatar: { id: '4105a6e911a24f3ab8741cdd8b13f2ba', gender: 'female' },
       aspectRatio: '9:16',
+      voice: 'minimax',
       // 2026-09-11 起有自己的 HeyGen 聲音（不再沿用大盤小報）。目前是退路，只有 --heygen-voice 會用到。
       heygenVoiceId: '9cb1516ecebf4c06b668e03f7f6e91f7',
       minimaxVoiceId: 'moss_audio_f85dc873-ada4-11f1-a626-8a59b47fb1f9',
@@ -90,6 +93,7 @@ const TEMPLATES = {
       avatar: { id: '77012ed52edb488bbf32587afc0ec288', gender: 'female' },
       // 主播素材是橫式，所以 16:9；其他版型的直式素材抄這個會上下補白。
       aspectRatio: '16:9',
+      voice: 'minimax',
       heygenVoiceId: 'dc529e16819846b2a0ba986a7fc51a85',
       minimaxVoiceId: 'moss_audio_b47d71d2-ada4-11f1-8900-9edb4a3ef07d',
     },
@@ -120,6 +124,7 @@ const TEMPLATES = {
       // 2026-09-15 換 look（原 d7fc9954…）；比例同盤中焦點的說明。
       avatar: { id: '4a74ef949c524c17b762656d58f0c1ac', gender: 'female' },
       aspectRatio: '9:16',
+      voice: 'minimax',
       // 使用者只給了 MiniMax 聲音，沒有 HeyGen 內建語音的退路。
       heygenVoiceId: '',
       minimaxVoiceId: 'moss_audio_3a75102e-54db-11f1-981b-8a143315d498',
