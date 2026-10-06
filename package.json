@@ -10,7 +10,8 @@
     "verify": "node tools/verify.js",
     "check:release": "node tools/release-check.js",
     "setup:whisper": "python3 tools/whisper/setup-whisper.py",
-    "test": "node --test \"server/tests/*.test.js\" \"video/tests/*.test.js\" \"shared/tests/*.test.js\" \"tools/tests/*.test.js\"",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "studio": "node --watch server/start.js",
     "transcribe": "bash video/pipeline/transcribe.sh",
     "correct-subtitles": "node video/pipeline/correct-subtitles.js",
@@ -46,7 +47,10 @@
   "devDependencies": {
     "@types/react": "^18.3.3",
     "@types/web": "^0.0.150",
-    "typescript": "^5.4.5"
+    "@vitest/coverage-v8": "^5.0.3",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.4.5",
+    "vitest": "^5.0.3"
   },
   "engines": {
     "node": ">=24 <25"

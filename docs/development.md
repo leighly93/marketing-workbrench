@@ -14,7 +14,7 @@
 | [storage](../storage/) | 資料：`jobs/` 工作、`shared-assets/` 品牌素材（進 Git）、`data/` 詞庫與記憶、`tmp/` 產線暫存、`archive/` 封存 |
 | [docs](.) | 維護說明、[模板導覽](templates/README.md)與[第三方授權](licenses/README.md) |
 
-測試放在各自的 `tests/`：`server/tests`（API 與工作資料）、`video/tests`（產線與模板）、`shared/tests`（路徑）、`tools/tests`（初始化）。`npm test` 會全部跑，`npm run verify` 另外做 typecheck、Remotion 打包與隔離 HTTP 檢查。
+測試用 Vitest：單元測試放在程式旁邊（`foo.js` ↔ `foo.test.js`），跨模組的整合測試放在各區的 `tests/`。前台測試在檔案開頭加 `// @vitest-environment jsdom`。`npm test` 跑全部、`npm run test:coverage` 產生覆蓋率報告（`storage/tmp/coverage/`），`npm run verify` 另外做 typecheck、Remotion 打包與隔離 HTTP 檢查。
 
 Remotion 只在 `package.json` 那一層找 `tsconfig.json`，所以它留在根目錄；設定檔 `video/remotion/remotion.config.ts` 透過 `--config` 指定，並在裡面宣告入口與 `public/` 位置。
 

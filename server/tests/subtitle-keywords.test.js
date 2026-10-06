@@ -10,7 +10,6 @@
 //   ③ 渲染端能不能把字元索引對回字幕 —— 前提是「words 去空白拼接 == _scriptCharTimes 筆數」，
 //      這條假設一旦破了，重點詞就會標到隔壁字上。
 
-const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');

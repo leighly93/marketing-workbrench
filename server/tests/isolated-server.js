@@ -14,7 +14,7 @@ const repository = path.resolve(__dirname, '..', '..');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'marketing-資料測試 '));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
 

@@ -8,7 +8,6 @@
 // 而 systemCell 是自動框選準確度的評估來源（scripts/_vision-trial/iou.js 的基準線 IoU 0.301），
 // 污染後指標會趨近 1.0 —— 錯的方向剛好是「讓人放心」的那個。
 
-const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');

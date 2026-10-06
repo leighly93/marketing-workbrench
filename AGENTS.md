@@ -20,7 +20,7 @@
 
 ## 不可破壞的契約
 
-- 單一 npm package，所有 npm 命令在根目錄執行。程式分 `app/`（前台）、`server/`（API）、`video/`（出片），共用程式在 `shared/`，資料一律在 `storage/`；路徑經由 `shared/paths.js` 與 `shared/job-store.js` 解析，不在各處自組資料路徑。測試放在各區自己的 `tests/`。
+- 單一 npm package，所有 npm 命令在根目錄執行。程式分 `app/`（前台）、`server/`（API）、`video/`（出片），共用程式在 `shared/`，資料一律在 `storage/`；路徑經由 `shared/paths.js` 與 `shared/job-store.js` 解析，不在各處自組資料路徑。測試用 Vitest：單元測試放在程式旁（`*.test.js`），整合測試放在各區 `tests/`。
 - 每筆 job 使用完整 ID。工作第一層放 MP4、`script.txt`，另有 `inputs/` 與 `_meta/`；不得憑同標題或短 ID 合併、猜測版本或用共用暫存影片替代缺件。
 - 成功、失敗、取消、待審核與缺件工作都是歷史，不依年代自動刪除。修正資料路徑須同時核對讀取、建立、上傳、備份、重跑及下載。
 - 保留稿件 `===` 分隔、發音替換、`(imageN)`／`(logo)`／`(text:)` 等 marker 契約。修改產生邏輯，不直接改使用者生成的 JSON。

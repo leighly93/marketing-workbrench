@@ -1,6 +1,5 @@
 'use strict';
 
-const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -19,7 +18,7 @@ function write(file, value) {
 
 function fixture(t, scripts) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), '影片 產線路徑測試 '));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
   const app = applicationPath(root);
   fs.mkdirSync(path.join(app, 'public'), { recursive: true });
   fs.mkdirSync(path.join(app, 'src', 'Focusstock'), { recursive: true });

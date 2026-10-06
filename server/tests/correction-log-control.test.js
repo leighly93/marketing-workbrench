@@ -10,7 +10,6 @@
 //      ⚠️ 2026-09-22 該版型移除，出片路徑上的那條例外跟著刪了，但**歷史紀錄還在**，
 //         改由 correctionRows() 認 'institution' 代號標成 legacyNoSrc（見本檔最後一個測試）。
 
-const test = require('node:test');
 const assert = require('node:assert/strict');
 const { fixture, write, loadServer, workFile } = require('./isolated-server');
 

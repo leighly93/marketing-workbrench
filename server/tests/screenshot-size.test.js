@@ -13,7 +13,6 @@
 // 判準：標注自己量到的尺寸（前台 img.naturalWidth/Height）必定屬於這支工作，一律優先；
 // 對不上分析檔時，那筆分析連帶的頁型／代號也不能用。
 
-const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');

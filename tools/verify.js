@@ -11,7 +11,6 @@ const { initialize } = require('./init');
 const root = path.resolve(__dirname, '..');
 const app = applicationPath(root); // Remotion 專案 video/remotion
 const requireApp = createRequire(path.join(root, 'package.json'));
-const TEST_DIRS = ['server/tests', 'video/tests', 'shared/tests', 'tools/tests'];
 
 function run(file, args) {
   const result = spawnSync(process.execPath, [file, ...args], { cwd: root, stdio: 'inherit' });
@@ -58,8 +57,7 @@ async function smoke() {
 
 async function main() {
   run(requireApp.resolve('typescript/bin/tsc'), ['--noEmit', '--incremental', 'false']);
-  const tests = TEST_DIRS.flatMap((dir) => fs.readdirSync(path.join(root, dir)).filter((n) => n.endsWith('.test.js')).map((n) => path.join(root, dir, n)));
-  run('--test', tests);
+  run(path.join(root, 'node_modules', 'vitest', 'vitest.mjs'), ['run']);
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-bundle-'));
   try {
     await requireApp('@remotion/bundler').bundle({ entryPoint: path.join(app, 'src/index.ts'), rootDir: root, publicDir: path.join(app, 'public'), outDir: bundleDir, enableCaching: false, gitSource: null });

@@ -9,7 +9,6 @@
 //      要是連 arrow 都被吃掉，那一段就完全看不出使用者標過東西。
 // 這支測試盯的就是這兩件事。
 
-const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -31,7 +30,7 @@ function write(file, value) {
 // pipeline-paths.test.js 的同名夾具，只保留 auto-shot 需要的部分：合成副本 + 禁止外部呼叫。
 function fixture(t, scripts) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), '影片 配圖箭頭測試 '));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
   const app = applicationPath(root);
   fs.mkdirSync(path.join(app, 'public'), { recursive: true });
   fs.mkdirSync(path.join(app, 'src'), { recursive: true });

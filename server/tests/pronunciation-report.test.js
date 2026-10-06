@@ -9,7 +9,6 @@
 //   ① 共用詞庫已經有那個原文（含**停用**的 —— 停用＝看過而且決定不要）
 //   ② 收件匣裡同一個原文還沒處理
 
-const test = require('node:test');
 const assert = require('node:assert/strict');
 const { fixture, loadServer } = require('./isolated-server');
 

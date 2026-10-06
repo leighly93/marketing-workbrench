@@ -7,7 +7,6 @@
 // 另一半是「前台給的值 ⊆ 伺服器白名單」：兩份清單各自寫在自己的檔案裡，
 // 哪天有人只改一邊（例如前台多加一顆 calm 或 whisper），這裡要先響。
 
-const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');

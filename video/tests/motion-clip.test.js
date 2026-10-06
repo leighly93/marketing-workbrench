@@ -8,7 +8,6 @@
 //   ③ 兩個版型的畫布與安全區是「腳本」與「Root.tsx 的 composition」各寫一份 ——
 //      改了一邊忘了另一邊，render 出來的尺寸就跟貼上去的區域對不上。
 
-const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
