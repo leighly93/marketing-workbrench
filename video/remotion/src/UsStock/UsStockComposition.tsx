@@ -220,7 +220,7 @@ const DateBadge: React.FC<{ left: number; top: number; fontSize?: number }> = ({
 };
 
 // 標題卡：只在開場卡顯示，讀 video-meta.json.titleText
-//（parse-usstock-script.js 從 script.txt 標題段寫入）。第一句白色、其餘黃色。
+//（video/templates/cli.js parse 從 script.txt 標題段寫入）。第一句白色、其餘黃色。
 const TITLE_COLORS = ['#ffffff', '#FFE600'];
 
 const TitleCard: React.FC<{ topOffset?: number }> = ({ topOffset = 0 }) => {

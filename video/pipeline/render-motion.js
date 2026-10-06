@@ -98,11 +98,7 @@ const ORIENTATIONS = {
  * 只有美股焦點的膠囊比較高，所以它的 safeTop 是 325 而不是 310。
  * safeBottom 全部一樣：直式版型共用 Subtitles.tsx，字幕一律從 y1440 起。
  */
-const TEMPLATE_MOTION = {
-  dapan: { p: {}, l: {} },
-  midday: { p: {} },
-  usstock: { p: { safeTop: 325 } },
-};
+const TEMPLATE_MOTION = Object.fromEntries(Object.entries(require('../templates/registry').TEMPLATES).map(([id, t]) => [id, t.motion]));
 
 /**
  * 這個版型要出哪幾支。不認得的版型只出直式 —— 橫式是大盤小報獨有的，

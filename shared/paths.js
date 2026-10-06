@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const path = require('node:path');
@@ -14,36 +15,44 @@ const path = require('node:path');
 const REMOTION_PARTS = ['video', 'remotion'];
 const STORAGE_PARTS = ['storage'];
 
+/** @param {string} applicationRoot Remotion 專案資料夾 */
 function workspaceRoot(applicationRoot) {
   return path.resolve(applicationRoot, '..', '..');
 }
 
+/** @param {string} root @param {...string} segments */
 function applicationPath(root, ...segments) {
   return path.join(root, ...REMOTION_PARTS, ...segments);
 }
 
+/** @param {string} root @param {...string} segments */
 function storagePath(root, ...segments) {
   return path.join(root, ...STORAGE_PARTS, ...segments);
 }
 
+/** @param {string} root @param {...string} segments */
 function dataPath(root, ...segments) {
   return storagePath(root, 'data', ...segments);
 }
 
+/** @param {...string} segments */
 function dataRelativePath(...segments) {
   return path.join(...STORAGE_PARTS, 'data', ...segments);
 }
 
+/** @param {string} root @param {...string} segments */
 function outputPath(root, ...segments) {
   return storagePath(root, 'tmp', 'pipeline-output', ...segments);
 }
 
+/** @param {string} root @param {...string} segments */
 function sharedAssetsPath(root, ...segments) {
   return storagePath(root, 'shared-assets', ...segments);
 }
 
 // CLI 參數：storage/ 與 jobs/<完整 ID>/... 以 repository 根解析；src/、public/ 以 Remotion 專案解析；
 // 其餘以呼叫者 CWD 解析（npm 會把下命令時的目錄放在 INIT_CWD，執行時 CWD 一律是 repository 根）。
+/** @param {string} applicationRoot @param {string} reference @returns {string} */
 function cliPath(applicationRoot, reference) {
   const root = workspaceRoot(applicationRoot);
   if (path.isAbsolute(reference)) return resolveDataReference(root, reference);
@@ -55,13 +64,14 @@ function cliPath(applicationRoot, reference) {
 }
 
 // jobs/<完整 job ID>/... 是邏輯位置，交給 job-store 找到 storage/jobs/ 底下實際的工作資料夾。
+/** @param {string} root @param {string} reference @returns {string} */
 function resolveDataReference(root, reference) {
   const absolute = path.resolve(root, reference);
   const parts = path.relative(root, absolute).split(path.sep);
   if (parts[0] === 'jobs' && parts[1]) {
     const { createJobStore } = require('./job-store');
     try { return createJobStore(root).path(parts[1], ...parts.slice(2)); }
-    catch (e) { if (!e.message.startsWith('找不到工作位置：')) throw e; }
+    catch (e) { if (!(e instanceof Error) || !e.message.startsWith('找不到工作位置：')) throw e; }
     return storagePath(root, ...parts);
   }
   return absolute;

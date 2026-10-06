@@ -70,6 +70,7 @@ function loadServer(root, options = {}) {
     '../video/pipeline/shot-memory': localRequire('../video/pipeline/shot-memory'),
     '../video/pipeline/image-size': localRequire('../video/pipeline/image-size'),
     '../video/pipeline/script-utils': localRequire('../video/pipeline/script-utils'),
+    '../video/templates/registry': localRequire('../video/templates/registry'),
     '../shared/paths': localRequire('../shared/paths'),
     '../shared/job-store': localRequire('../shared/job-store'),
   };

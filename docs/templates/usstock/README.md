@@ -16,6 +16,6 @@
 
 ## 看實作
 
-[畫面組合](../../../video/remotion/src/UsStock/UsStockComposition.tsx)、[時間軸](../../../video/remotion/src/UsStock/usstock-timeline.ts)、[素材準備](../../../video/pipeline/use-usstock-assets.js)。
+[畫面組合](../../../video/remotion/src/UsStock/UsStockComposition.tsx)、[時間軸](../../../video/remotion/src/UsStock/usstock-timeline.ts)、[版型設定與素材對照](../../../video/templates/registry.js)。
 
 目前是整理過渡期，連結指向素材與程式的現有位置，後續搬移時會更新。[返回模板列表](../README.md)

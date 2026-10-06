@@ -206,7 +206,7 @@ const DateBadge: React.FC<{ top: number }> = ({ top }) => {
 };
 
 // 標題卡：只在開場卡顯示，讀 video-meta.json.titleText
-//（parse-midday-script.js 從 script.txt 標題段寫入）。第一句深灰、其餘深藍。
+//（video/templates/cli.js parse 從 script.txt 標題段寫入）。第一句深灰、其餘深藍。
 // 2026-09-15 使用者換了開場底圖（改成淺藍天空背景）並指定這兩個色，取代原本的白＋黃
 //（白＋黃是深色底圖時代的配色，在新的淺底上會看不見）。
 // 同一次定案：描邊由黑改白、標題陰影整個拿掉 —— 深色字配黑描邊會把 #023c91 壓成近黑，

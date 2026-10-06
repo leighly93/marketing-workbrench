@@ -1,8 +1,14 @@
+// @ts-check
 'use strict';
 
 const fs = require('node:fs');
 const path = require('node:path');
 
+/**
+ * @typedef {{ id: string, title?: string, createdAt?: string, [key: string]: unknown }} JobRecord
+ */
+
+/** 工作資料夾名稱：日期_標題_完整ID。 @param {JobRecord} job */
 function folderName(job) {
   const id = String(job.id);
   if (!id || !/^[\w-]+$/.test(id)) throw new Error('無效的工作 ID');
@@ -12,16 +18,22 @@ function folderName(job) {
 }
 
 // 產線輸出檔名 → 工作資料夾裡的成品檔名。
+/** @param {string} name */
 function outputName(name) {
   if (/landscape/i.test(name)) return 'landscape.mp4';
-  if (/^output-(dapan|midday|usstock)\.mp4$/i.test(name)) return 'portrait.mp4';
+  if (/^output-[a-z]+\.mp4$/i.test(name)) return 'portrait.mp4';
   return path.basename(name);
 }
 
+/**
+ * @param {string} root repository 根
+ * @param {typeof import('node:fs')} [io]
+ */
 function createJobStore(root, io = fs) {
   const base = path.join(root, 'storage', 'jobs');
   const locations = new Map();
   function scan() {
+    /** @type {JobRecord[]} */
     const jobs = [];
     if (!io.existsSync(base)) return jobs;
     for (const entry of io.readdirSync(base, { withFileTypes: true })) {
@@ -37,6 +49,7 @@ function createJobStore(root, io = fs) {
     }
     return jobs;
   }
+  /** @param {string} id @param {JobRecord} [job] @returns {string} */
   function directory(id, job) {
     if (!locations.has(id)) scan();
     if (!locations.has(id)) {
@@ -45,9 +58,10 @@ function createJobStore(root, io = fs) {
     }
     return locations.get(id);
   }
-  function locate(id, ...parts) {
+  /** @param {string} id @param {...(string | number)} segments */
+  function locate(id, ...segments) {
     const dir = directory(id);
-    parts = parts.flatMap((p) => String(p).split(/[\/\\]/));
+    const parts = segments.flatMap((p) => String(p).split(/[\/\\]/));
     if (parts[0] === 'input') {
       if (parts[1] === 'script.txt') return path.join(dir, 'script.txt', ...parts.slice(2));
       return path.join(dir, 'inputs', ...parts.slice(1));

@@ -36,6 +36,7 @@ const { spawn, execFileSync } = require('child_process');
 const SHOT_MEMORY = require('../video/pipeline/shot-memory');
 const { resolveManualOverlaps } = require('../video/pipeline/script-utils');
 const { imageSize, pickImageSize } = require('../video/pipeline/image-size');
+const { serverTemplates, TEMPLATE_ASSET_PATTERN } = require('../video/templates/registry');
 // 2026-08-27：自動唸法檢查（video/pipeline/check-pronunciation.js）不再由伺服器跑。
 // 它算出來的東西大部分是錯的（兩份字幕的 words 會因為空字串而整段錯開；拼音又因為
 // nonZh:'consecutive' 把連續英數字併成一格而再錯開一次），而卡片同事也看得到，
@@ -107,64 +108,8 @@ const ARCHIVE_DIR = JOBS_DIR;
 //           沒有換行空間，所以是 false；其餘三個超過還有得救。
 //   ⚠️ 這些是使用者拍板的數字，不是從字級回推的。改字級不用動這裡，
 //      但如果使用者說「字太小 / 擠出去了」，回來一起看。
-const TEMPLATES = {
-  // ⚠️ 這個物件的「宣告順序＝前台版型清單的顯示順序」（index.html 用 Object.entries(TPLS) 畫）。
-  // 2026-08-31 使用者要求：盤中焦點 → 大盤小報。
-  // 2026-09-15 使用者指定美股焦點「放最右邊」＝可見項目的最後一個，所以排在大盤小報之後。
-  // 要調順序就搬這裡的區塊，不要去 index.html 排序。
-  // ⚠️ 2026-09-22：三大法人（institution）、焦點股日報（focusstock）、投廣模板（default）整組移除
-  //    —— 使用者確認是階段性任務、不會再使用。它們原本只是標 hidden 留著，現在連同 composition、
-  //    素材、專屬 scripts 一起刪了。要找回來：git log --diff-filter=D -- 'src/Institution'
-  //    ⚠️ 既有的 3 支 institution 舊工作仍留在 jobs/，但版型已不存在 —— 前台一律以代號顯示
-  //       並擋掉重跑（見 public/app.js 的 tplLabel 與本檔重跑處的檢查）。
-  midday: {
-    // 2026-08-31 新增。版面照大盤小報直式複製一份，所以標題規格跟大盤小報一樣（兩行、每行 10 字參考值）。
-    // ⚠️ 2026-09-14 使用者把參考值從 9 改成 10，並指定「一樣置中，可以參考圖片很靠邊沒關係」——
-    //    直式可用寬 960px（left/right 各 60）÷ 字級 103 ≈ 9.3 字，10 字幾乎貼齊左右邊，
-    //    這是使用者看過成品截圖後拍板的。wrap 仍是 true，超過只是折行、字級不變。
-    title: { lines: 2, per: 10, wrap: true, where: '開場第一秒' },
-    label: '盤中焦點',
-    // 這支的 timeline 有把 arrow 傳給渲染端 → 前台才給畫箭頭（2026-09-16）。
-    // ⚠️ 沒接的模板不要加這個旗標：畫得出來、成品卻沒有，就是靜默失效。
-    arrow: true,
-    hint: '',
-    // 只出直式（使用者定案「只出直式」），所以只有一個輸出、不需要 outputLabels 標「直式／橫式」。
-    outputs: ['output-midday.mp4'],
-    plan: 'src/MiddayFocus/midday-shots.generated.json',
-    planKind: 'shots',
-    flags: [],
-  },
-  dapan: {
-    // 2026-09-14 使用者：跟盤中焦點一起從 9 改成 10（見 midday 那段說明）。
-    // 橫式的標題在右側面板，可用寬 706px ÷ 字級 68 ≈ 10.4 字 —— 兩邊都是「剛好塞得下、很靠邊」。
-    title: { lines: 2, per: 10, wrap: true, where: '直式：開場第一秒　／　橫式：右側面板全程顯示' },
-    label: '大盤小報',
-    // 這支的 timeline 有把 arrow 傳給渲染端 → 前台才給畫箭頭（2026-09-16）。
-    // ⚠️ 沒接的模板不要加這個旗標：畫得出來、成品卻沒有，就是靜默失效。
-    arrow: true,
-    hint: '',
-    outputs: ['output-dapan.mp4', 'output-dapan-landscape.mp4'],
-    outputLabels: { 'output-dapan.mp4': '直式', 'output-dapan-landscape.mp4': '橫式' },
-    plan: 'src/DapanXiaobao/dapan-shots.generated.json',
-    planKind: 'shots',
-    flags: [],
-  },
-  usstock: {
-    // 2026-09-15 新增。使用者定案「基本上跟盤中焦點一樣」，所以標題規格直接沿用盤中焦點
-    // （兩行、每行 10 字參考值；wrap 仍是 true，超過只是折行、字級不變）。
-    title: { lines: 2, per: 10, wrap: true, where: '開場第一秒' },
-    label: '美股焦點',
-    // 這支的 timeline 有把 arrow 傳給渲染端 → 前台才給畫箭頭（2026-09-16）。
-    // ⚠️ 沒接的模板不要加這個旗標：畫得出來、成品卻沒有，就是靜默失效。
-    arrow: true,
-    hint: '',
-    // 只出直式（同盤中焦點），所以只有一個輸出、不需要 outputLabels 標「直式／橫式」。
-    outputs: ['output-usstock.mp4'],
-    plan: 'src/UsStock/usstock-shots.generated.json',
-    planKind: 'shots',
-    flags: [],
-  },
-};
+// 版型設定在 video/templates/registry.js（顯示順序、標題規則、輸出檔名都在那裡）。
+const TEMPLATES = serverTemplates();
 
 // ⚠️ 2026-09-22：listBrands()（掃 storage/shared-assets/ 底下有 frame.png 的資料夾當投廣品牌清單）
 //    隨投廣模板一起移除。素材資料夾 storage/shared-assets/qizhang-kline、storage/shared-assets/chouma-kline **留著**，
@@ -174,7 +119,7 @@ const TEMPLATES = {
 
 // public/ 裡屬於「套版素材」的檔案，清場時不要動（run.js 會自己重新複製，
 // 但留著可以少複製一次；字型更是絕對不能刪）。跟 analyze-app-images.js 同一條規則。
-const TEMPLATE_ASSET = /^(dapan|focusstock|institution|midday|usstock)-|^(frame|logo)\.png$|^NotoSans|^outro\.mp4$|^\./i;
+const TEMPLATE_ASSET = new RegExp(String.raw`${TEMPLATE_ASSET_PATTERN.source}|^outro\.mp4$|^\.`, 'i');
 
 // 快照要保存哪些檔案：public/ 整包 ＋ src/ 底下的產出物。
 // 這些是「上一段跑完的成果」，後半段 render 完全靠它們。

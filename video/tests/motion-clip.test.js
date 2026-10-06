@@ -147,6 +147,7 @@ function 隔離環境(字幕文字) {
   fs.mkdirSync(path.join(dir, '..', 'pipeline'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'src/MotionClip'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'public'), { recursive: true });
+  fs.cpSync(path.join(repository, 'video/templates'), path.join(dir, '..', 'templates'), { recursive: true });
   for (const f of ['render-motion.js', 'motion-engine.js'])
     fs.copyFileSync(path.join(repository, 'video/pipeline', f), path.join(dir, '..', 'pipeline', f));
   const times = [...(字幕文字 || '')].map((_, i) => ({ start: +(i * 0.2).toFixed(2), end: +((i + 1) * 0.2).toFixed(2) }));

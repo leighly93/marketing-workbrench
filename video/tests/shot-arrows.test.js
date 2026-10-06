@@ -40,6 +40,8 @@ function fixture(t, scripts) {
   }
   fs.symlinkSync(path.join(repository, 'node_modules'), path.join(root, 'node_modules'), 'junction');
   const pipe = path.join(root, 'video', 'pipeline');
+  // 產線腳本會讀版型設定表，整個 video/templates 一起放進合成副本。
+  fs.cpSync(path.join(repository, 'video', 'templates'), path.join(root, 'video', 'templates'), { recursive: true });
   for (const name of scripts) {
     const destination = path.join(pipe, name);
     fs.mkdirSync(path.dirname(destination), { recursive: true });

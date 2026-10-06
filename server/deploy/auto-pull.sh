@@ -58,9 +58,10 @@ if [ "$before" != "$after" ]; then
   # 素材是從 storage/shared-assets/ 複製到 public/ 的，storage/shared-assets/ 有變動就補跑一次，
   # 不然新的 BGM／套版圖不會生效（public/ 不進版控，pull 不會動到它）。
   if git -c core.quotepath=false diff --name-only "$before" "$after" | grep -q '^storage/shared-assets/'; then
-    say "storage/shared-assets/ 有變動 → 補跑 use-*-assets"
-    for t in dapan institution focusstock; do
-      node "$APP_ROOT/video/pipeline/use-$t-assets.js" >> "$LOG" 2>&1 || say "  ⚠️ use-$t-assets 失敗"
+    say "storage/shared-assets/ 有變動 → 重新複製各版型素材"
+    # 版型清單讀 registry，新增版型不用改這裡。
+    for t in $(node -e "console.log(require('$APP_ROOT/video/templates/registry').IDS.join(' '))"); do
+      node "$APP_ROOT/video/templates/cli.js" assets --template="$t" >> "$LOG" 2>&1 || say "  ⚠️ $t 素材複製失敗"
     done
   fi
 fi

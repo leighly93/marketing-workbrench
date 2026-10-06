@@ -26,6 +26,8 @@ function fixture(t, scripts) {
   for (const name of ['paths.js', 'job-store.js']) fs.copyFileSync(path.join(repository, 'shared', name), path.join(root, 'shared', name));
   fs.symlinkSync(path.join(repository, 'node_modules'), path.join(root, 'node_modules'), 'junction');
   const pipe = path.join(root, 'video', 'pipeline');
+  // 產線腳本會讀版型設定表，整個 video/templates 一起放進合成副本。
+  fs.cpSync(path.join(repository, 'video', 'templates'), path.join(root, 'video', 'templates'), { recursive: true });
   for (const name of scripts) {
     const destination = path.join(pipe, name);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -52,34 +54,24 @@ require('node:http').request = require('node:https').request = blocked;
   return { root, app, pipe, run };
 }
 
-// 2026-09-22：三大法人／焦點股日報／投廣模板整組移除，這裡只剩現存的三個版型。
-// use-brand.js 留著 —— 它服務的是 gen-video.js（Lumina）那條線，不是被刪的投廣版型。
-test('固定素材從 shared-assets 複製到 public，保留內容', (t) => {
-  const templates = [['dapan', 'dapan'], ['midday', 'midday'], ['usstock', 'usstock']];
-  const { root, app, pipe, run } = fixture(t, [...templates.map(([name]) => `use-${name}-assets.js`), 'use-brand.js']);
-  for (const [template, brand] of templates) {
-    for (const name of ['intro-frame.jpg', 'header-overlay.png', 'bgm.wav', 'intro-frame_Horizontal.png']) {
-      write(path.join(root, 'storage', 'shared-assets', brand, name), Buffer.from(`合成素材:${brand}:${name}\0\xff`));
-    }
-    run(`use-${template}-assets.js`);
-    for (const [source, destination] of [['intro-frame.jpg', `${template}-intro-frame.jpg`], ['header-overlay.png', `${template}-header-overlay.png`], ['bgm.wav', `${template}-bgm.wav`]]) {
-      assert.deepEqual(fs.readFileSync(path.join(root, 'storage', 'shared-assets', brand, source)), fs.readFileSync(path.join(app, 'public', destination)));
-    }
-  }
+// 版型素材與稿件解析的測試在 video/templates/（assets.test.js、parse-shots.test.js、cli.test.js）。
+// use-brand.js 服務的是 gen-video.js（Lumina）那條線：把整個品牌資料夾複製到 public/。
+test('品牌素材從 storage/shared-assets 整包複製到 public', (t) => {
+  const { root, app, run } = fixture(t, ['use-brand.js']);
   for (const name of ['frame.png', 'outro.mp4', 'bgm.wav']) write(path.join(root, 'storage', 'shared-assets', 'chouma-kline', name), `合成品牌素材:${name}`);
   run('use-brand.js', ['chouma-kline']);
   assert.equal(fs.readFileSync(path.join(app, 'public', 'frame.png'), 'utf8'), '合成品牌素材:frame.png');
 });
 
-// 2026-09-22：parse-institution-script.js／parse-focusstock-script.js 隨版型移除。
-// parse-script.js 留著 —— 它寫的 overlays／textcards.generated.json 仍被共用的 timeline.ts 靜態 import。
-test('四種稿件解析沿用原 marker 契約，生成檔寫到 src', (t) => {
-  const parsers = ['parse-dapan-script.js', 'parse-midday-script.js', 'parse-usstock-script.js', 'parse-script.js'];
-  const { root, app, pipe, run } = fixture(t, [...parsers, 'script-utils.js']);
+// parse-script.js 寫的 overlays／textcards.generated.json 仍被共用的 timeline.ts 靜態 import。
+test('通用稿件解析沿用原 marker 契約，生成檔寫到 src', (t) => {
+  const { app, run } = fixture(t, ['parse-script.js', 'script-utils.js']);
   write(path.join(app, 'public', 'script.txt'), script);
-  for (const name of parsers) run(name);
-  const shots = JSON.parse(fs.readFileSync(path.join(app, 'src', 'DapanXiaobao', 'dapan-shots.generated.json'), 'utf8'));
-  assert.equal(shots[0].src, '示意.png');
+  write(path.join(app, 'src', 'video-meta.json'), { headerDate: '0101' });
+  run('parse-script.js');
+  assert.ok(fs.existsSync(path.join(app, 'src', 'overlays.generated.json')));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(app, 'src', 'video-meta.json'), 'utf8')).titleText, '合成標題');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(app, 'src', 'video-meta.json'), 'utf8')).headerDate, '0101', '其他欄位要保留');
 });
 
 test('auto-shot 從不同 CWD 解析相對 job/input/images，--out 指向系統產線暫存', (t) => {

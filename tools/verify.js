@@ -24,7 +24,7 @@ async function smoke() {
     const copy = (from, to) => { fs.mkdirSync(path.dirname(to), { recursive: true }); fs.cpSync(from, to, { recursive: true }); };
     copy(path.join(root, '.env.example'), path.join(scratch, '.env.example'));
     for (const name of ['shared/paths.js', 'shared/job-store.js', 'server/index.js', 'server/start.js', 'app',
-      'video/pipeline/shot-memory.js', 'video/pipeline/script-utils.js', 'video/pipeline/image-size.js']) copy(path.join(root, name), path.join(scratch, name));
+      'video/pipeline/shot-memory.js', 'video/pipeline/script-utils.js', 'video/pipeline/image-size.js', 'video/templates/registry.js']) copy(path.join(root, name), path.join(scratch, name));
     fs.symlinkSync(path.join(root, 'node_modules'), path.join(scratch, 'node_modules'), 'junction');
     initialize(scratch);
     const bootstrap = path.join(scratch, 'smoke.cjs');
@@ -57,6 +57,7 @@ async function smoke() {
 
 async function main() {
   run(requireApp.resolve('typescript/bin/tsc'), ['--noEmit', '--incremental', 'false']);
+  run(requireApp.resolve('typescript/bin/tsc'), ['-p', 'tsconfig.checkjs.json']); // 後端 // @ts-check 的 JSDoc 型別
   run(path.join(root, 'node_modules', 'vitest', 'vitest.mjs'), ['run']);
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-bundle-'));
   try {

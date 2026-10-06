@@ -254,7 +254,7 @@ const DateBadge: React.FC<{ top: number }> = ({ top }) => {
 };
 
 // 標題卡：只在開場卡（intro-frame.jpg）顯示，讀 video-meta.json.titleText
-// （parse-dapan-script.js 從 script.txt 標題段寫入）。第一句白色、其餘黃色（2026-08-07 使用者要求）。
+// （video/templates/cli.js parse 從 script.txt 標題段寫入）。第一句白色、其餘黃色（2026-08-07 使用者要求）。
 // 位置目前放在 header bar 下方的空白深色區（y 900~1300 一帶），沒有參考影片可以核對，
 // 是第一版預設，等使用者看過實際渲染再調（見 archive/2026-09-10_第一批整理/舊說明與Agent紀錄/docs/tasks.md 未決事項）。
 const TITLE_COLORS = ['#ffffff', '#FFE600']; // 2026-08-10 使用者要求第二句更飽和更亮（原本 #FFD700）

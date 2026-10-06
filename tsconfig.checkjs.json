@@ -1,0 +1,17 @@
+{
+  // 後端 JavaScript 的 JSDoc 型別檢查：檔案開頭有 // @ts-check 的才檢查（逐步導入，新拆出的模組一律加）。
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["shared/**/*.js", "video/**/*.js", "server/**/*.js", "tools/*.js"],
+  "exclude": ["**/*.test.js", "video/remotion/**"]
+}

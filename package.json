@@ -20,19 +20,7 @@
     "stocks": "node video/pipeline/update-stock-names.js",
     "analyze:app-images": "node video/pipeline/analyze-app-images.js",
     "render-motion": "node video/pipeline/render-motion.js",
-    "use-dapan-assets": "node video/pipeline/use-dapan-assets.js",
-    "parse-script:dapan": "node video/pipeline/parse-dapan-script.js",
-    "auto-shot:dapan": "node video/pipeline/auto-shot.js --write --out src/DapanXiaobao/dapan-shots.generated.json",
-    "render:dapan": "remotion render DapanXiaobao storage/tmp/pipeline-output/output-dapan.mp4 --config=video/remotion/remotion.config.ts",
-    "render:dapan-landscape": "remotion render DapanXiaobaoLandscape storage/tmp/pipeline-output/output-dapan-landscape.mp4 --config=video/remotion/remotion.config.ts",
-    "use-midday-assets": "node video/pipeline/use-midday-assets.js",
-    "parse-script:midday": "node video/pipeline/parse-midday-script.js",
-    "auto-shot:midday": "node video/pipeline/auto-shot.js --write --out src/MiddayFocus/midday-shots.generated.json",
-    "render:midday": "remotion render MiddayFocus storage/tmp/pipeline-output/output-midday.mp4 --config=video/remotion/remotion.config.ts",
-    "use-usstock-assets": "node video/pipeline/use-usstock-assets.js",
-    "parse-script:usstock": "node video/pipeline/parse-usstock-script.js",
-    "auto-shot:usstock": "node video/pipeline/auto-shot.js --write --out src/UsStock/usstock-shots.generated.json",
-    "render:usstock": "remotion render UsStock storage/tmp/pipeline-output/output-usstock.mp4 --config=video/remotion/remotion.config.ts"
+    "template": "node video/templates/cli.js"
   },
   "dependencies": {
     "@fal-ai/client": "^1.10.1",
@@ -45,6 +33,7 @@
     "remotion": "^4.0.0"
   },
   "devDependencies": {
+    "@types/node": "^24.19.1",
     "@types/react": "^18.3.3",
     "@types/web": "^0.0.150",
     "@vitest/coverage-v8": "^5.0.3",

@@ -3,7 +3,7 @@
  * 查 HeyGen voice 的能力：support_pause（吃不吃 <break> 標籤）、support_locale、engine。
  *
  * 用法：
- *   npm run check-voices                 # 查 run.js 裡三條固定主播產線的 voice
+ *   npm run check-voices                 # 查各版型（registry）與雙人 path 的 voice
  *   npm run check-voices -- <voice_id>   # 查任意一支
  *
  * 只讀不寫，不耗生成額度。
@@ -15,16 +15,14 @@ try { require('dotenv').config({ path: require('path').join(workspaceRoot(APP_RO
 
 const API_KEY = (process.env.HEYGEN_API_KEY || "").trim();
 
-// 跟 run.js 同步（改 run.js 的 voice 時記得也改這裡，或直接帶參數查）
+// 固定主播的 HeyGen 聲音直接讀 registry；美股焦點只有 MiniMax 聲音，沒有可查的 HeyGen id。
+const { TEMPLATES } = require('../templates/registry');
 const KNOWN = [
-  { label: "大盤小報 dapan", id: "dc529e16819846b2a0ba986a7fc51a85" },
-  // 2026-09-11 起盤中焦點有自己的聲音，不再跟大盤小報同一支（原本兩行是同一個 id）。
-  { label: "盤中焦點 midday", id: "9cb1516ecebf4c06b668e03f7f6e91f7" },
-  // 美股焦點 2026-09-15 新增：這條線預設走 MiniMax，沒有備援的 HeyGen 內建語音，所以還沒有 id 可查。
-  { label: "三大法人 institution", id: "e96f2834052f404c9c3725b4fd6ee55a" },
-  { label: "焦點股日報 focusstock", id: "65b04effe83f423dbb1f66317318c37f" },
-  { label: "投廣單人 女聲／雙人 A", id: "65b04effe83f423dbb1f66317318c37f" },
-  { label: "投廣單人 男聲／雙人 B", id: "c223c1b3c779490ca14f4525eb30006e" },
+  ...Object.entries(TEMPLATES).filter(([, t]) => t.anchor.heygenVoiceId)
+    .map(([id, t]) => ({ label: `${t.label} ${id}`, id: t.anchor.heygenVoiceId })),
+  // run.js 雙人 path（HEYGEN_DUAL_VOICES）用的兩支
+  { label: "雙人 A（女聲）", id: "65b04effe83f423dbb1f66317318c37f" },
+  { label: "雙人 B（男聲）", id: "c223c1b3c779490ca14f4525eb30006e" },
 ];
 
 async function fetchVoice(voiceId) {
