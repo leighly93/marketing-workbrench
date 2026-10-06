@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
 const { applicationPath, dataPath, dataRelativePath, resolveDataReference } = require('../../shared/paths');
-const shotMemory = require('../../video/pipeline/shot-memory');
+const shotMemory = require('../../video/shots/shot-memory');
 const { repository, fixture, write, confinedFs, loadServer } = require('./isolated-server');
 const { workFile } = require('./isolated-server');
 
@@ -108,7 +108,7 @@ test('頁型整理 CLI 可以列出 pinned 圖片，且不改寫留言原文', (
   const original = JSON.stringify(message) + '\n';
   write(dataPath(root, 'messages.jsonl'), original);
   write(resolveDataReference(root, message.pinned), 'synthetic-sample');
-  const sourceFile = path.join(repository, 'video/pipeline/page-pins.js');
+  const sourceFile = path.join(repository, 'video/shots/page-pins.js');
   const localRequire = createRequire(sourceFile);
   const output = [];
   const exited = {};

@@ -32,7 +32,7 @@ import { AbsoluteFill, Img, interpolate, staticFile, useCurrentFrame } from 'rem
  *   → 扁的照舊在安全框裡置中；直的上緣貼齊 bar 往下長，壓到字幕沒關係、超出畫面底部就裁掉。
  *   → 黃框／箭頭跟著圖走，落到字幕底下也不推。擺法集中在 fitVertical()。
  *
- * 座標來源是 OCR（video/pipeline/analyze-app-images.js）＋規則庫（video/pipeline/app-locators.json），
+ * 座標來源是 OCR（video/shots/analyze-app-images.js）＋規則庫（video/shots/app-locators.json），
  * 全部相對於圖片本身，不寫死螢幕座標，所以換手機／解析度都適用。
  */
 

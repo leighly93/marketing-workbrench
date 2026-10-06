@@ -60,7 +60,7 @@ test('OCR 編號 Adapter 封裝 Tesseract 白名單並保留 Vision 路徑', () 
   const calls = [];
   const fixture = 'header\n5\t1\t1\t1\t1\t1\t0\t24\t8\t12\t95\t 2\n';
   const module = { exports: {} };
-  const script = path.resolve(__dirname, '../pipeline/ocr-engine.js');
+  const script = path.resolve(__dirname, '../shots/ocr-engine.js');
   vm.runInNewContext(fs.readFileSync(script, 'utf8'), {
     module, __dirname: path.dirname(script), process: { env: {}, pid: 123 },
     require(name) {

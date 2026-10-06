@@ -1,6 +1,6 @@
 {
   "_說明": "App 截圖標注規則庫。每個 page 底下每個 target = 一條定位規則。座標全用畫面比例(frac)，尺寸無關。",
-  "_用法": "node video/pipeline/app-locate.js <圖片> <page.target> [--draw 輸出.png]（動態值用 --anchor \"+31,513.3\"）",
+  "_用法": "node video/shots/app-locate.js <圖片> <page.target> [--draw 輸出.png]（動態值用 --anchor \"+31,513.3\"）",
   "_anchor欄位": "all=該行需同時包含的字；word=對齊行內某個字的x；yBand=[上,下]用畫面高度比例挑對的那一個；runtime=改由 --anchor 傳當天的字",
   "_expand型別": "rowFull整列 / rowRight錨點往右 / card卡片(below=在錨點下方) / tile磚 / box錨點小框 / region純比例區(給沒文字可錨的圖)",
   "pages": {

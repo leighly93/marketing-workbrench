@@ -8,7 +8,7 @@
  *
  * ── 開關（.env）─────────────────────────────────────────────────────
  *   OCR_ENGINE 沒設         → tesseract（＝2026-09-08 以前的行為，逐位元相同）
- *   OCR_ENGINE=vision       → Apple Vision（macOS 內建；第一次自動 swiftc 編譯 video/pipeline/ocr-vision.swift）
+ *   OCR_ENGINE=vision       → Apple Vision（macOS 內建；第一次自動 swiftc 編譯 video/shots/ocr-vision.swift）
  *
  *   評估報告：archive/research/OCR引擎評估-Vision對照Tesseract.md（讀字 2.1×、IoU 0.210→0.371）
  *   ⚠️ 切到 vision 前記憶庫（data/shot-memory.json）要用新引擎重學 —— 見 docs/ocr-and-shots.md。
@@ -164,7 +164,7 @@ const tesseract = {
 };
 
 // ─────────────────────────────────────────────────────────────────────
-// 引擎二：Apple Vision（video/pipeline/ocr-vision.swift，輸出格式在 Swift 端就對齊 tesseract）
+// 引擎二：Apple Vision（video/shots/ocr-vision.swift，輸出格式在 Swift 端就對齊 tesseract）
 // ─────────────────────────────────────────────────────────────────────
 const VISION_SRC = path.join(__dirname, 'ocr-vision.swift');
 const VISION_BIN = path.join(__dirname, 'ocr-vision'); // 編譯產物，已進 .gitignore
@@ -186,7 +186,7 @@ const vision = {
     const needBuild = !fs.existsSync(VISION_BIN) ||
       fs.statSync(VISION_BIN).mtimeMs < fs.statSync(VISION_SRC).mtimeMs;
     if (needBuild) {
-      process.stderr.write('🔧 編譯 video/pipeline/ocr-vision.swift（第一次約 10 秒）…\n');
+      process.stderr.write('🔧 編譯 video/shots/ocr-vision.swift（第一次約 10 秒）…\n');
       // 先編到暫存檔再 rename：兩支 job 平行跑分析時不會互相寫壞同一個二進位
       const tmp = VISION_BIN + '.tmp-' + process.pid;
       try {

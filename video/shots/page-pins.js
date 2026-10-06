@@ -9,9 +9,9 @@
  *   逐張手打會長出「多空／個股多空／個股-多空」三種寫法，批次命名快很多也不打斷審核節奏。
  *
  * 用法：
- *   node video/pipeline/page-pins.js            # 列出所有 📌 分群（預設）
- *   node video/pipeline/page-pins.js --all      # 連已經命名過（status=done）的也列
- *   node video/pipeline/page-pins.js --json     # 機器可讀輸出
+ *   node video/shots/page-pins.js            # 列出所有 📌 分群（預設）
+ *   node video/shots/page-pins.js --all      # 連已經命名過（status=done）的也列
+ *   node video/shots/page-pins.js --json     # 機器可讀輸出
  *
  * 分群法跟 2026-09-02 整理 26 群用的一樣：中文雙字組 Jaccard ≥ 0.55 就算同一群。
  * 只讀不寫。命名結果要進 data/page-samples/page-types.json 與 PAGE_SIGNATURES_V2，另外處理。

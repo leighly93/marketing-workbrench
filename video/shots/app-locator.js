@@ -6,7 +6,7 @@
  * 「相對規則」從錨點往外展開成要框的區域——規則全部用畫面比例(frac)寫，不寫死像素。
  * 換任何一支手機，OCR 會在新圖上重新找到錨點、給新座標，框自動跟著對。
  *
- * OCR：走 video/pipeline/ocr-engine.js（2026-09-08 起；預設 tesseract，.env OCR_ENGINE=vision 改 Apple Vision）。
+ * OCR：走 video/shots/ocr-engine.js（2026-09-08 起；預設 tesseract，.env OCR_ENGINE=vision 改 Apple Vision）。
  *
  * 對外：locate(imagePath, recipe, opts) → { ok, box:{x,y,w,h}, anchor, reason }
  *   recipe = { anchor:{...}, expand:{ type, ...fracs } }（見 app-locators.json）

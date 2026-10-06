@@ -42,6 +42,7 @@ function fixture(t, scripts) {
   const pipe = path.join(root, 'video', 'pipeline');
   // 產線腳本會讀版型設定表，整個 video/templates 一起放進合成副本。
   fs.cpSync(path.join(repository, 'video', 'templates'), path.join(root, 'video', 'templates'), { recursive: true });
+  fs.cpSync(path.join(repository, 'video', 'shots'), path.join(root, 'video', 'shots'), { recursive: true });
   for (const name of scripts) {
     const destination = path.join(pipe, name);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -60,7 +61,7 @@ require('node:http').request = require('node:https').request = blocked;
   //    不會碰到正式的 *-shots.generated.json。
   const plan = (name = 'auto-shot.js') => {
     execFileSync(process.execPath,
-      ['--require', guard, path.join(pipe, name), '--write', '--out', 'storage/tmp/pipeline-output/計畫.json'], {
+      ['--require', guard, path.join(root, 'video', 'shots', name), '--write', '--out', 'storage/tmp/pipeline-output/計畫.json'], {
         cwd: app, encoding: 'utf8', timeout: 15000,
         env: { PATH: process.env.PATH, WORKBENCH_CALLER_CWD: root },
       });
@@ -71,7 +72,7 @@ require('node:http').request = require('node:https').request = blocked;
 }
 
 test('標注的箭頭會進配圖計畫：只有箭頭的段落照樣整張顯示，但箭頭不能被吃掉', (t) => {
-  const { app, plan } = fixture(t, ['auto-shot.js', 'script-utils.js', 'shot-memory.js', 'image-size.js']);
+  const { app, plan } = fixture(t, ['script-utils.js']);
   write(path.join(app, 'public', 'script.txt'), 稿件);
   write(path.join(app, 'src', 'app-images.generated.json'), { images: [圖] });
   write(path.join(app, 'public', 'annotations.json'), {
@@ -102,7 +103,7 @@ test('標注的箭頭會進配圖計畫：只有箭頭的段落照樣整張顯�
 });
 
 test('壞掉的箭頭不寫進計畫：長度 0、座標不是數字都當成沒畫', (t) => {
-  const { app, plan } = fixture(t, ['auto-shot.js', 'script-utils.js', 'shot-memory.js', 'image-size.js']);
+  const { app, plan } = fixture(t, ['script-utils.js']);
   write(path.join(app, 'public', 'script.txt'), 稿件);
   write(path.join(app, 'src', 'app-images.generated.json'), { images: [圖] });
   write(path.join(app, 'public', 'annotations.json'), {

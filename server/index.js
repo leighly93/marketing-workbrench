@@ -33,9 +33,9 @@ const { workspaceRoot, outputPath, dataPath, resolveDataReference } = require('.
 const { spawn, execFileSync } = require('child_process');
 // 「你教過的東西」記憶庫。memKeyOf／mergeRuns 一定要跟 auto-shot.js 共用同一份實作 ——
 // 這裡負責寫、auto-shot 負責讀，鍵值算法漂掉的話學到的東西下次就對不上（2026-08-21）。
-const SHOT_MEMORY = require('../video/pipeline/shot-memory');
+const SHOT_MEMORY = require('../video/shots/shot-memory');
 const { resolveManualOverlaps } = require('../video/pipeline/script-utils');
-const { imageSize, pickImageSize } = require('../video/pipeline/image-size');
+const { imageSize, pickImageSize } = require('../video/shots/image-size');
 const { serverTemplates, TEMPLATE_ASSET_PATTERN } = require('../video/templates/registry');
 // 2026-08-27：自動唸法檢查（video/subtitles/check-pronunciation.js）不再由伺服器跑。
 // 它算出來的東西大部分是錯的（兩份字幕的 words 會因為空字串而整段錯開；拼音又因為
@@ -47,6 +47,7 @@ const { serverTemplates, TEMPLATE_ASSET_PATTERN } = require('../video/templates/
 const ROOT = path.resolve(__dirname, '..', 'video', 'remotion');
 const VIDEO_DIR = path.resolve(ROOT, '..');
 const PIPELINE_DIR = path.join(VIDEO_DIR, 'pipeline');
+const SHOTS_DIR = path.join(VIDEO_DIR, 'shots');
 const WORKSPACE_ROOT = workspaceRoot(ROOT);
 const { createJobStore, outputName } = require('../shared/job-store');
 const STORE = createJobStore(WORKSPACE_ROOT, fs);
@@ -629,7 +630,7 @@ function charTimes() {
 function scriptUnits(scriptPath) {
   if (!fs.existsSync(scriptPath)) return { units: [], chars: [] };
   try {
-    const out = execFileSync('node', [path.join(PIPELINE_DIR, 'auto-shot.js'), '--sentences', `--script=${scriptPath}`],
+    const out = execFileSync('node', [path.join(SHOTS_DIR, 'auto-shot.js'), '--sentences', `--script=${scriptPath}`],
       { cwd: ROOT, encoding: 'utf-8', timeout: 20000, maxBuffer: 8 * 1024 * 1024 });
     const j = JSON.parse(out);
     return { units: j.units || [], chars: j.chars || [] };
@@ -1099,7 +1100,7 @@ function applyPlanEdits(job, edits) {
   // ⚠️ 一定要在 keep.sort() **之前**做 —— 這裡的順序還是 edits 的順序，也就是
   //    「後加的排後面」（前台新增的段、appendMissingAnnots 補回來的都在最後），
   //    排序過就分不出誰先誰後了。
-  // ⚠️ 主要防線其實在 video/pipeline/auto-shot.js（勾「直接出片」不會經過這裡）；
+  // ⚠️ 主要防線其實在 video/shots/auto-shot.js（勾「直接出片」不會經過這裡）；
   //    這一份是擋「同事自己在計畫頁拉出重疊」的情況，兩邊用同一支演算法。
   {
     const mans = keep.filter(isManual);
@@ -1252,7 +1253,7 @@ function allCorrections() {
  * 自動的部分一樣要做但是要記錄到『修正紀錄』裡。」`applyPlanEdits()` 因此不再補框，
  * 系統的判斷改由這支算出來寫進 `data/corrections.jsonl`。
  *
- * 做法是 spawn 一次 `video/pipeline/auto-shot.js --suggest-cells=`，跟「對照組」（`--no-annots`）
+ * 做法是 spawn 一次 `video/shots/auto-shot.js --suggest-cells=`，跟「對照組」（`--no-annots`）
  * 同一個模式 —— 那組挑框規則（漲跌幅／數字／整列／記憶庫／標題）吃 REGIONS、官方股名表、
  * 記憶庫、OCR 詞框合併一整套模組層狀態，抽成共用模組給這裡 require 等於開第二份實作。
  *
@@ -1285,7 +1286,7 @@ function suggestCellsFor(job, items) {
     const inF = jobPath(job.id, 'cell-suggest-in.json');
     const outF = jobPath(job.id, 'cell-suggest.json');
     fs.writeFileSync(inF, JSON.stringify(want, null, 2));
-    execFileSync('node', [path.join(PIPELINE_DIR, 'auto-shot.js'),
+    execFileSync('node', [path.join(SHOTS_DIR, 'auto-shot.js'),
       `--script=${script}`, `--images=${images}`, `--suggest-cells=${inF}`, '--out', outF],
       { cwd: ROOT, stdio: 'ignore', timeout: 120000 });
     const arr = JSON.parse(fs.readFileSync(outF, 'utf-8'));
@@ -1776,7 +1777,7 @@ function buildCounterfactual(job) {
 
     const out = jobPath(job.id, 'auto-noannots.json');
     // 2026-09-22：planKind 'focus'（三大法人）移除後只剩 auto-shot.js 這一條路。
-    execFileSync('node', [path.join(PIPELINE_DIR, 'auto-shot.js'), '--write', '--out', out, '--no-annots'],
+    execFileSync('node', [path.join(SHOTS_DIR, 'auto-shot.js'), '--write', '--out', out, '--no-annots'],
       { cwd: ROOT, stdio: 'ignore', timeout: 120000 });
 
     const n = JSON.parse(fs.readFileSync(out, 'utf-8')).length;
@@ -2516,7 +2517,7 @@ const server = http.createServer(async (req, res) => {
       } else if (kind === 'page-pin') {
         // 📌 記下這種頁（2026-09-07）：審核頁上系統認不出頁型的截圖旁那顆按鈕。
         // 只存「這是哪支工作的哪張圖」＋指紋（OCR 中文詞、尺寸、memKey）＋截圖副本，**不命名** ——
-        // 使用者定案：當場手打會長出三種寫法，累積一批再用 video/pipeline/page-pins.js 分群、一次命名。
+        // 使用者定案：當場手打會長出三種寫法，累積一批再用 video/shots/page-pins.js 分群、一次命名。
         m.src = String(body.src || '').trim();
         if (!m.src || !m.job) return send(res, 400, { error: '📌 要知道是哪支工作的哪張圖' });
         m.text = String(body.text || '').trim();
@@ -2928,7 +2929,7 @@ const server = http.createServer(async (req, res) => {
       const sp = jobPath(job.id, 'input', 'script.txt');
       if (!fs.existsSync(sp)) return send(res, 404, { error: '找不到腳本' });
       try {
-        const out = execFileSync('node', [path.join(PIPELINE_DIR, 'auto-shot.js'), '--sentences', `--script=${sp}`],
+        const out = execFileSync('node', [path.join(SHOTS_DIR, 'auto-shot.js'), '--sentences', `--script=${sp}`],
           { cwd: ROOT, encoding: 'utf-8', timeout: 20000 });
         return send(res, 200, JSON.parse(out));
       } catch (e) {

@@ -23,7 +23,7 @@ WORK="$(mktemp -d /tmp/ocr-ab.XXXXXX)"
 TRIAL_APP="$WORK/video/remotion"
 mkdir -p "$TRIAL_APP/public" "$TRIAL_APP/src" "$WORK/video/pipeline" "$WORK/shared"
 cp "$REPO/shared/paths.js" "$REPO/shared/job-store.js" "$WORK/shared/"
-cp "$REPO/video/pipeline/analyze-app-images.js" "$REPO/video/pipeline/ocr-engine.js" "$REPO/video/pipeline/ocr-vision.swift" "$REPO/video/pipeline/image-size.js" "$WORK/video/pipeline/"
+cp "$REPO/video/shots/analyze-app-images.js" "$REPO/video/shots/ocr-engine.js" "$REPO/video/shots/ocr-vision.swift" "$REPO/video/shots/image-size.js" "$WORK/video/pipeline/"
 ln -s "$REPO/node_modules" "$WORK/node_modules"
 # 不複製 .env；PAGE_RULES 沿用上面的 export，OCR_ENGINE 由各輪明確指定。
 
@@ -38,9 +38,9 @@ done
 echo "📂 $i 張圖 → $TRIAL_APP/public　規則：PAGE_RULES=$PAGE_RULES"
 
 cd "$TRIAL_APP"
-echo "▶ tesseract…"; t0=$(date +%s); (unset OCR_ENGINE; node ../pipeline/analyze-app-images.js > out-tesseract.log 2>&1) || true
+echo "▶ tesseract…"; t0=$(date +%s); (unset OCR_ENGINE; node ../shots/analyze-app-images.js > out-tesseract.log 2>&1) || true
 cp src/app-images.generated.json out-tesseract.json; echo "   $(( $(date +%s) - t0 ))s"
-echo "▶ vision…";    t0=$(date +%s); OCR_ENGINE=vision node ../pipeline/analyze-app-images.js > out-vision.log 2>&1 || true
+echo "▶ vision…";    t0=$(date +%s); OCR_ENGINE=vision node ../shots/analyze-app-images.js > out-vision.log 2>&1 || true
 cp src/app-images.generated.json out-vision.json;    echo "   $(( $(date +%s) - t0 ))s"
 
 node - <<'EOF'

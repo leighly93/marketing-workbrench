@@ -19,8 +19,8 @@ const path = require('node:path');
 const { fixture, write, loadServer, workFile, repository } = require('./isolated-server');
 const { applicationPath, dataPath } = require('../../shared/paths');
 
-const { pickImageSize } = require(path.join(repository, 'video/pipeline/image-size'));
-const SHOT_MEMORY = require(path.join(repository, 'video/pipeline/shot-memory'));
+const { pickImageSize } = require(path.join(repository, 'video/shots/image-size'));
+const SHOT_MEMORY = require(path.join(repository, 'video/shots/shot-memory'));
 
 const 旁白 = '先進光8月營收甚至還在年減';
 // 這支工作的真實截圖尺寸；分析檔裡那筆是上一支工作留下的同名圖。

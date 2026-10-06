@@ -35,7 +35,7 @@ python3 tools/native-environment.py --check
 
 ## OCR Adapter
 
-入口：[ocr-engine.js](../video/pipeline/ocr-engine.js)。`OCR_ENGINE=tesseract|vision`，預設維持 Tesseract。未知引擎直接報錯。
+入口：[ocr-engine.js](../video/shots/ocr-engine.js)。`OCR_ENGINE=tesseract|vision`，預設維持 Tesseract。未知引擎直接報錯。
 
 - `ensure()`：檢查工具；Vision 可能編譯 Swift，不能當作完全無副作用的環境檢查。
 - `ocrPage(image, options)`：回傳 `words`／`lines`；座標為左上角原點的像素，信心為 0–100。

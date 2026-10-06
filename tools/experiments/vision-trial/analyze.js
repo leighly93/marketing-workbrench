@@ -14,7 +14,7 @@
  * 改成「裁出股名區塊 + --psm 7（單行模式）」就能穩定讀出「健鼎」「金居」。
  *
  * OCR：系統 tesseract CLI。Mac 一次性安裝：brew install tesseract tesseract-lang
- * 用法：node video/pipeline/analyze-app-images.js   （run.js 會在生成 HeyGen 時平行呼叫）
+ * 用法：node video/shots/analyze-app-images.js   （run.js 會在生成 HeyGen 時平行呼叫）
  */
 
 const fs = require('fs');
@@ -25,7 +25,7 @@ const { execFileSync } = require('child_process');
 const { cliPath } = require('../../../shared/paths');
 const ROOT = path.resolve(__dirname, '..', '..', '..', 'video', 'remotion');
 // ══════════════════════════════════════════════════════════════════
-// ⚠️ 這是 video/pipeline/analyze-app-images.js 的「測試用複本」，只給 A/B 對照。
+// ⚠️ 這是 video/shots/analyze-app-images.js 的「測試用複本」，只給 A/B 對照。
 //    原檔一行都沒改。差別只有三點：
 //      ① 圖片來源與輸出路徑改成參數（原檔寫死 public/ 與 src/）
 //      ② 可以切換 OCR 引擎（tesseract / vision）

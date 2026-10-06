@@ -19,7 +19,7 @@ const { cleanStaleStaging, backupJob } = require("./pipeline/public-utils");
 const { parseVoiceReplacements, cleanScript, detectMode, splitByRole } = require("./pipeline/tts-text");
 const { getTemplate, planPath, TEMPLATE_ASSET_PATTERN } = require("./templates/registry");
 const TEMPLATE_CLI = require("path").join(__dirname, "templates", "cli.js");
-const AUTO_SHOT = require("path").join(__dirname, "pipeline", "auto-shot.js");
+const AUTO_SHOT = require("path").join(__dirname, "shots", "auto-shot.js");
 
 // 繁中 → 簡中：MiniMax 對簡體念法比較準（純字形轉換、不動詞彙；避免「公車→公交」這種詞義替換）
 const tradToSimpConverter = OpenCC.Converter({ from: "t", to: "s" });

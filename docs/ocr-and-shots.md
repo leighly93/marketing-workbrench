@@ -12,13 +12,13 @@
 | `PAGE_RULES` | `v1` | `v2` 使用第二版頁型規則，並擴充個股／清單頁分類；不是 `v2` 的值走第一版。 |
 | `SHOT_MEMORY` | `single` | `multi` 從同頁型的多筆框位挑選相似旁白；找不到或最高分平手，退回最新單筆框位。其他值走單筆模式。 |
 
-OCR 共用入口為 [ocr-engine.js](../video/pipeline/ocr-engine.js)，供 APP 截圖與定位器使用。Tesseract 需要 CLI 與適用的語言資料；Vision 只支援 macOS，首次使用或 Swift 原始碼更新時嘗試以 `swiftc` 編譯。裁切辨識使用 `ffmpeg`；Vision 的裁切路徑不使用 Tesseract 的單行模式與字元白名單參數。
+OCR 共用入口為 [ocr-engine.js](../video/shots/ocr-engine.js)，供 APP 截圖與定位器使用。Tesseract 需要 CLI 與適用的語言資料；Vision 只支援 macOS，首次使用或 Swift 原始碼更新時嘗試以 `swiftc` 編譯。裁切辨識使用 `ffmpeg`；Vision 的裁切路徑不使用 Tesseract 的單行模式與字元白名單參數。
 
 ## 頁型與框位的分工
 
-- [analyze-app-images.js](../video/pipeline/analyze-app-images.js) 從 OCR 文字判頁型、股名與代號，寫入 `src/app-images.generated.json`。頁型規則實際寫在程式的 `PAGE_SIGNATURES_V1/V2`；[頁型資料](../storage/data/README.md) 是整理依據，修改它不會自動更新辨識規則。
-- [app-locators.json](../video/pipeline/app-locators.json) 的 `regions` 定義局部區域；辨識得出頁型，不代表已有對應框位規則。
-- [auto-shot.js](../video/pipeline/auto-shot.js) 結合辨識結果、旁白、區域規則與配圖記憶，提供建議與配圖計畫。
+- [analyze-app-images.js](../video/shots/analyze-app-images.js) 從 OCR 文字判頁型、股名與代號，寫入 `src/app-images.generated.json`。頁型規則實際寫在程式的 `PAGE_SIGNATURES_V1/V2`；[頁型資料](../storage/data/README.md) 是整理依據，修改它不會自動更新辨識規則。
+- [app-locators.json](../video/shots/app-locators.json) 的 `regions` 定義局部區域；辨識得出頁型，不代表已有對應框位規則。
+- [auto-shot.js](../video/shots/auto-shot.js) 結合辨識結果、旁白、區域規則與配圖記憶，提供建議與配圖計畫。
 
 `auto-shot.js` 預設只將人工標註寫入正式配圖計畫；`--with-auto` 才納入自動段。`--no-annots` 也會保留自動段，用於對照組，須以 `--out` 指向獨立檔案。人工滑動段的 `titleY` 仍可來自 OCR 的 `topicBox`，不能承諾換引擎完全不影響成品。
 
@@ -32,7 +32,7 @@ OCR 共用入口為 [ocr-engine.js](../video/pipeline/ocr-engine.js)，供 APP �
 
 現行行為：
 
-- [image-size.js](../video/pipeline/image-size.js) 的 `pickImageSize()` 是唯一判準：標注自己量到的尺寸（前台 `img.naturalWidth/Height`，必定屬於這支工作）優先於分析檔；兩者對不上時回報 `stale`，那筆分析連帶的頁型與代號也一併不採用。`auto-shot.js`、伺服器的 `applyPlanEdits()` 與 `shot-memory.js` 的 `learn()` 都走這一條。
+- [image-size.js](../video/shots/image-size.js) 的 `pickImageSize()` 是唯一判準：標注自己量到的尺寸（前台 `img.naturalWidth/Height`，必定屬於這支工作）優先於分析檔；兩者對不上時回報 `stale`，那筆分析連帶的頁型與代號也一併不採用。`auto-shot.js`、伺服器的 `applyPlanEdits()` 與 `shot-memory.js` 的 `learn()` 都走這一條。
 - 伺服器的 `invalidateStaleAnalysis()` 在補上傳時，把各份分析檔裡同名的那一筆改成「只剩實際尺寸」的最小筆（頁型改未知、清掉股名與逐字框），並記在工作的執行記錄裡。不整筆刪是因為 `auto-shot.js` 在圖片清單空掉時會直接失敗。
 - 這張圖真正的分析結果要等下一次 `analyze-app-images` 才有；在那之前它就是「沒被分析過的圖」，不會被自動配圖選用。
 
@@ -73,7 +73,7 @@ OCR 共用入口為 [ocr-engine.js](../video/pipeline/ocr-engine.js)，供 APP �
 - **伺服器的 ffmpeg 縮圖畫不出箭頭**（`drawbox` 只能畫軸對齊矩形）：計畫頁看到的箭頭是前台
   自己疊的 SVG。這兩份預覽會不一致，是已知取捨。
 - **標注頁與配圖計畫頁都可以畫**。標注那條路是 `annotations.json` →
-  [auto-shot.js](../video/pipeline/auto-shot.js) 併成計畫（`arrowOf()` 擋掉長度 0 與壞座標），
+  [auto-shot.js](../video/shots/auto-shot.js) 併成計畫（`arrowOf()` 擋掉長度 0 與壞座標），
   計畫頁那條是 `applyPlanEdits()` 寫回；兩條都要帶 `arrow`，漏一條就是「前台看得到、成品沒有」。
   回歸測試在 [配圖箭頭](../video/tests/shot-arrows.test.js)。
 
@@ -131,7 +131,7 @@ OCR 共用入口為 [ocr-engine.js](../video/pipeline/ocr-engine.js)，供 APP �
 | [corrections.jsonl](../storage/data/README.md) | 人工修正與當時系統建議的對照紀錄；不是配圖記憶庫。 |
 | [messages.jsonl](../storage/data/README.md) 與 [page-samples/](../storage/data/README.md) | 留言、頁型標記、樣本與分類資料；頁型標記的截圖存於 `_pinned/`。 |
 
-[shot-memory.js](../video/pipeline/shot-memory.js) 的 `learn()` 不受 `SHOT_MEMORY` 開關控制：有可學的人工框位時，同時更新最新單筆 `pages` 與多筆 `pagesMulti`。框位存比例座標；同一框合併，每個記憶鍵最多 40 個框，每框最多 12 句旁白。**這是有容量限制的配圖記憶，不是完整製作歷史。** 完整工作仍須在正式專案資料中保留。
+[shot-memory.js](../video/shots/shot-memory.js) 的 `learn()` 不受 `SHOT_MEMORY` 開關控制：有可學的人工框位時，同時更新最新單筆 `pages` 與多筆 `pagesMulti`。框位存比例座標；同一框合併，每個記憶鍵最多 40 個框，每框最多 12 句旁白。**這是有容量限制的配圖記憶，不是完整製作歷史。** 完整工作仍須在正式專案資料中保留。
 
 記憶鍵包含頁型與圖片長寬比；未知頁型另依是否有股票代號分組。改頁型規則或 OCR 可能改變鍵與命中結果，現行程式沒有自動重新學習或遷移機制，不應把舊文的「重學」解讀為可直接清空記憶。
 

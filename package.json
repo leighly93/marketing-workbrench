@@ -18,7 +18,7 @@
     "check-voices": "node video/pipeline/check-voices.js",
     "check:pronounce": "node video/subtitles/check-pronunciation.js",
     "stocks": "node video/pipeline/update-stock-names.js",
-    "analyze:app-images": "node video/pipeline/analyze-app-images.js",
+    "analyze:app-images": "node video/shots/analyze-app-images.js",
     "render-motion": "node video/pipeline/render-motion.js",
     "template": "node video/templates/cli.js"
   },

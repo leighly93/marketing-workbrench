@@ -13,9 +13,9 @@
  * 重點技巧（2026-08-12 實測）：股名在頂部是大字美術字，整頁 OCR 只認得出「健」認不出「鼎」；
  * 改成「裁出股名區塊 + --psm 7（單行模式）」就能穩定讀出「健鼎」「金居」。
  *
- * OCR：走 video/pipeline/ocr-engine.js（2026-09-08 起）。預設 tesseract（brew install tesseract tesseract-lang），
+ * OCR：走 video/shots/ocr-engine.js（2026-09-08 起）。預設 tesseract（brew install tesseract tesseract-lang），
  *      .env 設 OCR_ENGINE=vision 改用 Apple Vision；這支只呼叫 ocrPage()/ocrCrop()，不直接碰引擎。
- * 用法：node video/pipeline/analyze-app-images.js   （run.js 會在生成 HeyGen 時平行呼叫）
+ * 用法：node video/shots/analyze-app-images.js   （run.js 會在生成 HeyGen 時平行呼叫）
  */
 
 const fs = require('fs');
@@ -129,7 +129,7 @@ function ensureTesseract() {
   OCR.ensure();
 }
 
-// 讀圖片尺寸：實作在 video/pipeline/image-size.js（伺服器的「事後補上傳」也要用同一套，2026-09-14 抽出）
+// 讀圖片尺寸：實作在 video/shots/image-size.js（伺服器的「事後補上傳」也要用同一套，2026-09-14 抽出）
 
 /** 整頁 OCR → 逐字框 + 以行為單位的文字（實作在 ocr-engine.js，tesseract 版原碼原封搬過去） */
 function ocrPage(imagePath) {

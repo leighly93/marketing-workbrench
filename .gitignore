@@ -42,7 +42,7 @@ build/
 /video/remotion/src/subtitles.original.json
 /video/remotion/src/video-meta.json
 *.generated.json
-/video/pipeline/ocr-vision
-/video/pipeline/ocr-vision.tmp-*
+/video/shots/ocr-vision
+/video/shots/ocr-vision.tmp-*
 /tools/experiments/vision-trial/ocr-vision
 /tools/experiments/vision-trial/out/

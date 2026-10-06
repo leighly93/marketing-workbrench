@@ -28,6 +28,7 @@ function fixture(t, scripts) {
   const pipe = path.join(root, 'video', 'pipeline');
   // 產線腳本會讀版型設定表，整個 video/templates 一起放進合成副本。
   fs.cpSync(path.join(repository, 'video', 'templates'), path.join(root, 'video', 'templates'), { recursive: true });
+  fs.cpSync(path.join(repository, 'video', 'shots'), path.join(root, 'video', 'shots'), { recursive: true });
   for (const name of scripts) {
     // 'subtitles/x.js' 這種帶資料夾的名字相對於 video/；沒帶的放 video/pipeline/
     const destination = name.includes('/') ? path.join(root, 'video', name) : path.join(pipe, name);
@@ -76,16 +77,16 @@ test('通用稿件解析沿用原 marker 契約，生成檔寫到 src', (t) => {
 });
 
 test('auto-shot 從不同 CWD 解析相對 job/input/images，--out 指向系統產線暫存', (t) => {
-  const { root, app, pipe, run } = fixture(t, ['auto-shot.js', 'script-utils.js', 'shot-memory.js', 'image-size.js']);
+  const { root, app, pipe, run } = fixture(t, ['script-utils.js']);
   const images = { images: [{ file: 'fixture.png', width: 100, height: 100, words: [] }] };
   write(path.join(root, 'storage', 'jobs', 'fixture', 'input', 'script.txt'), script);
   write(path.join(app, 'src', 'app-images.generated.json'), images);
   const args = ['--script=jobs/fixture/input/script.txt', '--sentences'];
-  assert.deepEqual(JSON.parse(run('auto-shot.js', args, root)), JSON.parse(run('auto-shot.js', args, app)));
+  assert.deepEqual(JSON.parse(run('shots/auto-shot.js', args, root)), JSON.parse(run('shots/auto-shot.js', args, app)));
   write(path.join(root, 'storage', 'jobs', 'fixture', 'images.json'), images);
   write(path.join(root, 'storage', 'jobs', 'fixture', 'suggest.json'), []);
   fs.mkdirSync(path.join(root, 'storage/tmp/pipeline-output'), { recursive: true });
-  run('auto-shot.js', ['--script=jobs/fixture/input/script.txt', '--images=jobs/fixture/images.json', '--suggest-cells=jobs/fixture/suggest.json', '--out', 'storage/tmp/pipeline-output/fixture.json']);
+  run('shots/auto-shot.js', ['--script=jobs/fixture/input/script.txt', '--images=jobs/fixture/images.json', '--suggest-cells=jobs/fixture/suggest.json', '--out', 'storage/tmp/pipeline-output/fixture.json']);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'storage', 'tmp', 'pipeline-output', 'fixture.json'), 'utf8')), []);
   assert.equal(fs.existsSync(path.join(app, 'out')), false);
 });
@@ -117,8 +118,8 @@ test('備份跨 app/workspace 保存、重跑去重，舊兩參數介面保持�
 });
 
 test('OCR 腳本在鏡像目錄可載入共用路徑，沒有憑證且不呼叫外部 OCR', (t) => {
-  const { root, app, pipe, run } = fixture(t, ['analyze-app-images.js', 'ocr-engine.js', 'ocr-vision.swift', 'image-size.js']);
-  run('analyze-app-images.js');
+  const { root, app, pipe, run } = fixture(t, []);
+  run('shots/analyze-app-images.js');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(app, 'src', 'app-images.generated.json'), 'utf8')), { images: [] });
   assert.equal(fs.existsSync(path.join(root, '.env')), false);
 });
@@ -147,11 +148,11 @@ test('有工作 ID 的產線備份各自歸回工作，不共用去重狀態或�
 });
 
 test('App 定位 CLI 的圖片參數從 app CWD 仍可取得 workspace/jobs 素材', (t) => {
-  const { root, app, pipe, run } = fixture(t, ['app-locate.js']);
+  const { root, app, pipe, run } = fixture(t, []);
   // 定位演算法另有 OCR 契約；這裡只替換其邊界以驗證 CLI 傳入的真實圖片位置。
-  write(path.join(pipe, 'app-locator.js'), 'exports.locate = (file) => ({ok:false,file});');
-  write(path.join(pipe, 'app-locators.json'), { pages: { fixture: { targets: { body: {} } } } });
+  write(path.join(root, 'video', 'shots', 'app-locator.js'), 'exports.locate = (file) => ({ok:false,file});');
+  write(path.join(root, 'video', 'shots', 'app-locators.json'), { pages: { fixture: { targets: { body: {} } } } });
   const image = path.join(root, 'storage', 'jobs', 'fixture', 'input', 'image.png');
   write(image, '合成圖片');
-  assert.equal(JSON.parse(run('app-locate.js', ['jobs/fixture/input/image.png', 'fixture.body'])).file, fs.realpathSync(image));
+  assert.equal(JSON.parse(run('shots/app-locate.js', ['jobs/fixture/input/image.png', 'fixture.body'])).file, fs.realpathSync(image));
 });

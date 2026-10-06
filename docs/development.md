@@ -8,7 +8,7 @@
 | --- | --- |
 | [app](../app/) | 工作台網頁前台（HTML／CSS／JavaScript），由 server 直接提供 |
 | [server](../server/) | 工作台 API（`index.js`、`start.js`）；`deploy/` 放 macOS 自動啟動、自動更新與內網名稱設定 |
-| [video](../video/) | 出片：`run.js` 主流程、`templates/` 版型設定表與解析／素材／渲染、`subtitles/` 轉錄與字幕校正、`pipeline/` 的 OCR／配圖／動態腳本、`remotion/` 的模板（`src/`）與執行素材（`public/`） |
+| [video](../video/) | 出片：`run.js` 主流程、`templates/` 版型設定表與解析／素材／渲染、`subtitles/` 轉錄與字幕校正、`shots/` OCR 與配圖判定、`pipeline/` 其餘產線腳本（動態、素材暫存等）、`remotion/` 的模板（`src/`）與執行素材（`public/`） |
 | [shared](../shared/) | 三塊共用的 `paths.js`（路徑解析）與 `job-store.js`（依完整 job ID 找工作資料夾） |
 | [tools](../tools/) | init、doctor、verify、release-check；`whisper/` 安裝字幕引擎；`experiments/` 放試聽、A/B 與 OCR 比較等實驗工具 |
 | [storage](../storage/) | 資料：`jobs/` 工作、`shared-assets/` 品牌素材（進 Git）、`data/` 詞庫與記憶、`tmp/` 產線暫存、`archive/` 封存 |

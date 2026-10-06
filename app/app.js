@@ -1706,7 +1706,7 @@ function shotFigures(job, images, count, pages, onPick) {
     const c = (count || {})[n] || 0;
     // 2026-09-07 系統判定的頁型（來自 app-images.generated.json）。
     // 認不出來（unknown）或只認得出「是個股頁但不知道哪個 tab」（stock-other）→ 給一顆 📌，
-    // 按了只存指紋與截圖、不命名；之後 `node video/pipeline/page-pins.js` 批次分群命名（使用者定案：不要當場手打）。
+    // 按了只存指紋與截圖、不命名；之後 `node video/shots/page-pins.js` 批次分群命名（使用者定案：不要當場手打）。
     const pg = (pages || {})[n] || {};
     const unknown = !pg.page || pg.page === 'unknown' || pg.page === 'stock-other';
     const fig = el('figure', { class: c ? 'used' : '', title: `點一下＝用 ${n} 加一段`,
@@ -2648,7 +2648,7 @@ function drawInbox(list) {
       ? el('div', { class: 'b' },
           el('div', { class: 'w' }, `📌 ${m.src}　系統原判：${m.systemPage || '?'}` + (m.pinned ? '　已存圖' : '')),
           el('div', { class: 'm' }, ((m.fingerprint && m.fingerprint.words) ? '關鍵字：' + m.fingerprint.words.slice(0, 8).join('、') + '　' : '') + meta
-            + '　→ 批次命名：node video/pipeline/page-pins.js'))
+            + '　→ 批次命名：node video/shots/page-pins.js'))
       : el('div', { class: 'b' },
           el('div', { class: 'w' }, m.text),
           el('div', { class: 'm' }, meta));
