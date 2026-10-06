@@ -1002,8 +1002,8 @@ async function heygenUploadAudio(audioBuffer) {
 // 2026-10-05：/v3/assets 回了 asset_id，同一秒拿去 /v3/videos 卻連續被回 400
 // 「Voice audio asset not found」。兩道防線：
 //   1. 上傳後先 GET /v3/assets/{id}，HeyGen 那邊查得到才往下走（最多等約 20 秒，等不到也照走）
-//   2. 建立影片仍回「找不到」就等 5 秒用同一個 asset_id 再試一次，還不行改送上傳時拿到的
-//      公開 url（audio_url），不靠 id 查
+//   2. 建立影片仍回「找不到」就等 5、15 秒用同一個 asset_id 再試，還不行改送上傳時拿到的
+//      公開 url（audio_url），不靠 id 查（細節見 createHeyGenVideoAudioDrivenV3 上方）
 // 2026-10-06 HeyGen 客服回覆：檔案都在，是他們系統剛存好的記錄會短暫查不到（音檔、影片記錄都會），
 // 建議「查得到之後再多等幾秒」、「失敗稍等再重試一次」，並要求附 request ID／回應標頭方便工程追查。
 // 上傳回應裡的 url 存在這裡，key 是 asset_id，讓呼叫端照舊只傳 id。
@@ -1055,11 +1055,23 @@ function isHeyGenRecordNotFound(res, data) {
 // v3 音訊驅動（2026-08-24 起的預設路徑）。欄位跟 v2 幾乎一樣，差在多一個必填的 type: "avatar"、
 // 引擎走 engine.type，輪詢共用文字驅動那支 pollHeyGenStatusV3()。
 // engine 參數是給「被拒時自動退回 avatar_iv」用的，正常呼叫不要自己傳。
-// useAudioUrl／retried 是給「查不到時稍等重試、再改送 audio_url」用的，正常呼叫也不要自己傳。
-async function createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, engine = HEYGEN_ENGINE, useAudioUrl = false, retried = false) {
+// retry 是給「查不到時稍等重試、再改送 audio_url」用的，正常呼叫也不要自己傳。
+//
+// 「找不到」的重試順序（2026-10-06 依 HeyGen 客服建議改成間隔漸增）：
+//   asset_id 原樣送 → 等 5 秒 → 等 15 秒 → 改送 audio_url → 等 5 秒 → 等 15 秒 → 放棄
+//
+// Idempotency-Key：HeyGen 同一把 key 24 小時內重送會「回放第一次的回應」，內容不同也照樣回放。
+// 所以同一份內容的重試共用同一把 key（避免 10/5 那種「草稿已建好才報錯」重試後多出重複草稿），
+// 換引擎或改送 audio_url 時內容變了，就換一把新 key，確保真的重新執行。
+// 錯誤回應會不會被回放，HeyGen 文件沒寫（已在客服信件詢問）；萬一會，重試就只會拿到同一個錯誤，
+// 最後仍會走到換內容、換新 key 的那一步。
+const HEYGEN_NOT_FOUND_RETRY_DELAYS = [5000, 15000];
+
+async function createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, engine = HEYGEN_ENGINE, retry = {}) {
+  const { useAudioUrl = false, attempt = 0, idempotencyKey = require("crypto").randomUUID() } = retry;
   const audioUrl = heygenAudioUrls.get(audioAssetId);
   const audioSource = useAudioUrl ? { audio_url: audioUrl } : { audio_asset_id: audioAssetId };
-  log(`呼叫 HeyGen /v3/videos ${engine}（avatar: ${avatarId}、${useAudioUrl ? `audio_url: ${audioUrl}` : `audio_asset_id: ${audioAssetId}`}）`);
+  log(`呼叫 HeyGen /v3/videos ${engine}（avatar: ${avatarId}、${useAudioUrl ? `audio_url: ${audioUrl}` : `audio_asset_id: ${audioAssetId}`}、Idempotency-Key: ${idempotencyKey}）`);
 
   const payload = {
     type: "avatar",
@@ -1079,7 +1091,11 @@ async function createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, eng
 
   const res = await fetch("https://api.heygen.com/v3/videos", {
     method: "POST",
-    headers: { "X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json" },
+    headers: {
+      "X-Api-Key": HEYGEN_API_KEY,
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
     body: JSON.stringify(payload),
   });
 
@@ -1089,16 +1105,18 @@ async function createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, eng
   if (!res.ok || !videoId) {
     console.error(`HeyGen /v3/videos 回應（HTTP ${res.status}）：`, JSON.stringify(data, null, 2));
     logHeyGenResponseHeaders(res);
+    // 同一把 key 的上一個請求還在處理中（HeyGen 回 409 request_in_progress）：同一份內容稍等再送，算一次重試。
     // 查不到跟引擎無關，先處理；換引擎重試也只會撞同一個錯。
-    if (isHeyGenRecordNotFound(res, data)) {
-      if (!retried) {
-        log("⚠️ HeyGen 回「找不到」，等 5 秒用同樣內容再試一次（建立失敗不扣點）");
-        await sleep(5000);
-        return createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, engine, useAudioUrl, true);
+    if (isHeyGenRecordNotFound(res, data) || data?.error?.code === "request_in_progress") {
+      if (attempt < HEYGEN_NOT_FOUND_RETRY_DELAYS.length) {
+        const delay = HEYGEN_NOT_FOUND_RETRY_DELAYS[attempt];
+        log(`⚠️ HeyGen 回「${data?.error?.code || "找不到"}」，等 ${delay / 1000} 秒用同樣內容、同一把 Idempotency-Key 再試（第 ${attempt + 1} 次，建立失敗不扣點）`);
+        await sleep(delay);
+        return createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, engine, { useAudioUrl, attempt: attempt + 1, idempotencyKey });
       }
       if (!useAudioUrl && audioUrl) {
-        log("⚠️ HeyGen 用 asset_id 還是找不到，改送上傳時拿到的 audio_url 重試一次（建立失敗不扣點）");
-        return createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, engine, true, true);
+        log("⚠️ HeyGen 用 asset_id 還是找不到，改送上傳時拿到的 audio_url、換新的 Idempotency-Key 重試（建立失敗不扣點）");
+        return createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, engine, { useAudioUrl: true });
       }
       console.error(useAudioUrl
         ? "   → asset_id 跟 audio_url 兩種都被 HeyGen 回「找不到」，問題在 HeyGen 那邊（上面的回應標頭可附給客服）"
@@ -1107,9 +1125,10 @@ async function createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, eng
       throw new Error("HeyGen 一直回「找不到」（音訊驅動 v3）");
     }
     // 跟文字驅動同一套：建立失敗不扣點，所以直接用 avatar_iv 重試一次，別讓整支片死掉。
+    // 引擎不同等於內容不同，用新的 Idempotency-Key（不帶 idempotencyKey 就會重新產生）。
     if (engine !== "avatar_iv") {
       log(`⚠️ ${engine} 被拒，自動改用 avatar_iv 重試一次（建立失敗不扣點）`);
-      return createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, "avatar_iv", useAudioUrl, retried);
+      return createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, "avatar_iv", { useAudioUrl });
     }
     console.error("   → 想先退回舊路徑出片的話，指令加 --heygen-v2");
     throw new Error("HeyGen 建立影片失敗（音訊驅動 v3）");
