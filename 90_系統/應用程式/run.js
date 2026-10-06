@@ -929,7 +929,8 @@ const HEYGEN_FIT = "cover";
 // 出事時加 --heygen-v2 一鍵退回舊的 /v2/videos 路徑。
 // ⚠️ 投廣模板與雙人 path 走的是「MiniMax 配音 + audio_asset_id 音訊驅動」，
 //    那條路徑完全沒動，仍然是 /v2/videos（天條：既有投廣模板 100% 不變）。
-const HEYGEN_V2_FALLBACK = process.argv.includes("--heygen-v2");
+// 工作台沒辦法加指令參數，所以也認 .env 的 HEYGEN_V2=1（run.js 每次執行都重讀 .env，改完下一支就生效）。
+const HEYGEN_V2_FALLBACK = process.argv.includes("--heygen-v2") || process.env.HEYGEN_V2 === "1";
 
 // voice_settings（只有 v3 吃）。null = 不送該欄位，用 HeyGen 預設。
 //   locale : BCP-47，例如 "zh-TW"。填之前先跑 npm run check-voices 確認該 voice 的
@@ -991,19 +992,58 @@ async function heygenUploadAudio(audioBuffer) {
     throw new Error("HeyGen 音檔上傳失敗（v3）");
   }
   log(`音檔已上傳：asset_id = ${assetId}`);
+  if (data?.data?.url) heygenAudioUrls.set(assetId, data.data.url);
+  await waitForHeyGenAsset(assetId);
   return assetId;
+}
+
+// 2026-10-05：/v3/assets 回了 asset_id，同一秒拿去 /v3/videos 卻連續被回 400
+// 「Voice audio asset not found」。兩道防線：
+//   1. 上傳後先 GET /v3/assets/{id}，HeyGen 那邊查得到才往下走（最多等約 20 秒，等不到也照走）
+//   2. 建立影片仍回「找不到音檔」就改送上傳時拿到的公開 url（audio_url），不靠 id 查
+// 上傳回應裡的 url 存在這裡，key 是 asset_id，讓呼叫端照舊只傳 id。
+const heygenAudioUrls = new Map();
+
+async function waitForHeyGenAsset(assetId) {
+  for (let i = 0; i < 10; i++) {
+    try {
+      const res = await fetch(`https://api.heygen.com/v3/assets/${assetId}`, {
+        headers: { "X-Api-Key": HEYGEN_API_KEY },
+      });
+      if (res.ok) return;
+      // 404 是「還沒好」；其他狀態（權限、端點異常）查不出結果，直接往下走交給第 2 道防線
+      if (res.status !== 404) {
+        log(`⚠️ 查音檔狀態回 HTTP ${res.status}，略過等待`);
+        return;
+      }
+    } catch {
+      return;
+    }
+    await sleep(2000);
+  }
+  log(`⚠️ 等了約 20 秒 HeyGen 仍查不到音檔 ${assetId}，照樣送出（失敗會改用 audio_url）`);
+}
+
+function isAudioAssetNotFound(res, data) {
+  const code = data?.error?.code || "";
+  const message = data?.error?.message || "";
+  return (res.status === 400 || res.status === 404) &&
+    (code === "asset_not_found" || /asset not found/i.test(message));
 }
 
 // v3 音訊驅動（2026-08-24 起的預設路徑）。欄位跟 v2 幾乎一樣，差在多一個必填的 type: "avatar"、
 // 引擎走 engine.type，輪詢共用文字驅動那支 pollHeyGenStatusV3()。
 // engine 參數是給「被拒時自動退回 avatar_iv」用的，正常呼叫不要自己傳。
-async function createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, engine = HEYGEN_ENGINE) {
-  log(`呼叫 HeyGen /v3/videos ${engine}（avatar: ${avatarId}、audio_asset_id: ${audioAssetId}）`);
+// useAudioUrl 是給「找不到音檔時改送 audio_url」用的，正常呼叫也不要自己傳。
+async function createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, engine = HEYGEN_ENGINE, useAudioUrl = false) {
+  const audioUrl = heygenAudioUrls.get(audioAssetId);
+  const audioSource = useAudioUrl ? { audio_url: audioUrl } : { audio_asset_id: audioAssetId };
+  log(`呼叫 HeyGen /v3/videos ${engine}（avatar: ${avatarId}、${useAudioUrl ? `audio_url: ${audioUrl}` : `audio_asset_id: ${audioAssetId}`}）`);
 
   const payload = {
     type: "avatar",
     avatar_id: avatarId,
-    audio_asset_id: audioAssetId,
+    ...audioSource,
     aspect_ratio: HEYGEN_ASPECT_RATIO,
     fit: HEYGEN_FIT,
     resolution: "1080p",
@@ -1027,10 +1067,22 @@ async function createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, eng
 
   if (!res.ok || !videoId) {
     console.error(`HeyGen /v3/videos 回應（HTTP ${res.status}）：`, JSON.stringify(data, null, 2));
+    // 找不到音檔跟引擎無關，先處理；換引擎重試也只會撞同一個錯。
+    if (isAudioAssetNotFound(res, data)) {
+      if (!useAudioUrl && audioUrl) {
+        log("⚠️ HeyGen 用 asset_id 找不到音檔，改送上傳時拿到的 audio_url 重試一次（建立失敗不扣點）");
+        return createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, engine, true);
+      }
+      console.error(useAudioUrl
+        ? "   → asset_id 跟 audio_url 兩種都被 HeyGen 拒絕，問題在 HeyGen 那邊"
+        : "   → 上傳回應沒有 url，沒辦法改用 audio_url 重試");
+      console.error("   → 想先退回舊路徑出片的話，指令加 --heygen-v2");
+      throw new Error("HeyGen 找不到剛上傳的音檔（音訊驅動 v3）");
+    }
     // 跟文字驅動同一套：建立失敗不扣點，所以直接用 avatar_iv 重試一次，別讓整支片死掉。
     if (engine !== "avatar_iv") {
       log(`⚠️ ${engine} 被拒，自動改用 avatar_iv 重試一次（建立失敗不扣點）`);
-      return createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, "avatar_iv");
+      return createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, "avatar_iv", useAudioUrl);
     }
     console.error("   → 想先退回舊路徑出片的話，指令加 --heygen-v2");
     throw new Error("HeyGen 建立影片失敗（音訊驅動 v3）");
@@ -1042,7 +1094,7 @@ async function createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title, eng
 // 音訊驅動的統一入口（create）：預設 v3，加 --heygen-v2 退回 /v2/videos。
 async function createAudioDrivenVideo(audioAssetId, avatarId, title = "marketing-auto") {
   if (HEYGEN_V2_FALLBACK) {
-    log("⚠️ 已指定 --heygen-v2，音訊驅動改走舊的 /v2/videos 路徑");
+    log("⚠️ 已指定 --heygen-v2（或 .env HEYGEN_V2=1），音訊驅動改走舊的 /v2/videos 路徑");
     return createHeyGenVideoAudioDrivenV2(audioAssetId, avatarId, title);
   }
   return createHeyGenVideoAudioDrivenV3(audioAssetId, avatarId, title);
@@ -1250,7 +1302,7 @@ async function pollHeyGenStatusV3(videoId) {
 // 三個固定主播分支都呼叫這支，避免各自複製一份 create + poll。
 async function generateTextDrivenVideo(scriptText, avatarId, voiceId, title) {
   if (HEYGEN_V2_FALLBACK) {
-    log("⚠️ 已指定 --heygen-v2，改走舊的 /v2/videos 路徑");
+    log("⚠️ 已指定 --heygen-v2（或 .env HEYGEN_V2=1），改走舊的 /v2/videos 路徑");
     const videoId = await createHeyGenVideoTextDrivenV2(scriptText, avatarId, voiceId, title);
     return pollHeyGenStatus(videoId);
   }
