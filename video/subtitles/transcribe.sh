@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 從 HeyGen 影片自動產生字幕 JSON
 #
-# 用法：bash video/pipeline/transcribe.sh [--pad=秒數]
+# 用法：bash video/subtitles/transcribe.sh [--pad=秒數]
 #   --pad=0.5 → 抽出來的音檔前面墊 0.5 秒靜音再轉，時間戳由 Adapter 自動減回去。
 #     只有「字幕時間軸被判定壞掉、要重轉」時才用（見 run.js transcribeWithRetry）。
 #     為什麼有效：whisper 是分 30 秒 window 解碼的，墊靜音會讓 window 邊界落在不同位置，

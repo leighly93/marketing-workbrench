@@ -29,9 +29,10 @@ function fixture(t, scripts) {
   // 產線腳本會讀版型設定表，整個 video/templates 一起放進合成副本。
   fs.cpSync(path.join(repository, 'video', 'templates'), path.join(root, 'video', 'templates'), { recursive: true });
   for (const name of scripts) {
-    const destination = path.join(pipe, name);
+    // 'subtitles/x.js' 這種帶資料夾的名字相對於 video/；沒帶的放 video/pipeline/
+    const destination = name.includes('/') ? path.join(root, 'video', name) : path.join(pipe, name);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.copyFileSync(path.join(sourcePipeline, name), destination);
+    fs.copyFileSync(name.includes('/') ? path.join(repository, 'video', name) : path.join(sourcePipeline, name), destination);
   }
   // 複製正式程式到合成副本；不複製 .env、憑證或目前使用者工作。
   // 外部 OCR 本身不在這組測試範圍，只允許版本檢查的合成回覆。
@@ -47,7 +48,7 @@ global.fetch = blocked;
 require('node:http').request = require('node:https').request = blocked;
 `);
   const run = (name, args = [], cwd = app) => execFileSync(process.execPath,
-    ['--require', guard, path.join(pipe, name), ...args], {
+    ['--require', guard, name.includes('/') ? path.join(root, 'video', name) : path.join(pipe, name), ...args], {
       cwd, encoding: 'utf8', timeout: 15000,
       env: { PATH: process.env.PATH, WORKBENCH_CALLER_CWD: root, OCR_ENGINE: 'tesseract' },
     });
@@ -90,14 +91,14 @@ test('auto-shot 從不同 CWD 解析相對 job/input/images，--out 指向系統
 });
 
 test('發音檢查 CLI 及 opts.root=workspace 均使用 app 字幕與原套件', (t) => {
-  const { root, app, pipe, run } = fixture(t, ['check-pronunciation.js']);
+  const { root, app, run } = fixture(t, ['subtitles/check-pronunciation.js']);
   const subtitles = { segments: [{ words: [{ word: '你', start: 0, end: 1 }] }] };
   write(path.join(app, 'src', 'subtitles.json'), subtitles);
   write(path.join(app, 'src', 'subtitles.original.json'), subtitles);
-  const result = JSON.parse(run('check-pronunciation.js', ['--json']));
+  const result = JSON.parse(run('subtitles/check-pronunciation.js', ['--json']));
   assert.equal(result.checked, 1);
   assert.equal(result.needInstall, undefined);
-  assert.equal(require(path.join(pipe, 'check-pronunciation.js')).check({ root }).checked, 1);
+  assert.equal(require(path.join(root, 'video', 'subtitles', 'check-pronunciation.js')).check({ root }).checked, 1);
 });
 
 test('備份跨 app/workspace 保存、重跑去重，舊兩參數介面保持可用', (t) => {

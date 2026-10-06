@@ -18,7 +18,7 @@
  *
  * 用法：
  *   npm run check:pronounce                    # 看現在工作區那支
- *   node video/pipeline/check-pronunciation.js --json # 給程式讀（server 用這個）
+ *   node video/subtitles/check-pronunciation.js --json # 給程式讀（server 用這個）
  */
 const fs = require('fs');
 const path = require('path');

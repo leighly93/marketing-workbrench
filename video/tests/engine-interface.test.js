@@ -4,9 +4,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
-const { createEngine, validate } = require('../pipeline/transcription-engine');
+const { createEngine, validate } = require('../subtitles/transcription-engine');
 
-const { normalizeCpp } = require('../pipeline/transcription-engine');
+const { normalizeCpp } = require('../subtitles/transcription-engine');
 // [_TT_n]（時間戳）與 [_LANG_zh]（語言）結尾沒有底線，而且 offsets 就是 segment 邊界：
 // 一旦漏濾，它們會變成零長度的 word，字幕與配圖的強制對齊可能整串字落在上面（只閃 1 frame）。
 const rawCpp = { result: { language: 'zh' }, transcription: [{ text: '測試', offsets: { from: 100, to: 1100 }, tokens: [

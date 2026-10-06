@@ -37,7 +37,7 @@ const SHOT_MEMORY = require('../video/pipeline/shot-memory');
 const { resolveManualOverlaps } = require('../video/pipeline/script-utils');
 const { imageSize, pickImageSize } = require('../video/pipeline/image-size');
 const { serverTemplates, TEMPLATE_ASSET_PATTERN } = require('../video/templates/registry');
-// 2026-08-27：自動唸法檢查（video/pipeline/check-pronunciation.js）不再由伺服器跑。
+// 2026-08-27：自動唸法檢查（video/subtitles/check-pronunciation.js）不再由伺服器跑。
 // 它算出來的東西大部分是錯的（兩份字幕的 words 會因為空字串而整段錯開；拼音又因為
 // nonZh:'consecutive' 把連續英數字併成一格而再錯開一次），而卡片同事也看得到，
 // 等於製造一批要人駁回的假回報。人耳本來就會聽過每一支 —— ground truth 在耳朵那邊。

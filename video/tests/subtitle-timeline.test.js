@@ -4,7 +4,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { createEngine, shiftTimes } = require('../pipeline/transcription-engine');
+const { createEngine, shiftTimes } = require('../subtitles/transcription-engine');
+const { run: runSubtitleCli } = require('../subtitles/cli');
 
 // 2026-09-16 出片事故：whisper 把 24.72 秒那句的結束時間報成 36.56 秒（那句只有 22 個字），
 // 之後整條字幕落後語音 8 秒，結尾 49 個字全擠在最後 0.19 秒 —— 成品是「字幕上到一半就不動了，
@@ -73,29 +74,22 @@ test('Adapter 吃 padSec：whisper 回來的時間戳寫出去之前就已經減
 
 // ── 出片前的時間軸檢查 ──────────────────────────────────
 
-/** 造一個只有 correct-subtitles 需要的檔案的假工作區，跑一次，回傳 { code, out }。 */
+/** 在假的 Remotion 工作區跑一次字幕校正（直接呼叫 CLI 的 run()），回傳 { code, out, text }。 */
 function runCorrect(body, segments, voice = '') {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'subcheck-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'subcheck-'));
   try {
-    fs.mkdirSync(path.join(dir, 'pipeline'), { recursive: true });
-    fs.mkdirSync(path.join(dir, 'remotion', 'public'), { recursive: true });
-    fs.mkdirSync(path.join(dir, 'remotion', 'src'), { recursive: true });
-    for (const name of ['correct-subtitles.js', 'script-utils.js', 'subtitles-replacements.json']) {
-      fs.copyFileSync(path.join(VIDEO, 'pipeline', name), path.join(dir, 'pipeline', name));
-    }
+    fs.mkdirSync(path.join(root, 'public'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     // script.txt 的格式：發音詞庫 === === 標題 === 內文
-    fs.writeFileSync(path.join(dir, 'remotion', 'public', 'script.txt'), [voice, '===', '===', '標題', '===', body, ''].join('\n'));
-    fs.writeFileSync(path.join(dir, 'remotion', 'src', 'subtitles.json'), JSON.stringify({
+    fs.writeFileSync(path.join(root, 'public', 'script.txt'), [voice, '===', '===', '標題', '===', body, ''].join('\n'));
+    fs.writeFileSync(path.join(root, 'src', 'subtitles.json'), JSON.stringify({
       language: 'zh', text: segments.map((s) => s.text).join(''), segments,
     }));
-    try {
-      const out = execFileSync('node', [path.join(dir, 'pipeline', 'correct-subtitles.js')], { encoding: 'utf8', stdio: 'pipe' });
-      const subs = JSON.parse(fs.readFileSync(path.join(dir, 'remotion', 'src', 'subtitles.json'), 'utf8'));
-      return { code: 0, out, text: subs.segments.map((s) => s.text).join('') };
-    } catch (e) {
-      return { code: e.status, out: (e.stdout || '') + (e.stderr || '') };
-    }
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    const lines = [];
+    const code = runSubtitleCli({ root, log: (m) => lines.push(m), error: (m) => lines.push(m) });
+    const subs = JSON.parse(fs.readFileSync(path.join(root, 'src', 'subtitles.json'), 'utf8'));
+    return { code, out: lines.join('\n'), text: subs.segments.map((s) => s.text).join('') };
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
 
 /** 一個字一顆 word 的正常 whisper 輸出。 */
@@ -203,7 +197,7 @@ test('重轉階梯：第一次不墊靜音（維持原本行為），後面每�
 });
 
 test('transcribe.sh 的 --pad 會一路傳到 Adapter，時長偵測不受影響', () => {
-  const sh = fs.readFileSync(path.join(VIDEO, 'pipeline', 'transcribe.sh'), 'utf8');
+  const sh = fs.readFileSync(path.join(VIDEO, 'subtitles', 'transcribe.sh'), 'utf8');
   assert.match(sh, /--pad=\*\)\s*PAD_SEC=/, '要認得 --pad= 參數');
   assert.match(sh, /adelay=\$\{PAD_MS\}\|\$\{PAD_MS\}/, '要用 ffmpeg adelay 墊在音檔前面');
   assert.match(sh, /transcription-engine\.js.*--pad=\$PAD_SEC/, '墊了多少要告訴 Adapter，它才減得回來');
@@ -212,7 +206,7 @@ test('transcribe.sh 的 --pad 會一路傳到 Adapter，時長偵測不受影響
 });
 
 test('秒轉毫秒用 awk（救場路徑不該多綁一個直譯器），而且不會被浮點誤差少 1 毫秒', () => {
-  const sh = fs.readFileSync(path.join(VIDEO, 'pipeline', 'transcribe.sh'), 'utf8');
+  const sh = fs.readFileSync(path.join(VIDEO, 'subtitles', 'transcribe.sh'), 'utf8');
   assert.match(sh, /PAD_MS=\$\(awk /);
   assert.doesNotMatch(sh, /PAD_MS=\$\(python3/);
   for (const [sec, ms] of [['0.5', '500'], ['1.2', '1200'], ['0.05', '50'], ['2', '2000']]) {

@@ -29,7 +29,7 @@ function inspect(root) {
     add(`出片工具 ${command}`, result.status === 0, 'production');
   }
   add('字幕引擎設定有效', (config.TRANSCRIPTION_ENGINE || 'whisper-cpp') === 'whisper-cpp', 'production');
-  const { cppConfig } = require('../video/pipeline/transcription-engine');
+  const { cppConfig } = require('../video/subtitles/transcription-engine');
   const cpp = cppConfig(config, root);
   add('whisper-cli', spawnSync(cpp.binary, ['--help'], { stdio: 'ignore', timeout: 15000 }).status === 0, 'production');
   add('Base Q5_1 模型', fs.existsSync(cpp.model), 'production');

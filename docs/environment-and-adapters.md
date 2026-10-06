@@ -46,7 +46,7 @@ python3 tools/native-environment.py --check
 
 ## 字幕 Adapter
 
-入口：[transcription-engine.js](../video/pipeline/transcription-engine.js)，執行 `whisper-cli`。固定 Base Q5_1、`--no-gpu`、`--threads 4`、`--processors 1`、`--language zh`，使用 `--output-json-full` 取得 token 時間。
+入口：[transcription-engine.js](../video/subtitles/transcription-engine.js)，執行 `whisper-cli`。固定 Base Q5_1、`--no-gpu`、`--threads 4`、`--processors 1`、`--language zh`，使用 `--output-json-full` 取得 token 時間。
 
 - `ensure()`：檢查 CLI 與模型存在，不下載。
 - `transcribe(audio, outputDir, { padSec })`：把 whisper.cpp 的毫秒 `transcription/tokens` 轉成既有秒制 `segments/words`，剔除引擎控制 token。`padSec` 是「這個音檔前面墊了幾秒靜音」，輸出時間戳整體減回去（負值夾成 0），寫進磁碟的也是減回之後的。
@@ -59,8 +59,8 @@ python3 tools/native-environment.py --check
 whisper 分 30 秒 window 解碼，會在某些切點把一句話的結束時間報過頭；之後整條時間軸往後偏，音檔時間用完時稿件還剩一段沒有時間可放，全部掛到最後一顆 word（成品是字幕上到一半停住、最後一瞬間閃過）。
 
 - **同一個音檔是確定性的**：同輸入連跑三次輸出完全相同，原樣重轉必定再失敗一次。改 `--beam-size`、`--threads`、`--max-len` 都無效。
-- 唯一實測有效的是在音檔前墊靜音換 window 邊界：`video/pipeline/transcribe.sh --pad=秒數` 用 ffmpeg `adelay` 墊，並把秒數傳給 Adapter 減回去；影片時長仍量原始 mp4，不受影響。
-- [correct-subtitles.js](../video/pipeline/correct-subtitles.js) 在寫回前判定時間軸：字擠成一團、或 segment 秒數對不上字數就 `exit 3` 並不寫回。[run.js](../video/run.js) 的 `SUBTITLE_PAD_LADDER` 據此重轉，第一次一律不墊（維持既有結果），之後每次墊不同秒數。目前是 `[0, 0.8, 1.5, 2.5]`＝最多轉四次。
+- 唯一實測有效的是在音檔前墊靜音換 window 邊界：`video/subtitles/transcribe.sh --pad=秒數` 用 ffmpeg `adelay` 墊，並把秒數傳給 Adapter 減回去；影片時長仍量原始 mp4，不受影響。
+- [字幕校正](../video/subtitles/correct.js)（[時間軸檢查](../video/subtitles/timeline-check.js)）在寫回前判定時間軸：字擠成一團、或 segment 秒數對不上字數就 `exit 3` 並不寫回。[run.js](../video/run.js) 的 `SUBTITLE_PAD_LADDER` 據此重轉，第一次一律不墊（維持既有結果），之後每次墊不同秒數。目前是 `[0, 0.8, 1.5, 2.5]`＝最多轉四次。
 
 - 秒數不是隨便挑的：間距拉開比多塞近似值有用（0.3 與 0.5 會落在同一個壞點附近）。實測有一支 pad 0.5 只轉出 267 字、pad 0.8 一次就拿到完整的 279 字。
 - 跑滿四階約 15 秒（單次轉錄約 3.6 秒），不值得為了省這 15 秒，把一支已經扣過 HeyGen 點數的片停在出片前。
