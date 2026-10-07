@@ -11,14 +11,16 @@
 ```bash
 npm run setup
 npm run init
+npm run build:web
 npm run doctor
 npm run verify
 ```
 
 - `setup` 在 `` 執行 `npm ci`，依 lockfile 安裝，不在根目錄另建套件。npm 快取預設使用本副本 `.cache/npm/`，避免依賴全機快取權限；可用 `npm_config_cache` 自訂。
 - `init` 只補缺少的設定、空詞庫、生成資料結構與工作目錄。新 `.env` 權限為 600，管理金鑰隨機產生且不印出；既有檔案逐字保留。
+- `build:web` 用 Vite 把前台（`app/src`）建成 `app/dist`，伺服器直接供應這個資料夾；沒建的話網頁會回一頁「前台尚未建置」。改前台原始碼要重建（或開發時用 `npm run dev:web`，它會把 `/api` 代理到本機工作台）。正式機的 `server/deploy/auto-pull.sh` 拉到前台或 lockfile 變動會自動 `npm ci` 與重建，不需要重開伺服器。
 - `doctor` 回報開發必要條件、出片工具及選用整合是否齊全，不顯示憑證值，也不驗證金鑰有效性。
-- `verify` 執行 TypeScript、隔離測試、Remotion 打包及臨時 HTTP 檢查。HTTP 使用空白副本、隨機本機 port，結束後清除；不啟動正式網站、不渲染影片、不呼叫外部 API。
+- `verify` 先建置前台，再執行 TypeScript、隔離測試、Remotion 打包及臨時 HTTP 檢查（從 index.html 讀出帶 hash 的資源路徑逐一抓）。HTTP 使用空白副本、隨機本機 port，結束後清除；不啟動正式網站、不渲染影片、不呼叫外部 API。
 
 ## 模擬模式與端對端
 

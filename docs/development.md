@@ -6,7 +6,7 @@
 
 | 位置 | 職責 |
 | --- | --- |
-| [app](../app/) | 工作台網頁前台，由 server 直接提供。`index.html` 用 `<script type="module">` 載入入口 `app.js`；功能在 `js/`：`state.js`（共用畫面狀態 `S`）、`dom.js`、`shell.js`（導覽、啟動、輪詢）、`form.js`（建立工作）、`jobs-list.js`、`job-detail.js`、`annotations.js`、`plan.js`、`editor.js`、`emphasis.js`、`motion.js`、`range.js`、`say.js`、`fix.js`、`arrows.js`、`status.js`。`app.test.js` 在 jsdom 裡把整個前台接上真的伺服器路由跑一遍 |
+| [app](../app/) | 工作台網頁前台（Vite + Vue 3 + Tailwind 4）。`index.html` 與 `vite.config.mjs` 在 app/，原始碼在 `src/`：`main.js`（掛載）、`router.js`（儀表板 `/`、工作列表 `/jobs`、工作頁 `/jobs/:id`、新增 `/new`、跟我說 `/say`、修正紀錄 `/fix`）、`lib/`（純邏輯：`pipeline.js` 把 job.status 與步驟事件整理成五階段節點、`emphasis.js`、`arrows.js`、`voice.js`、`files.js`、`status.js`）、`stores/`（`health.js` 輪詢伺服器、`job.js` 單筆工作輪詢、`content.js` 腳本逐字資料、`editor.js` 框選編輯器、`owner.js`）、`views/`、`components/`（`pipeline/` 流程圖、`panels/` 每個節點的右側面板、`shared/` 範圍選取、重點詞、動態、截圖牆、`editor/` 框選編輯器、`charts/`）。伺服器供應的是 `npm run build:web` 產生的 `app/dist`（不進 Git）；開發用 `npm run dev:web`（/api 代理到本機工作台）。`src/app.test.js` 在 jsdom 裡把整個前台接上真的伺服器路由跑一遍 |
 | [server](../server/) | 工作台 API。`index.js` 只開 port；`app.js` 是組裝點，依序建立各模組並組成路由：`jobs/`（工作儲存、清單、佇列、出片兩段、子程序、工作區、成品收尾）、`plan/`（配圖計畫檢視與寫回、重點詞與動態設定）、`corrections/`（修正紀錄與記憶學習）、`voice/`（語氣與發音詞庫）、`messages/`、`uploads/`、`http/`（驗證、回應、路由器）、`routes/`（各組 API）。模組只從 `ctx` 取依賴，測試用 `server/tests/isolated-server.js` 換成鎖在暫存目錄的 fs 與假子程序；`deploy/` 放 macOS 自動啟動、自動更新與內網名稱設定 |
 | [video](../video/) | 出片。`run.js` 只做步驟編排（參數在 `run-options.js`）；`providers/` 呼叫 HeyGen 與 MiniMax（`index.js` 工廠依模擬模式給正式或假 client）；`steps/` 是各出片步驟（講者影片、截圖分析、字幕重轉、動態）；`media/` 是 ffmpeg 處理；`templates/` 版型設定表與解析／素材／渲染；`subtitles/` 轉錄與字幕校正；`shots/` OCR 與配圖判定；`pipeline/` 其餘工具；`remotion/` 模板（`src/`）與執行素材（`public/`） |
 | [shared](../shared/) | 三塊共用的 `paths.js`（路徑解析）、`job-store.js`（依完整 job ID 找工作資料夾）與 `mock-mode.js`（模擬模式開關） |
@@ -14,7 +14,7 @@
 | [storage](../storage/) | 資料：`jobs/` 工作、`shared-assets/` 品牌素材（進 Git）、`data/` 詞庫與記憶、`tmp/` 產線暫存、`archive/` 封存 |
 | [docs](.) | 維護說明、[模板導覽](templates/README.md)與[第三方授權](licenses/README.md) |
 
-測試用 Vitest：單元測試放在程式旁邊（`foo.js` ↔ `foo.test.js`），跨模組的整合測試放在各區的 `tests/`。前台測試在檔案開頭加 `// @vitest-environment jsdom`。`npm test` 跑全部、`npm run test:coverage` 產生覆蓋率報告（`storage/tmp/coverage/`），`npm run verify` 另外做 typecheck、Remotion 打包與隔離 HTTP 檢查。
+測試用 Vitest：單元測試放在程式旁邊（`foo.js` ↔ `foo.test.js`），跨模組的整合測試放在各區的 `tests/`。前台測試在檔案開頭加 `// @vitest-environment jsdom`（`vitest.config.mjs` 掛了 `@vitejs/plugin-vue`，測試可以直接 import `.vue`）。`npm test` 跑全部、`npm run test:coverage` 產生覆蓋率報告（`storage/tmp/coverage/`），`npm run verify` 另外先建置前台，再做 typecheck、Remotion 打包與隔離 HTTP 檢查。
 
 版型（composition、輸出檔名、素材、主播與聲音、標題規則）只在 [video/templates/registry.js](../video/templates/registry.js) 設定；新增版型＝加一筆設定＋寫 Remotion composition。手動執行：`npm run template -- <assets|parse|render> --template=<版型>`。
 

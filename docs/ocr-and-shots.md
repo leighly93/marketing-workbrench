@@ -50,7 +50,7 @@ OCR 共用入口為 [ocr-engine.js](../video/shots/ocr-engine.js)，供 APP 截�
 
 - 存的是**頭尾兩點的原圖像素座標**加顏色（`{x1,y1,x2,y2,color}`），不是「矩形＋旋轉角度」——
   跟框同一套座標系，換算只有一條（乘當下的縮放倍率）。角度與長度是渲染時算的。
-- 顏色是六色色票。兩邊要同步：前台 `app/app.js` 的 `ARROW_COLORS`
+- 顏色是六色色票。兩邊要同步：前台 `app/src/lib/arrows.js` 的 `ARROW_COLORS`
   與成品端 [ShotFocus.tsx](../video/remotion/src/ShotFocus.tsx) 的 `SHOT_FOCUS.arrow.palette`。
 - 成品裡箭頭會**沿自身軸向前後平移** ±6px、1.5Hz（使用者定案的「像在戳」）。位移由 `frame` 算，
   是純函式，分散式渲染不會抖。同一張圖連續兩段各有箭頭時「平滑轉過去」：

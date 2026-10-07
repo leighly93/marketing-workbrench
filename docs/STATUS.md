@@ -13,6 +13,7 @@
 - 2026-10-07：模擬模式（`.env` 的 `WORKBENCH_MOCK=1`）讓 HeyGen、MiniMax、whisper 轉錄、OCR 與動態參數全部改用本機假實作，ffmpeg 與 Remotion 照常執行；工作台頁首有警示、工作帶 `mock` 標記。`npm run e2e` 在隔離工作區從工作台 API 跑到成品。只供開發與流程驗收，不取代 macOS 上的正式供應者驗收。
 - 2026-10-07：`server/index.js`（約 3,400 行）拆成 `server/app.js` 組裝的功能模組；行為與 API 不變，程式與註解原樣搬移。每個模組只從 `ctx` 取依賴，拿不存在的依賴會在啟動時報錯。搬過來的模組暫時是 `// @ts-nocheck`，JSDoc 型別待補。
 - 2026-10-07：前台 `app/app.js`（約 2,800 行）拆成 `app/js/` 的原生 ES modules；可變的畫面狀態集中在 `js/state.js` 的 `S`，程式與註解原樣搬移。`app/app.test.js` 用 jsdom 載入整個前台、fetch 接到真的伺服器路由。
+- 2026-10-08：前台改為 Vite + Vue 3 + Tailwind 4（`app/src`），伺服器供應建置產物 `app/dist`（不進 Git，`npm run build:web`）；舊的原生 ES modules 前台移除。首頁是儀表板（`GET /api/dashboard?range=`：由真實工作算的執行中／排隊／待確認、成功失敗率、每日趨勢、依版型／建立者、需要處理的清單）；`GET /api/quotas` 的 HeyGen／MiniMax 額度**目前是 mock**（`server/system/quotas.js` 的 adapter 可換成真的；HeyGen 有 `/v2/user/remaining_quota`，MiniMax 沒有公開餘額 API），本機磁碟／佇列／鎖是真的。工作頁改成 pipeline：建立 → 準備 → 人工確認 → 出片 → 成品，節點狀態來自 `_meta/steps.json`（`shared/steps.js`；run.js 與 server/jobs/production.js 寫，`GET /api/jobs/:id/steps` 讀），點節點在右側填表單。新增任務改成「最小建立」：版型、標題、腳本建一份草稿（`status: draft`，存 `scriptBody`），截圖、唸法、講者影片在 pipeline 裡補（`PATCH /api/jobs/:id` 與 `DELETE /api/jobs/:id/upload` 只對草稿開放；建立者可用 `?by=` 刪自己的草稿）。`codeChangedAt` 不再把前台算進去（重建前台不需要重開伺服器）。
 - 開發入口為 setup、init、doctor、verify；Claude 與其他 Agent 共用 AGENTS.md，按任務讀取文件。
 
 ## v1.0.0 前的 Harness 邊界
@@ -33,6 +34,7 @@
 - 工作列表最新 50 筆以外的瀏覽改善、缺件提示完整改版、跨 job 版本模型。
 - 待辨識備份／試片的進一步分類，以及舊工作缺失檔案還原。
 - 外部 API 有效性、Whisper 模型下載與端到端付費產線驗收。
+- HeyGen／MiniMax 真實額度查詢（儀表板目前顯示 mock，標有 🧪）；步驟事件只覆蓋 run.js 與伺服器兩段出片的主要步驟，Remotion 內部沒有更細的進度。
 - 墊靜音改成每支都跑的預設值：只在單支上驗證過（墊 0.5／1.2 秒都把壞掉的時間軸修回正常），沒有拿歷史工作批量回測，改預設會動到所有影片的字幕斷句。
 - 重新出片的「改稿也保留標注」：標注用 `startCharIdx`／`endCharIdx` 定位，稿件一改就整段錯位且不會報錯。要支援得先換成錨點字串比對。
 
