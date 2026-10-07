@@ -6,7 +6,7 @@ const path = require('node:path');
 const { spawnSync, fork } = require('node:child_process');
 const { createRequire } = require('node:module');
 const { applicationPath } = require('../shared/paths');
-const { initialize } = require('./init');
+const { createSandbox } = require('./sandbox');
 
 const root = path.resolve(__dirname, '..');
 const app = applicationPath(root); // Remotion 專案 video/remotion
@@ -18,15 +18,11 @@ function run(file, args) {
 }
 
 async function smoke() {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-smoke-'));
+  // 隔離工作區（tools/sandbox.js）：程式整份複製、空白 storage，不碰正式工作。
+  const sandbox = createSandbox({ prefix: 'workbench-smoke-' });
+  const scratch = sandbox.dir;
   let child;
   try {
-    const copy = (from, to) => { fs.mkdirSync(path.dirname(to), { recursive: true }); fs.cpSync(from, to, { recursive: true }); };
-    copy(path.join(root, '.env.example'), path.join(scratch, '.env.example'));
-    for (const name of ['shared/paths.js', 'shared/job-store.js', 'shared/mock-mode.js', 'server/index.js', 'server/start.js', 'app',
-      'video/shots/shot-memory.js', 'video/pipeline/script-utils.js', 'video/shots/image-size.js', 'video/templates/registry.js']) copy(path.join(root, name), path.join(scratch, name));
-    fs.symlinkSync(path.join(root, 'node_modules'), path.join(scratch, 'node_modules'), 'junction');
-    initialize(scratch);
     const bootstrap = path.join(scratch, 'smoke.cjs');
     fs.writeFileSync(bootstrap, `const server = require('./server/start');\nserver.on('listening', () => process.send({ port: server.address().port }));\n`);
     child = fork(bootstrap, [], {
@@ -51,7 +47,7 @@ async function smoke() {
     console.log('隔離 HTTP 檢查通過：空工作台與網頁資源可載入。');
   } finally {
     if (child && child.exitCode === null) await new Promise((resolve) => { child.once('exit', resolve); child.kill('SIGTERM'); });
-    fs.rmSync(scratch, { recursive: true, force: true });
+    sandbox.cleanup();
   }
 }
 

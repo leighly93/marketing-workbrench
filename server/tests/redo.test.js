@@ -150,9 +150,9 @@ test('重新出片：preparing／rendering 也在擋下來的名單裡', () => {
   // 「狀態是 preparing／rendering 但 run.js 沒在跑」的工作判成 failed（那是它的本意，
   // 為了伺服器重開後不讓人以為 HeyGen 點數白花）。真實情況下這兩個狀態活在
   // 記憶體裡的 JOBS，不會被重判，所以這裡改成綁住名單本身。
-  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'server', 'index.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'jobs.js'), 'utf8');
   const m = src.match(/\/\/ 正在跑的不給重跑[\s\S]{0,200}?if \(\[([^\]]+)\]\.includes\(src\.status\)\)/);
-  assert.ok(m, 'server/index.js 找不到 redo 的「正在跑」判斷');
+  assert.ok(m, 'server/routes/jobs.js 找不到 redo 的「正在跑」判斷');
   for (const s of ["'preparing'", "'rendering'", "'detached'"]) assert.match(m[1], new RegExp(s));
 });
 

@@ -41,7 +41,7 @@ test('前台的語氣按鈕與伺服器白名單是同一組值', () => {
     return [...m[1].matchAll(/'([a-z]+)'/g)].map((x) => x[1]);
   };
   // 伺服器：const EMOTIONS = ['fluent', 'happy'];
-  const 伺服器 = 取清單(path.join(repository, 'server/index.js'), /\nconst EMOTIONS = (\[[^\]]*\]);/);
+  const 伺服器 = 取清單(path.join(repository, 'server/voice/rules.js'), /\n\s*const EMOTIONS = (\[[^\]]*\]);/);
   // 前台：const EMOTIONS = [['fluent', '流暢'], ['happy', '開心']];　只取值，不取按鈕文字
   const 前台 = 取清單(path.join(repository, 'app/app.js'), /\nconst EMOTIONS = (\[\[[\s\S]*?\]\]);/)
     .filter((v, i, all) => all.indexOf(v) === i);

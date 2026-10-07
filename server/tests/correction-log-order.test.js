@@ -11,7 +11,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { repository, fixture, write, loadServer, workFile } = require('./isolated-server');
+const { repository, fixture, write, loadServer, workFile, serverSource } = require('./isolated-server');
 const { applicationPath, dataPath } = require('../../shared/paths');
 
 const ID = '20260911-090000-cccc';
@@ -101,7 +101,7 @@ test('按下確認時「系統框選建議」看到的記憶庫還沒學這一�
 });
 
 test('recordCorrections 與 learnFromEdits 成對出現，而且一律先記錄再學', () => {
-  const 原始碼 = fs.readFileSync(path.join(repository, 'server/index.js'), 'utf8');
+  const 原始碼 = serverSource();
   const 程式 = 原始碼.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\n)[ \t]*\/\/[^\n]*/g, '$1');
   const 呼叫 = [...程式.matchAll(/(?<!function\s)\b(recordCorrections|learnFromEdits)\s*\(/g)].map((m) => m[1]);
 

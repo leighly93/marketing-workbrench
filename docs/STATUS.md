@@ -11,6 +11,7 @@
 - 公開 Git 不含私人工作、封存、執行記憶、留言或憑證；初始化只補缺檔，既有資料不覆寫。
 - 2026-10-07：投廣模板留下的雙人對話、隨機主播池與 `--minimax`／`--simp` 旗標已移除（模板 2026-09-22 就停用，這些路徑不會再執行），需要時從 Git 歷史找回。舊工作帶著這些旗標重跑會被忽略、不報錯。
 - 2026-10-07：模擬模式（`.env` 的 `WORKBENCH_MOCK=1`）讓 HeyGen、MiniMax、whisper 轉錄、OCR 與動態參數全部改用本機假實作，ffmpeg 與 Remotion 照常執行；工作台頁首有警示、工作帶 `mock` 標記。`npm run e2e` 在隔離工作區從工作台 API 跑到成品。只供開發與流程驗收，不取代 macOS 上的正式供應者驗收。
+- 2026-10-07：`server/index.js`（約 3,400 行）拆成 `server/app.js` 組裝的功能模組；行為與 API 不變，程式與註解原樣搬移。每個模組只從 `ctx` 取依賴，拿不存在的依賴會在啟動時報錯。搬過來的模組暫時是 `// @ts-nocheck`，JSDoc 型別待補。
 - 開發入口為 setup、init、doctor、verify；Claude 與其他 Agent 共用 AGENTS.md，按任務讀取文件。
 
 ## v1.0.0 前的 Harness 邊界
