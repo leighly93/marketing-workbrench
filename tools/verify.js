@@ -38,12 +38,17 @@ async function smoke() {
       child.once('error', (error) => { clearTimeout(timer); reject(error); });
       child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`隔離工作台提前結束：${code} ${errors}`)); });
     });
-    for (const endpoint of ['/', '/app.js', '/js/shell.js', '/styles.css', '/api/health', '/api/jobs']) {
+    // 前台是 Vite 建置產物，資源檔名帶 hash：先抓 index.html，從裡面讀出 script／stylesheet 的路徑再逐一檢查。
+    const get = async (endpoint) => {
       const response = await fetch(`http://127.0.0.1:${port}${endpoint}`, { signal: AbortSignal.timeout(5000) });
       if (!response.ok) throw new Error(`隔離 HTTP 檢查失敗：${endpoint}`);
-      if (endpoint === '/api/jobs' && (await response.json()).jobs.length !== 0) throw new Error('隔離工作台不應含正式工作');
-      else await response.arrayBuffer().catch(() => {});
-    }
+      return response;
+    };
+    const html = await (await get('/')).text();
+    const assets = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((m) => m[1]);
+    if (!assets.some((a) => a.endsWith('.js')) || !assets.some((a) => a.endsWith('.css'))) throw new Error('index.html 沒有引用建置後的 js／css（app/dist 是不是沒建？）');
+    for (const endpoint of [...assets, '/jobs/not-a-real-id', '/api/health']) await (await get(endpoint)).arrayBuffer();
+    if ((await (await get('/api/jobs')).json()).jobs.length !== 0) throw new Error('隔離工作台不應含正式工作');
     console.log('隔離 HTTP 檢查通過：空工作台與網頁資源可載入。');
   } finally {
     if (child && child.exitCode === null) await new Promise((resolve) => { child.once('exit', resolve); child.kill('SIGTERM'); });
@@ -52,6 +57,8 @@ async function smoke() {
 }
 
 async function main() {
+  // 前台先建置：隔離 HTTP 檢查要看得到 app/dist，app.test.js 也要有 dist/index.html 可以載入。
+  run(path.join(root, 'node_modules', 'vite', 'bin', 'vite.js'), ['build', '--config', path.join(root, 'app', 'vite.config.mjs'), '--logLevel', 'warn']);
   run(requireApp.resolve('typescript/bin/tsc'), ['--noEmit', '--incremental', 'false']);
   run(requireApp.resolve('typescript/bin/tsc'), ['-p', 'tsconfig.checkjs.json']); // 後端 // @ts-check 的 JSDoc 型別
   run(path.join(root, 'node_modules', 'vitest', 'vitest.mjs'), ['run']);

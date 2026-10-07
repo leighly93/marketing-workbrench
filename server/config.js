@@ -21,7 +21,8 @@ function createConfig({ root, env = process.env }) {
     VIDEO_DIR,
     PIPELINE_DIR: path.join(VIDEO_DIR, 'pipeline'),
     SHOTS_DIR: path.join(VIDEO_DIR, 'shots'),
-    WEB_DIR: path.join(root, 'app'),
+    // 前台是 Vite 專案（app/），伺服器供應的是建置產物 app/dist（npm run build:web）。
+    WEB_DIR: path.join(root, 'app', 'dist'),
     SERVER_DIR: path.join(root, 'server'),
     PORT: Number(env.PORT || 4000),
     HOST: env.HOST || '127.0.0.1',

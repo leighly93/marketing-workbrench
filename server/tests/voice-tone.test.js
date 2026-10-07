@@ -43,7 +43,7 @@ test('前台的語氣按鈕與伺服器白名單是同一組值', () => {
   // 伺服器：const EMOTIONS = ['fluent', 'happy'];
   const 伺服器 = 取清單(path.join(repository, 'server/voice/rules.js'), /\n\s*const EMOTIONS = (\[[^\]]*\]);/);
   // 前台：export const EMOTIONS = [['fluent', '流暢'], ['happy', '開心']];　只取值，不取按鈕文字
-  const 前台 = 取清單(path.join(repository, 'app/js/state.js'), /\n(?:export )?const EMOTIONS = (\[\[[\s\S]*?\]\]);/)
+  const 前台 = 取清單(path.join(repository, 'app/src/lib/voice.js'), /\n(?:export )?const EMOTIONS = (\[\[[\s\S]*?\]\]);/)
     .filter((v, i, all) => all.indexOf(v) === i);
 
   assert.deepEqual(前台, 伺服器,

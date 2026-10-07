@@ -10,6 +10,8 @@
     "verify": "node tools/verify.js",
     "check:release": "node tools/release-check.js",
     "setup:whisper": "python3 tools/whisper/setup-whisper.py",
+    "build:web": "vite build --config app/vite.config.mjs",
+    "dev:web": "vite --config app/vite.config.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "studio": "node --watch server/start.js",
@@ -31,15 +33,22 @@
     "pinyin-pro": "^3.29.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "remotion": "^4.0.0"
+    "remotion": "^4.0.0",
+    "vue": "^3.5.43",
+    "vue-router": "^5.4.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.19.1",
     "@types/react": "^18.3.3",
     "@types/web": "^0.0.150",
+    "@vitejs/plugin-vue": "^6.0.9",
     "@vitest/coverage-v8": "^5.0.3",
+    "@vue/test-utils": "^2.5.1",
     "jsdom": "^29.1.1",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.4.5",
+    "vite": "^8.3.3",
     "vitest": "^5.0.3"
   },
   "engines": {

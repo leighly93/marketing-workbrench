@@ -46,3 +46,6 @@ build/
 /video/shots/ocr-vision.tmp-*
 /tools/experiments/vision-trial/ocr-vision
 /tools/experiments/vision-trial/out/
+
+# 前台建置產物（npm run build:web 產生；伺服器直接供應 app/dist）
+/app/dist/

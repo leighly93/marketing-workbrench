@@ -23,7 +23,7 @@ module.exports = function create(ctx) {
   // 改完檔案忘了重開伺服器 → 網頁看起來「沒有變」，因為版型設定是這個程序回答的。
   // 這個坑第一次就踩到了（2026-08-13），所以讓網頁自己判斷、自己提醒。
   const STARTED_AT = Date.now();
-  /** 前台的檔案（index.html、styles.css、app.js 與 js/ 底下的模組，不含測試）。 */
+  /** 前台的建置產物（app/dist 的 index.html 與 assets/ 底下的 js／css）。 */
   function webFiles() {
     const out = [];
     const walk = (dir) => {
@@ -60,9 +60,11 @@ module.exports = function create(ctx) {
     return out;
   }
 
+  // ⚠️ 前台不算在這裡：它是建置產物、不需要重開伺服器，重新建置的提醒走 webChangedAt → 前台的「請重新整理」橫幅。
+  //    算進來的話每次 npm run build:web 都會跳「伺服器要重開」，而那是假警報。
   function codeChangedAt() {
     let t = 0;
-    for (const f of [...serverFiles(), ...webFiles(), path.join(VIDEO_DIR, 'run.js')]) {
+    for (const f of [...serverFiles(), path.join(VIDEO_DIR, 'run.js')]) {
       try { t = Math.max(t, fs.statSync(f).mtimeMs); } catch (_) {}
     }
     return t;

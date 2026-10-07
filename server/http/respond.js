@@ -44,12 +44,19 @@ module.exports = function create(ctx) {
   }
 
   const MIME = {
-    '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+    '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
     '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg', '.mp4': 'video/mp4', '.json': 'application/json',
+    '.svg': 'image/svg+xml', '.webp': 'image/webp', '.ico': 'image/x-icon', '.map': 'application/json',
+    '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain; charset=utf-8',
   };
 
-  function sendFile(req, res, file, download) {
+  /**
+   * @param {object} req @param {object} res @param {string} file
+   * @param {boolean} [download] 以附件下載
+   * @param {{ cache?: string }} [opts] cache：覆寫 Cache-Control（Vite 的 assets/ 檔名帶 hash，可以 immutable）
+   */
+  function sendFile(req, res, file, download, opts) {
     if (!fs.existsSync(file)) return send(res, 404, { error: '找不到檔案' });
     const st = fs.statSync(file);
     // ⚠️ 資料夾不能當檔案送 —— createReadStream 對目錄是**非同步**丟 EISDIR（stream 的
@@ -58,7 +65,7 @@ module.exports = function create(ctx) {
     //    /api/jobs/<id>/file/，解回 _meta/thumbs 這個目錄 → 全公司連不進來 35 分鐘。
     if (!st.isFile()) return send(res, 404, { error: '找不到檔案' });
     const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
-    const headers = { 'Content-Type': type, 'Cache-Control': 'no-store' };
+    const headers = { 'Content-Type': type, 'Cache-Control': (opts && opts.cache) || 'no-store' };
     if (download) {
       // ⚠️ HTTP header 的值只能是 Latin-1 —— 中文檔名直接塞進去，Node 會丟
       //    ERR_INVALID_CHAR：`Invalid character in header content ["Content-Disposition"]`。

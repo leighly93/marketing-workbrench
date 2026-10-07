@@ -11,7 +11,7 @@ describe('createConfig', () => {
     const root = path.join(os.tmpdir(), 'x');
     const c = createConfig({ root, env: { PORT: '0', ADMIN_KEY: 'k' } });
     expect(c.ROOT).toBe(path.join(root, 'video', 'remotion'));
-    expect(c.WEB_DIR).toBe(path.join(root, 'app'));
+    expect(c.WEB_DIR).toBe(path.join(root, 'app', 'dist'));
     expect(c.CORRECTIONS_LOG).toBe(path.join(root, 'storage', 'data', 'corrections.jsonl'));
     expect([c.PORT, c.HOST, c.ADMIN_KEY]).toEqual([0, '127.0.0.1', 'k']);
     expect(createConfig({ root, env: {} }).PORT).toBe(4000);

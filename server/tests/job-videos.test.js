@@ -6,28 +6,41 @@ const path = require('node:path');
 const { applicationPath } = require('../../shared/paths');
 const { fixture, write, loadServer, workFile } = require('./isolated-server');
 
-test('拆分後的網頁可取得 HTML、CSS 與 JavaScript，資源更新會反映版本時間', async (t) => {
+test('前台建置產物：index.html、帶 hash 的資源、history 路由退回 index，建置時間反映在 webBuiltAt', async (t) => {
   const root = fixture(t);
-  const repository = path.resolve(__dirname, '..', '..');
-  const contents = new Map();
-  for (const name of ['index.html', 'styles.css', 'app.js']) {
-    const content = fs.readFileSync(path.join(repository, 'app', name));
-    contents.set(name, content);
-    write(path.join(root, 'app', name), content);
-  }
-  assert.match(contents.get('index.html').toString(), /href="\/styles\.css"/);
-  assert.match(contents.get('index.html').toString(), /src="\/app\.js"/);
+  // 伺服器供應的是 app/dist（Vite 建置產物）：這裡自己造一份最小的 dist
+  const html = '<!doctype html><html><head><link rel="stylesheet" href="/assets/index-abc12345.css"></head><body><div id="app"></div><script type="module" src="/assets/index-abc12345.js"></script></body></html>';
+  write(path.join(root, 'app/dist/index.html'), html);
+  write(path.join(root, 'app/dist/assets/index-abc12345.css'), 'body{}');
+  write(path.join(root, 'app/dist/assets/index-abc12345.js'), 'console.log(1)');
   const changed = new Date(Date.now() + 10000);
-  fs.utimesSync(path.join(root, 'app/app.js'), changed, changed);
+  fs.utimesSync(path.join(root, 'app/dist/assets/index-abc12345.js'), changed, changed);
   const request = loadServer(root);
-  for (const [url, name, mime] of [['/', 'index.html', 'text/html'], ['/styles.css', 'styles.css', 'text/css'], ['/app.js', 'app.js', 'text/javascript']]) {
+  for (const [url, body, mime, cache] of [
+    ['/', html, 'text/html', 'no-store'],
+    ['/assets/index-abc12345.css', 'body{}', 'text/css', 'public, max-age=31536000, immutable'],
+    ['/assets/index-abc12345.js', 'console.log(1)', 'text/javascript', 'public, max-age=31536000, immutable'],
+    ['/jobs/20261007-090000-abcd', html, 'text/html', 'no-store'],   // 前台 history 路由：退回 index.html
+  ]) {
     const response = await request('GET', url);
-    assert.equal(response.status, 200);
-    assert.ok(response.headers['Content-Type'].startsWith(mime));
-    assert.deepEqual(response.bytes, contents.get(name));
+    assert.equal(response.status, 200, url);
+    assert.ok(response.headers['Content-Type'].startsWith(mime), url);
+    assert.equal(response.headers['Cache-Control'], cache, url);
+    assert.equal(response.bytes.toString(), body, url);
   }
+  // 看起來像檔案的路徑找不到就真的 404，不要退回 index.html
+  assert.equal((await request('GET', '/missing.png')).status, 404);
+  assert.equal((await request('GET', '/api/nope')).status, 404);
   const health = await request('GET', '/api/health');
-  assert.equal(health.body.webBuiltAt, fs.statSync(path.join(root, 'app/app.js')).mtimeMs);
+  assert.equal(health.body.webBuiltAt, fs.statSync(path.join(root, 'app/dist/assets/index-abc12345.js')).mtimeMs);
+});
+
+test('前台還沒建置：回一頁說明，不是 404 JSON', async (t) => {
+  const root = fixture(t);
+  const request = loadServer(root);
+  const response = await request('GET', '/');
+  assert.equal(response.status, 503);
+  assert.match(response.bytes.toString(), /npm run build:web/);
 });
 
 function job(root, id, extra = {}) {

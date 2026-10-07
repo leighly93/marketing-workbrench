@@ -28,6 +28,8 @@ function isCopied(rel) {
   if (/\.generated\.json$/.test(rel)) return false;
   if (/^video\/remotion\/src\/(subtitles(\.original)?|video-meta)\.json$/.test(rel)) return false;
   if (/^video\/shots\/ocr-vision(\.tmp-.*)?$/.test(rel)) return false;
+  // 前台只帶建置產物（伺服器供應的是 app/dist）；原始碼與設定不需要進沙盒。
+  if (rel.startsWith('app/') && !rel.startsWith('app/dist/')) return rel === 'app/dist';
   return !/(^|\/)(node_modules|\.cache)(\/|$)/.test(rel);
 }
 

@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { fixture, write, loadServer, workFile, webSource } = require('./isolated-server');
+const { fixture, write, loadServer, workFile, webFile } = require('./isolated-server');
 const { createJobStore } = require('../../shared/job-store');
 const { applicationPath, cliPath } = require('../../shared/paths');
 
@@ -47,22 +47,15 @@ test('頁型查得到：準備中讀工作區、跑完讀自己的快照，不�
     'review 的工作要讀自己的快照，讀 ROOT 會拿到別支正在跑的工作的頁型');
 });
 
-test('前台：截圖總覽兩頁共用同一份實作，點一下的行為各自不同', () => {
-  const app = webSource();
-
-  assert.match(app, /function shotFigures\(job, images, count, pages, onPick\)/,
-    '兩頁要共用同一個函式，各寫一份遲早會漂走');
-
-  // 配圖計畫頁：點一下＝加一段計畫
-  assert.match(app, /shotFigures\(job, pv\.images, count, pv\.pages, addSeg\)/);
-  // 手動標記頁：點一下＝加一個標注，次數數的是 ANNOTS
-  assert.match(app, /shotFigures\(job, imgs, count, S\.ANNOT_PAGES, \(n\) => addAnnot\(job, n\)\)/);
-  const annot = app.slice(app.indexOf('function annotCard(job)'), app.indexOf('function autoGoRow'));
-  assert.match(annot, /id: 'annotWall'/, '手動標記頁要有截圖總覽的容器');
-
-  // 標注改動後次數要跟著更新，不然點完縮圖數字還停在舊的
-  const draw = app.slice(app.indexOf('function drawAnnots(job)'), app.indexOf('function saveAnnots'));
-  assert.match(draw, /drawAnnotWall\(job\)/);
+test('前台：截圖總覽兩頁共用同一份元件，點一下的行為各自不同', () => {
+  // 配圖計畫頁與手動標記頁的截圖牆是同一個 ShotWall.vue，各寫一份遲早會漂走
+  const annot = webFile('components/panels/AnnotatePanel.vue');
+  const plan = webFile('components/panels/PlanPanel.vue');
+  assert.match(annot, /import ShotWall from '\.\.\/shared\/ShotWall\.vue'/);
+  assert.match(plan, /import ShotWall from '\.\.\/shared\/ShotWall\.vue'/);
+  // 配圖計畫頁：點一下＝加一段計畫；手動標記頁：點一下＝加一個標注
+  assert.match(plan, /<ShotWall[^>]*@pick="addSeg"/);
+  assert.match(annot, /<ShotWall[^>]*@pick="\(n\) => editable && add\(n\)"/);
 });
 
 // ── 取消鈕（2026-09-17 使用者要求「一進到下一頁就要一直顯示」）────────────────
@@ -115,21 +108,16 @@ test('已經結束的工作不給「取消」——那是要刪掉，走列表�
 });
 
 test('前台：取消鈕在頁首、一律顯示，只有已經結束的不畫', () => {
-  const app = webSource();
-
-  const m = app.match(/function cancelBtn\(job\) \{\n\s*if \(\[([^\]]+)\]\.includes\(job\.status\)\) return '';/);
-  assert.ok(m, '找不到 cancelBtn 的狀態判斷');
+  // 黑名單在 lib/status.js 的 FINISHED：還沒結束的狀態都要有取消鈕
+  const status = webFile('lib/status.js');
+  const m = status.match(/export const FINISHED = \[([^\]]+)\];/);
+  assert.ok(m, '找不到 FINISHED');
   for (const s of ['draft', 'queued', 'preparing', 'rendering', 'detached', 'review', 'approved']) {
     assert.doesNotMatch(m[1], new RegExp(`'${s}'`), `${s} 還沒結束，取消鈕要顯示`);
   }
-
-  // 要在頁首那一列（「← 回列表」旁邊），不是埋在最下面的執行記錄裡 ——
-  // 埋在下面的話，正在跑的工作整頁都是 log，按鈕在捲軸外面等於沒有。
-  const head = app.slice(app.indexOf('const head = el('), app.indexOf('const parts = [head]'));
-  assert.match(head, /cancelBtn\(job\)/, '取消鈕要放在頁首');
-  const logCard = app.slice(app.indexOf('const logCard = el('), app.indexOf('parts.push(logCard)'));
-  assert.doesNotMatch(logCard, /cancelBtn\(job\)/, '同一頁不要兩顆一樣的紅字按鈕');
-
-  // 正在跑的要先講清楚代價，不能只問一句「確定取消？」
-  assert.match(app, /點數不會退回/);
+  // 要在頁首那張卡片（「← 回列表」旁邊），不是埋在 pipeline 或執行記錄裡
+  const view = webFile('views/JobView.vue');
+  const head = view.slice(view.indexOf('data-job-head'), view.indexOf('<PipelineGraph'));
+  assert.match(head, /v-if="cancelable"[^>]*@click="cancel"/, '取消鈕要放在頁首');
+  assert.match(view, /const cancelable = computed\(\(\) => job\.value && !FINISHED\.includes\(job\.value\.status\)\)/);
 });

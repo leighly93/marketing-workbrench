@@ -57,7 +57,18 @@ if [ "$before" != "$after" ]; then
   git log --oneline "$before..$after" 2>/dev/null | sed 's/^/                       /' >> "$LOG"
   # 素材是從 storage/shared-assets/ 複製到 public/ 的，storage/shared-assets/ 有變動就補跑一次，
   # 不然新的 BGM／套版圖不會生效（public/ 不進版控，pull 不會動到它）。
-  if git -c core.quotepath=false diff --name-only "$before" "$after" | grep -q '^storage/shared-assets/'; then
+  changed="$(git -c core.quotepath=false diff --name-only "$before" "$after")"
+  # 依賴有變就重裝（lockfile 為準）；前台原始碼有變就重新建置 —— 伺服器供應的是 app/dist，不建就是舊畫面。
+  # 前台建置不需要重開伺服器（static.js 直接讀 dist），開著的分頁會收到「請重新整理」。
+  if echo "$changed" | grep -q '^package-lock.json$'; then
+    say "package-lock.json 有變動 → npm ci"
+    npm ci --no-audit --no-fund >> "$LOG" 2>&1 || say "  ⚠️ npm ci 失敗，前台可能建不起來"
+  fi
+  if echo "$changed" | grep -qE '^(app/|package-lock\.json$)'; then
+    say "前台有變動 → npm run build:web"
+    npm run build:web >> "$LOG" 2>&1 || say "  ⚠️ 前台建置失敗，網頁仍是上一版"
+  fi
+  if echo "$changed" | grep -q '^storage/shared-assets/'; then
     say "storage/shared-assets/ 有變動 → 重新複製各版型素材"
     # 版型清單讀 registry，新增版型不用改這裡。
     for t in $(node -e "console.log(require('$APP_ROOT/video/templates/registry').IDS.join(' '))"); do

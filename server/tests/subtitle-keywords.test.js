@@ -13,7 +13,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { fixture, write, loadServer, repository, workFile, webSource } = require('./isolated-server');
+const { fixture, write, loadServer, repository, workFile, webFile } = require('./isolated-server');
 const { applicationPath } = require('../../shared/paths');
 
 const EMPHASIS_FILE = 'src/emphasis.generated.json';
@@ -215,28 +215,17 @@ test('確認出片沒帶 emphasis 欄位時，不要把準備階段標好的抹�
 });
 
 test('前台：準備中、待確認、排隊等出片三個階段都要有重點詞區塊，而且都排在送出鍵上面', () => {
-  const app = webSource();
-
-  assert.match(app, /function emphasisBox\(job, covered\)/, '三個階段要共用同一個函式，不要各寫一份');
-
-  // ① 標注頁（draft／queued／preparing／detached）
-  const annot = app.slice(app.indexOf('function annotCard(job)'), app.indexOf('function autoGoRow'));
-  assert.match(annot, /emphasisBox\(job/, '標注頁少了重點詞區塊 —— 那才是大家實際待的地方');
-  assert.ok(annot.indexOf('emphasisBox(job') < annot.indexOf('autoGoRow(job)'),
-    '要排在「標好了，直接出片」上面，不然按下去就進佇列了，等於看不到');
-
-  // ② 配圖計畫頁：一定要在「確認，開始出片」之前。
-  //    ⚠️ planCard 開頭還有一個 early return（版型不支援線上調整）也帶著同名按鈕，
-  //       要比的是**最後**那一顆 —— 用 indexOf 會比到 early return 那個，永遠是綠的。
-  const plan = app.slice(app.indexOf('function planCard(job)'), app.indexOf('function emphasisBox'));
-  assert.ok(plan.indexOf('emphasisBox(job') < plan.lastIndexOf("'確認，開始出片'"),
-    '重點詞排在確認鍵下面的話，人滑到按鈕就以為到底了（2026-09-17 實際發生）');
-
-  // ③ 排隊等出片：還沒 render，仍然改得動
-  const approved = app.slice(app.indexOf("if (job.status === 'approved')"), app.indexOf("if (job.status === 'review'"));
-  assert.match(approved, /emphasisBox\(job/, '按完確認就換成這張卡片，這裡沒有的話一樣補標不了');
-
-  // 改了就存，不再只靠 approve 那一下夾帶（準備中與排隊階段根本沒有那顆按鈕）
-  assert.match(app, /async function saveEmph\(\)/);
-  assert.match(app, /\/emphasis`, \{\s*method: 'PUT'/);
+  const annot = webFile('components/panels/AnnotatePanel.vue');
+  const plan = webFile('components/panels/PlanPanel.vue');
+  // 三個階段共用同一個 EmphasisBox.vue，不要各寫一份
+  assert.match(annot, /import EmphasisBox from '\.\.\/shared\/EmphasisBox\.vue'/);
+  assert.match(plan, /import EmphasisBox from '\.\.\/shared\/EmphasisBox\.vue'/);
+  // ① 標注頁：要排在「標好了，直接出片」上面，不然按下去就進佇列了，等於看不到
+  assert.ok(annot.indexOf('<EmphasisBox') > 0 && annot.indexOf('<EmphasisBox') < annot.indexOf('@click="toggleAuto"'), '標注頁的重點詞要在直接出片鈕上面');
+  // ② 待確認（配圖計畫）：要排在「確認，開始出片」上面；按鈕永遠是這張卡片的最後一個東西
+  const review = plan.slice(plan.lastIndexOf('<div v-else class="card">'));
+  assert.ok(review.indexOf('<EmphasisBox') > 0 && review.indexOf('<EmphasisBox') < review.indexOf('approve(Object.values(edits))'), '計畫頁的重點詞要在確認鈕上面');
+  // ③ 排隊等出片：還沒真的 render，重點詞仍然進得了這支成品
+  const approved = plan.slice(plan.indexOf("stage === 'approved'"), plan.indexOf("stage === 'after'"));
+  assert.match(approved, /<EmphasisBox/, '排隊等出片階段少了重點詞區塊');
 });
