@@ -23,7 +23,7 @@ function fixture(t, scripts) {
   fs.mkdirSync(path.join(app, 'public'), { recursive: true });
   fs.mkdirSync(path.join(app, 'src', 'Focusstock'), { recursive: true });
   fs.mkdirSync(path.join(root, 'shared'), { recursive: true });
-  for (const name of ['paths.js', 'job-store.js']) fs.copyFileSync(path.join(repository, 'shared', name), path.join(root, 'shared', name));
+  for (const name of ['paths.js', 'job-store.js', 'mock-mode.js']) fs.copyFileSync(path.join(repository, 'shared', name), path.join(root, 'shared', name));
   fs.symlinkSync(path.join(repository, 'node_modules'), path.join(root, 'node_modules'), 'junction');
   const pipe = path.join(root, 'video', 'pipeline');
   // 產線腳本會讀版型設定表，整個 video/templates 一起放進合成副本。

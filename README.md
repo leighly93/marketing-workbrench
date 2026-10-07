@@ -79,12 +79,18 @@ marketing-workbench/
 │   ├── deploy/                  ← macOS 自動啟動、自動更新
 │   └── tests/
 ├── video/                       ← 出片
-│   ├── run.js                   ← 出片主流程
-│   ├── pipeline/                ← OCR、字幕、配圖、動態腳本
+│   ├── run.js                   ← 出片主流程（只做步驟編排）
+│   ├── providers/               ← HeyGen、MiniMax（含模擬版）
+│   ├── steps/                   ← 講者影片、截圖分析、字幕重轉、動態
+│   ├── media/                   ← ffmpeg 加速、模擬用占位影音
+│   ├── templates/               ← 版型設定表與解析／素材／渲染
+│   ├── subtitles/               ← 字幕轉錄與校正
+│   ├── shots/                   ← OCR 與配圖判定
+│   ├── pipeline/                ← 其餘產線工具
 │   ├── remotion/                ← Remotion 模板（src/）與執行素材（public/）
 │   └── tests/
-├── shared/                      ← 三塊共用的路徑與工作位置解析
-├── tools/                       ← init、doctor、verify、字幕引擎安裝、實驗工具
+├── shared/                      ← 三塊共用的路徑、工作位置解析、模擬模式開關
+├── tools/                       ← init、doctor、verify、e2e、字幕引擎安裝、實驗工具
 ├── storage/
 │   ├── jobs/                    ← 每筆工作（本機）
 │   │   └── 日期_影片名稱_完整jobID/

@@ -24,8 +24,8 @@ require('dotenv').config({ path: path.join(WORKSPACE_ROOT, '.env'), quiet: true 
 const { parseRunOptions } = require('./run-options');
 const { planPath } = require('./templates/registry');
 const { cleanStaleStaging, backupJob } = require('./pipeline/public-utils');
-const { createHeyGenClient } = require('./providers/heygen');
-const { createMiniMaxClient } = require('./providers/minimax');
+const { createProviders, missingCredentials } = require('./providers');
+const { isMockMode } = require('../shared/mock-mode');
 const { createSpeedUp } = require('./media/speed');
 const { transcribeWithRetry } = require('./steps/transcribe');
 const { startImageAnalysis } = require('./steps/image-analysis');
@@ -45,10 +45,26 @@ function log(msg) {
   console.log(`\n[${new Date().toLocaleTimeString()}] ${msg}`);
 }
 
+// Windows（只用於開發）：工作台把 append 模式開的 log 檔直接交給 run.js 當 stdout，
+// 而 MSYS bash（npm run transcribe）寫不進這種檔案控制代碼（echo: write error: Bad file descriptor）。
+// 所以 Windows 上先接住子程序輸出再轉印；macOS 照舊直接繼承，長步驟能即時看到進度。
+const CAPTURE_CHILD_OUTPUT = process.platform === 'win32';
+
 /** @param {string} cmd */
 function run(cmd) {
   log(`執行：${cmd}`);
-  execSync(cmd, { cwd: PROJECT_DIR, stdio: 'inherit' });
+  if (!CAPTURE_CHILD_OUTPUT) {
+    execSync(cmd, { cwd: PROJECT_DIR, stdio: 'inherit' });
+    return;
+  }
+  try {
+    process.stdout.write(execSync(cmd, { cwd: PROJECT_DIR, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1024 * 1024 * 64 }));
+  } catch (e) {
+    const err = /** @type {{ stdout?: Buffer, stderr?: Buffer }} */ (e);
+    if (err.stdout) process.stdout.write(err.stdout);
+    if (err.stderr) process.stderr.write(err.stderr);
+    throw e;
+  }
 }
 
 /**
@@ -90,12 +106,9 @@ function acquireLock() {
  * @param {ReturnType<typeof parseRunOptions>} opts
  */
 function checkGenerateConfig(opts) {
-  if (!process.env.HEYGEN_API_KEY) throw new RunError('缺少 HEYGEN_API_KEY（請填到 .env）');
   const { useMinimax } = planVoice(opts.tpl, { heygenVoice: opts.heygenVoice });
-  if (useMinimax && (!process.env.MINIMAX_API_KEY || !process.env.MINIMAX_GROUP_ID)) {
-    throw new RunError('缺少 MINIMAX_API_KEY 或 MINIMAX_GROUP_ID（請填到 .env）\n'
-      + '   固定主播預設用 MiniMax 配音；不想加 key 的話，指令加 --heygen-voice 改用 HeyGen 內建語音。');
-  }
+  const missing = missingCredentials({ useMinimax });
+  if (missing) throw new RunError(missing);
   return { useMinimax };
 }
 
@@ -121,6 +134,7 @@ async function main(argv) {
   let opts;
   try { opts = parseRunOptions(argv); } catch (e) { throw new RunError(/** @type {Error} */ (e).message); }
   acquireLock();
+  if (isMockMode()) log('🧪 模擬模式（WORKBENCH_MOCK=1）：HeyGen／MiniMax／字幕轉錄／OCR／動態都用本機假資料，成品不能發布');
 
   if (opts.renderOnly) {
     log('▶️  --render-only：沿用現有 public/ 與配圖計畫，直接 render');
@@ -152,10 +166,7 @@ async function main(argv) {
       heygenPath: HEYGEN_PATH,
       minimaxAudioPath: path.join(PUBLIC_DIR, 'minimax.mp3'),
       heygenVoice: opts.heygenVoice,
-      heygen: createHeyGenClient({ apiKey: /** @type {string} */ (process.env.HEYGEN_API_KEY), aspectRatio: opts.tpl.anchor.aspectRatio, engine: opts.engine, log }),
-      minimax: generate.useMinimax
-        ? createMiniMaxClient({ apiKey: /** @type {string} */ (process.env.MINIMAX_API_KEY), groupId: /** @type {string} */ (process.env.MINIMAX_GROUP_ID), emotion: opts.emotion, log })
-        : undefined,
+      ...createProviders({ useMinimax: generate.useMinimax, aspectRatio: opts.tpl.anchor.aspectRatio, engine: opts.engine, emotion: opts.emotion, log }),
       log,
     });
   }

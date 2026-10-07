@@ -42,6 +42,7 @@
   .pill{font-size:12.5px;padding:4px 11px;border-radius:999px;background:var(--soft);color:var(--dim)}
   .pill.run{background:#fff4e0;color:var(--warn)}
   .pill.bad{background:#fdecec;color:var(--bad)}
+  .pill.mock{background:#6b21a8;color:#fff;font-weight:600}
   main{max-width:1000px;margin:0 auto;padding:26px 22px 90px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px;margin-bottom:16px}
   h2{font-size:15.5px;margin:0 0 16px;font-weight:650}

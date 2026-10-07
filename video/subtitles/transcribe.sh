@@ -90,7 +90,7 @@ else
   ffmpeg -y -i "$INPUT" -af "adelay=${PAD_MS}|${PAD_MS}" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_AUDIO" -loglevel error
 fi
 
-echo "▶ 3/4 跑 whisper.cpp 轉字幕（中文，Base Q5_1，CPU／4 執行緒）..."
+echo "▶ 3/4 跑字幕 Adapter 轉字幕（預設 whisper.cpp Base Q5_1；WORKBENCH_MOCK=1 時照稿件模擬）..."
 node "$(dirname "$0")/transcription-engine.js" "$TMP_AUDIO" "$TMP_DIR" "--pad=$PAD_SEC"
 
 echo "▶ 4/4 整理輸出到 src/subtitles.json..."

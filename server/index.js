@@ -50,6 +50,7 @@ const PIPELINE_DIR = path.join(VIDEO_DIR, 'pipeline');
 const SHOTS_DIR = path.join(VIDEO_DIR, 'shots');
 const WORKSPACE_ROOT = workspaceRoot(ROOT);
 const { createJobStore, outputName } = require('../shared/job-store');
+const { isMockMode } = require('../shared/mock-mode');
 const STORE = createJobStore(WORKSPACE_ROOT, fs);
 const JOBS_DIR = STORE.base;
 const WEB_DIR = path.resolve(__dirname, '..', 'app');
@@ -2489,6 +2490,8 @@ const server = http.createServer(async (req, res) => {
         // 所以要讓它自己發現「我手上這份網頁過期了」→ 跳「請重新整理」（2026-08-21）。
         webBuiltAt: webChangedAt(),
         admin: isAdmin(req),
+        // 模擬模式（.env WORKBENCH_MOCK=1）：前台頁首掛警示，避免把假成品當真的發出去
+        mock: isMockMode(process.env),
         diskMB: Math.round(dirSize(JOBS_DIR) / 1048576),
         keep: { automatic: false },
       });
@@ -2667,6 +2670,8 @@ const server = http.createServer(async (req, res) => {
         emotion: normalizeEmotion(body.emotion),
         brand: body.brand ? String(body.brand) : null,
         autoApprove: !!body.autoApprove,
+        // 模擬模式建立的工作永遠帶著標記：之後關掉模擬模式，也認得出哪些成品是假的
+        ...(isMockMode(process.env) ? { mock: true } : {}),
       };
       // 共用詞庫在這裡就併進 script.txt —— 之後整條 pipeline 都不知道有這回事，
       // 而且這支工作的 script.txt 永遠留著「當時實際套了哪些規則」。

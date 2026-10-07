@@ -3,6 +3,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { engineName } = require('../../shared/mock-mode');
+const { createMockEngine } = require('./mock-transcription');
 
 // 所有字幕供應者都須輸出秒制 segments / words；校正與版型不依賴供應者。
 function validate(result) {
@@ -70,8 +72,20 @@ function shiftTimes(result, padSec) {
   return validate(result);
 }
 
-function createEngine(name = 'whisper-cpp', execute = execFileSync, config = cppConfig()) {
-  if (name !== 'whisper-cpp') throw new Error(`不支援的字幕引擎：${name}；可用：whisper-cpp`);
+const ENGINE_NAMES = ['whisper-cpp', 'mock'];
+
+/** 模擬轉錄讀的稿件：出片工作區的 public/script.txt。 */
+function mockConfig(root = path.resolve(__dirname, '..', '..')) {
+  return { scriptPath: path.join(root, 'video', 'remotion', 'public', 'script.txt') };
+}
+
+function createEngine(name = 'whisper-cpp', execute = execFileSync, config) {
+  if (!ENGINE_NAMES.includes(name)) throw new Error(`不支援的字幕引擎：${name}；可用：${ENGINE_NAMES.join('、')}`);
+  if (name === 'mock') return createMockEngine({ execute, ...(config || mockConfig()) });
+  return createCppEngine(execute, config || cppConfig());
+}
+
+function createCppEngine(execute, config) {
   return {
     ensure() {
       execute(config.binary, ['--help'], { stdio: 'ignore' });
@@ -105,7 +119,7 @@ function createEngine(name = 'whisper-cpp', execute = execFileSync, config = cpp
 if (require.main === module) {
   try {
     require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: true });
-    const engine = createEngine(process.env.TRANSCRIPTION_ENGINE || 'whisper-cpp');
+    const engine = createEngine(engineName('TRANSCRIPTION_ENGINE', 'whisper-cpp'));
     if (process.argv[2] === '--check') engine.ensure();
     else {
       const args = process.argv.slice(2);
@@ -116,4 +130,4 @@ if (require.main === module) {
     }
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
-module.exports = { createEngine, validate, normalizeCpp, cppConfig, shiftTimes };
+module.exports = { createEngine, validate, normalizeCpp, cppConfig, mockConfig, shiftTimes, ENGINE_NAMES };

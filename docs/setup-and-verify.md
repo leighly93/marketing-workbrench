@@ -20,6 +20,27 @@ npm run verify
 - `doctor` 回報開發必要條件、出片工具及選用整合是否齊全，不顯示憑證值，也不驗證金鑰有效性。
 - `verify` 執行 TypeScript、隔離測試、Remotion 打包及臨時 HTTP 檢查。HTTP 使用空白副本、隨機本機 port，結束後清除；不啟動正式網站、不渲染影片、不呼叫外部 API。
 
+## 模擬模式與端對端
+
+`.env` 設 `WORKBENCH_MOCK=1` 後，整個工作台不呼叫付費 API，也不需要 whisper.cpp 或 tesseract：
+
+| 階段 | 模擬方式 |
+| --- | --- |
+| MiniMax 配音 | ffmpeg 正弦波，長度依字數估（每秒 5 字） |
+| HeyGen 講者 | ffmpeg 單色畫面，聲音用配音檔（文字驅動則依字數估長） |
+| 字幕轉錄 | 把配音實際念的文字照字數平均攤在音檔長度上，之後照常跑字幕校正 |
+| OCR | 讀不到任何字，截圖當成未知頁面 |
+| 動態參數 | 有前台參數就用，否則用旁白開頭做一張固定 quote 卡 |
+
+ffmpeg、加速、備份、字幕校正、配圖計畫與 Remotion 渲染都是真的。工作台頁首顯示「🧪 模擬模式」，模擬模式建立的工作帶 `mock: true`，關掉模擬模式後仍認得出來。成品內容是假的，不能發布。
+
+```bash
+npm run e2e                     # 隔離工作區 + 模擬工作台：建立 → 上傳 → 生成 → 配圖計畫 → 確認 → 渲染 → 下載
+npm run e2e -- --template=dapan --keep
+```
+
+`e2e` 在暫存目錄複製程式（`tools/sandbox.js`），不碰正式工作、`video/remotion/public` 或 `.run.lock`。它會真的渲染，約數十秒到數分鐘，所以不在 `verify` 裡；`npm test` 只跑到配圖計畫（`video/tests/mock-pipeline.test.js`，需要 ffmpeg 與 bash）。模擬通過不代表外部 API、whisper 與 OCR 正常，正式驗收仍要在 macOS 上用真的供應者跑。
+
 初始化的空字幕及配圖結構只讓程式可以載入。第一支真實工作會產生實際資料；尚未有講者影片時，不能把 Remotion 預覽當成已完成的影片。`init` 不還原任何私人影片、詞庫或製作歷史。
 
 ## 本機設定

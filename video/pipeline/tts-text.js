@@ -94,4 +94,11 @@ function cleanScript(raw) {
   return cleaned;
 }
 
-module.exports = { parseVoiceReplacements, stripSpeechHyphens, digitsToCn, numFix, cleanScript };
+/** 實際送 TTS 的文字：清洗後套發音替換（配音念的就是這份；模擬轉錄也拿它當「聽到的內容」）。 */
+function ttsText(raw) {
+  let text = cleanScript(raw);
+  for (const rule of parseVoiceReplacements(raw)) text = text.split(rule.from).join(rule.to);
+  return text;
+}
+
+module.exports = { parseVoiceReplacements, stripSpeechHyphens, digitsToCn, numFix, cleanScript, ttsText };

@@ -34,7 +34,7 @@ function fixture(t, scripts) {
   const app = applicationPath(root);
   fs.mkdirSync(path.join(app, 'public'), { recursive: true });
   fs.mkdirSync(path.join(app, 'src'), { recursive: true });
-  for (const name of ['paths.js', 'job-store.js']) {
+  for (const name of ['paths.js', 'job-store.js', 'mock-mode.js']) {
     fs.mkdirSync(path.join(root, 'shared'), { recursive: true });
     fs.copyFileSync(path.join(repository, 'shared', name), path.join(root, 'shared', name));
   }

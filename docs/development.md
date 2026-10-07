@@ -8,9 +8,9 @@
 | --- | --- |
 | [app](../app/) | 工作台網頁前台（HTML／CSS／JavaScript），由 server 直接提供 |
 | [server](../server/) | 工作台 API（`index.js`、`start.js`）；`deploy/` 放 macOS 自動啟動、自動更新與內網名稱設定 |
-| [video](../video/) | 出片。`run.js` 只做步驟編排（參數在 `run-options.js`）；`providers/` 呼叫 HeyGen 與 MiniMax；`steps/` 是各出片步驟（講者影片、截圖分析、字幕重轉、動態）；`media/` 是 ffmpeg 處理；`templates/` 版型設定表與解析／素材／渲染；`subtitles/` 轉錄與字幕校正；`shots/` OCR 與配圖判定；`pipeline/` 其餘工具；`remotion/` 模板（`src/`）與執行素材（`public/`） |
-| [shared](../shared/) | 三塊共用的 `paths.js`（路徑解析）與 `job-store.js`（依完整 job ID 找工作資料夾） |
-| [tools](../tools/) | init、doctor、verify、release-check；`whisper/` 安裝字幕引擎；`experiments/` 放試聽、A/B 與 OCR 比較等實驗工具 |
+| [video](../video/) | 出片。`run.js` 只做步驟編排（參數在 `run-options.js`）；`providers/` 呼叫 HeyGen 與 MiniMax（`index.js` 工廠依模擬模式給正式或假 client）；`steps/` 是各出片步驟（講者影片、截圖分析、字幕重轉、動態）；`media/` 是 ffmpeg 處理；`templates/` 版型設定表與解析／素材／渲染；`subtitles/` 轉錄與字幕校正；`shots/` OCR 與配圖判定；`pipeline/` 其餘工具；`remotion/` 模板（`src/`）與執行素材（`public/`） |
+| [shared](../shared/) | 三塊共用的 `paths.js`（路徑解析）、`job-store.js`（依完整 job ID 找工作資料夾）與 `mock-mode.js`（模擬模式開關） |
+| [tools](../tools/) | init、doctor、verify、release-check、e2e（模擬端對端，`sandbox.js` 建隔離工作區）；`whisper/` 安裝字幕引擎；`experiments/` 放試聽、A/B 與 OCR 比較等實驗工具 |
 | [storage](../storage/) | 資料：`jobs/` 工作、`shared-assets/` 品牌素材（進 Git）、`data/` 詞庫與記憶、`tmp/` 產線暫存、`archive/` 封存 |
 | [docs](.) | 維護說明、[模板導覽](templates/README.md)與[第三方授權](licenses/README.md) |
 

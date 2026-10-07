@@ -543,6 +543,7 @@ async function poll() {
     // 誰在看，決定第二句講什麼。用 h.admin 不用全域 ADMIN —— poll() 有可能比 boot() 先跑完。
     $('#staleAdmin').hidden = !h.admin;
     $('#staleOther').hidden = !!h.admin;
+    $('#mockMode').hidden = !h.mock;
     // 這個分頁是什麼時候載入 index.html 的？之後檔案又被改過 → 畫面是舊的，要重新整理。
     // ⚠️ 這跟上面那條是**兩件不同的事**：伺服器重開了、網頁檔案也換了，但已經開著的
     //    分頁不會自己重載（輪詢只打 API，不會重抓 index.html）。使用者兩次都卡在這裡。
@@ -701,7 +702,7 @@ async function loadJobs() {
     tb.append(el('tr', { class: 'jobrow' },
       el('td', { onclick: () => { openJob = j.id; go('job'); } }, new Date(j.createdAt).toLocaleString('zh-TW', { hour12: false }).slice(5)),
       el('td', { onclick: () => { openJob = j.id; go('job'); } }, (TPLS[j.template] || {}).label || j.template),
-      el('td', { onclick: () => { openJob = j.id; go('job'); } }, (j.title || '—').replace(/\n/g, ' ')),
+      el('td', { onclick: () => { openJob = j.id; go('job'); } }, (j.mock ? '🧪 ' : '') + (j.title || '—').replace(/\n/g, ' ')),
       el('td', { onclick: () => { openJob = j.id; go('job'); } }, j.owner),
       el('td', { onclick: () => { openJob = j.id; go('job'); } }, el('span', { class: 'st ' + j.status }, st)),
       // 2026-08-21 之前建立的工作沒記過 IP，補不回來 → 顯示「—」
@@ -783,7 +784,8 @@ async function loadJob() {
       cancelBtn(job),
       el('button', { class: 'ghost', onclick: () => { openJob = null; go('list'); } }, '← 回列表')),
     el('div', { style: 'color:var(--dim);font-size:13px;margin-top:8px' },
-      `${job.owner}・${new Date(job.createdAt).toLocaleString('zh-TW', { hour12: false })}`),
+      `${job.owner}・${new Date(job.createdAt).toLocaleString('zh-TW', { hour12: false })}`
+      + (job.mock ? '・🧪 模擬模式產生（假配音、假講者，不能發布）' : '')),
     // 2026-08-18 使用者要求：出片中不用守在畫面前等 render log 跑完
     job.status === 'rendering'
       ? el('div', { class: 'note', style: 'margin-top:14px' },

@@ -73,6 +73,7 @@ function loadServer(root, options = {}) {
     '../video/templates/registry': localRequire('../video/templates/registry'),
     '../shared/paths': localRequire('../shared/paths'),
     '../shared/job-store': localRequire('../shared/job-store'),
+    '../shared/mock-mode': localRequire('../shared/mock-mode'),
   };
   // setImmediate 排進來的工作（見下面 context 那段）
   const immediates = [];

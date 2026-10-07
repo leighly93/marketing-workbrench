@@ -150,6 +150,8 @@ function 隔離環境(字幕文字) {
   fs.cpSync(path.join(repository, 'video/templates'), path.join(dir, '..', 'templates'), { recursive: true });
   for (const f of ['render-motion.js', 'motion-engine.js'])
     fs.copyFileSync(path.join(repository, 'video/pipeline', f), path.join(dir, '..', 'pipeline', f));
+  fs.mkdirSync(path.join(dir, '..', '..', 'shared'), { recursive: true });
+  fs.copyFileSync(path.join(repository, 'shared/mock-mode.js'), path.join(dir, '..', '..', 'shared', 'mock-mode.js'));
   const times = [...(字幕文字 || '')].map((_, i) => ({ start: +(i * 0.2).toFixed(2), end: +((i + 1) * 0.2).toFixed(2) }));
   fs.writeFileSync(path.join(dir, 'src/subtitles.json'),
     JSON.stringify({ _scriptText: 字幕文字 || '', _scriptCharTimes: times }));

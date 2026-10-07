@@ -28,6 +28,7 @@
  */
 
 const { execFileSync } = require('node:child_process');
+const { isMockMode } = require('../../shared/mock-mode');
 
 const MODELS = { 'claude-cli': 'claude -p（訂閱）' };
 
@@ -209,6 +210,17 @@ const ENGINES = {
     },
   },
 
+  // 模擬模式（WORKBENCH_MOCK=1）：不呼叫 claude，前台有貼參數就用，沒有就用旁白開頭做一張固定的 quote 卡。
+  mock: {
+    label: '模擬（固定卡片）',
+    plan({ text, manualSpec }) {
+      const manual = validate(manualSpec);
+      if (manual) return manual;
+      const head = String(text || '').replace(/[\s，。！？、,.!?]/g, '').slice(0, 9);
+      return head ? validate({ template: 'quote', kicker: '模擬動態', lines: [[{ t: head, c: 'hl' }]] }) : null;
+    },
+  },
+
   api: {
     label: 'Anthropic API（尚未實作）',
     plan() {
@@ -229,7 +241,7 @@ function createEngine(name) {
 
 /** 產線唯一入口。回傳 null＝這段不做動態，呼叫端必須能接受。 */
 function plan(input, env = process.env) {
-  return createEngine(env.MOTION_ENGINE).plan(input || {});
+  return createEngine(isMockMode(env) ? 'mock' : env.MOTION_ENGINE).plan(input || {});
 }
 
 module.exports = { plan, createEngine, validate, extractJson, buildPrompt, describeFailure, ENGINES, MODELS };

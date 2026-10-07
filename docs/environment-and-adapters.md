@@ -33,9 +33,13 @@ python3 tools/native-environment.py --check
 
 差異回傳非零，不自動降版。FFmpeg、OCR 語言資料、Swift／SDK、Remotion 瀏覽器與外部 API 仍需各自驗收；Node 一致不代表所有作業系統行為一致。原生完整乾淨機還原與正式成品回歸尚未驗收。私人資料另按 [工作與影片位置](job-and-video-locations.md) 還原。
 
+## 模擬引擎
+
+`WORKBENCH_MOCK=1`（[mock-mode.js](../shared/mock-mode.js)）讓每個 Adapter 改用 `mock` 引擎，蓋過 `OCR_ENGINE`、`TRANSCRIPTION_ENGINE`、`MOTION_ENGINE`；HeyGen／MiniMax 由 [providers/index.js](../video/providers/index.js) 換成同介面的假 client，占位影音在 [placeholder.js](../video/media/placeholder.js)。業務邏輯不判斷是否模擬，只跟工廠或 Adapter 要實作。用法與限制見[啟動與驗證](setup-and-verify.md#模擬模式與端對端)。
+
 ## OCR Adapter
 
-入口：[ocr-engine.js](../video/shots/ocr-engine.js)。`OCR_ENGINE=tesseract|vision`，預設維持 Tesseract。未知引擎直接報錯。
+入口：[ocr-engine.js](../video/shots/ocr-engine.js)。`OCR_ENGINE=tesseract|vision`，預設維持 Tesseract；模擬模式為 `mock`（不讀字）。未知引擎直接報錯。
 
 - `ensure()`：檢查工具；Vision 可能編譯 Swift，不能當作完全無副作用的環境檢查。
 - `ocrPage(image, options)`：回傳 `words`／`lines`；座標為左上角原點的像素，信心為 0–100。
@@ -46,7 +50,7 @@ python3 tools/native-environment.py --check
 
 ## 字幕 Adapter
 
-入口：[transcription-engine.js](../video/subtitles/transcription-engine.js)，執行 `whisper-cli`。固定 Base Q5_1、`--no-gpu`、`--threads 4`、`--processors 1`、`--language zh`，使用 `--output-json-full` 取得 token 時間。
+入口：[transcription-engine.js](../video/subtitles/transcription-engine.js)，執行 `whisper-cli`；模擬模式改用 [mock-transcription.js](../video/subtitles/mock-transcription.js)，輸出格式相同。固定 Base Q5_1、`--no-gpu`、`--threads 4`、`--processors 1`、`--language zh`，使用 `--output-json-full` 取得 token 時間。
 
 - `ensure()`：檢查 CLI 與模型存在，不下載。
 - `transcribe(audio, outputDir, { padSec })`：把 whisper.cpp 的毫秒 `transcription/tokens` 轉成既有秒制 `segments/words`，剔除引擎控制 token。`padSec` 是「這個音檔前面墊了幾秒靜音」，輸出時間戳整體減回去（負值夾成 0），寫進磁碟的也是減回之後的。

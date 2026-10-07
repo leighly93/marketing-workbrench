@@ -9,6 +9,7 @@
  * ── 開關（.env）─────────────────────────────────────────────────────
  *   OCR_ENGINE 沒設         → tesseract（＝2026-09-08 以前的行為，逐位元相同）
  *   OCR_ENGINE=vision       → Apple Vision（macOS 內建；第一次自動 swiftc 編譯 video/shots/ocr-vision.swift）
+ *   WORKBENCH_MOCK=1        → mock（讀不到任何字；模擬模式用，蓋過 OCR_ENGINE）
  *
  *   評估報告：archive/research/OCR引擎評估-Vision對照Tesseract.md（讀字 2.1×、IoU 0.210→0.371）
  *   ⚠️ 切到 vision 前記憶庫（data/shot-memory.json）要用新引擎重學 —— 見 docs/ocr-and-shots.md。
@@ -38,11 +39,13 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const { workspaceRoot } = require('../../shared/paths');
+const { engineName } = require('../../shared/mock-mode');
 const ROOT = path.resolve(__dirname, '..', 'remotion');
 // 單獨執行分析腳本時也要讀得到 .env（run.js 已載過的話重複載無害、不覆蓋既有值）
 try { require('dotenv').config({ path: path.join(workspaceRoot(ROOT), '.env'), quiet: true }); } catch (_) {}
 
-const ENGINE = (process.env.OCR_ENGINE || 'tesseract').toLowerCase();
+// 模擬模式（WORKBENCH_MOCK=1）一律走 mock 引擎，蓋過 OCR_ENGINE。
+const ENGINE = engineName('OCR_ENGINE', 'tesseract').toLowerCase();
 
 // ─────────────────────────────────────────────────────────────────────
 // 共用：ffmpeg 裁切＋放大（兩個引擎的 ocrCrop 都用；run.js 本來就依賴 ffmpeg）
@@ -260,9 +263,21 @@ const vision = {
 };
 
 // ─────────────────────────────────────────────────────────────────────
+// 引擎三：mock（模擬模式）—— 什麼字都讀不到。上層把每張圖當成認不出的頁面，
+// 走「沒有版面資訊」的退路（跟 tesseract 讀不出字時同一條），不需要任何原生工具。
+// ─────────────────────────────────────────────────────────────────────
+const mock = {
+  name: 'mock',
+  ensure() {},
+  ocrDigits(_imagePath) { return []; },
+  ocrPage(_imagePath, _opts = {}) { return { words: [], lines: [] }; },
+  ocrCrop(_imagePath, _box, _scale, _extraArgs = []) { return ''; },
+};
+
+// ─────────────────────────────────────────────────────────────────────
 // 引擎表。VLM 之後加在這裡（見檔頭「VLM 插槽」）。
 // ─────────────────────────────────────────────────────────────────────
-const ENGINES = { tesseract, vision };
+const ENGINES = { tesseract, vision, mock };
 
 const active = ENGINES[ENGINE];
 if (!active) {

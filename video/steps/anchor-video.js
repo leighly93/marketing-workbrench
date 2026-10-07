@@ -6,7 +6,7 @@
  *
  * 計費差別：文字驅動是 HeyGen 連 TTS 一起算；音訊驅動是 MiniMax 按字符＋HeyGen 按音檔秒數，兩邊都扣。
  */
-const { parseVoiceReplacements, cleanScript } = require('../pipeline/tts-text');
+const { ttsText } = require('../pipeline/tts-text');
 
 /** 設定缺漏：在呼叫任何付費 API 之前擋下。 */
 class AnchorConfigError extends Error {}
@@ -14,11 +14,10 @@ class AnchorConfigError extends Error {}
 /**
  * 送 TTS 的文字：清洗（去標記、括號、減號，年份轉中文）後套發音替換。字幕不走這條路。
  * @param {string} rawScript script.txt 全文
+ * @returns {string}
  */
 function ttsTextOf(rawScript) {
-  let text = cleanScript(rawScript);
-  for (const rule of parseVoiceReplacements(rawScript)) text = text.split(rule.from).join(rule.to);
-  return text;
+  return ttsText(rawScript);
 }
 
 /**
