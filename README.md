@@ -74,7 +74,7 @@ flowchart LR
 
 ```text
 marketing-workbench/
-├── app/                         ← 工作台網頁前台
+├── app/                         ← 工作台網頁前台（app.js 入口、js/ 各功能模組）
 ├── server/                      ← 工作台 API（index.js 開 port、app.js 組裝）
 │   ├── jobs/ plan/ corrections/ voice/ messages/ uploads/
 │   ├── http/ routes/            ← 驗證、回應、路由器與各組 API

@@ -13,7 +13,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { fixture, write, loadServer, repository, workFile } = require('./isolated-server');
+const { fixture, write, loadServer, repository, workFile, webSource } = require('./isolated-server');
 const { applicationPath } = require('../../shared/paths');
 
 const EMPHASIS_FILE = 'src/emphasis.generated.json';
@@ -215,8 +215,7 @@ test('確認出片沒帶 emphasis 欄位時，不要把準備階段標好的抹�
 });
 
 test('前台：準備中、待確認、排隊等出片三個階段都要有重點詞區塊，而且都排在送出鍵上面', () => {
-  const app = fs.readFileSync(
-    path.join(__dirname, '..', '..', 'app', 'app.js'), 'utf8');
+  const app = webSource();
 
   assert.match(app, /function emphasisBox\(job, covered\)/, '三個階段要共用同一個函式，不要各寫一份');
 

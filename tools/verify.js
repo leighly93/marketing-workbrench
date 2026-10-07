@@ -38,7 +38,7 @@ async function smoke() {
       child.once('error', (error) => { clearTimeout(timer); reject(error); });
       child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`隔離工作台提前結束：${code} ${errors}`)); });
     });
-    for (const endpoint of ['/', '/app.js', '/styles.css', '/api/health', '/api/jobs']) {
+    for (const endpoint of ['/', '/app.js', '/js/shell.js', '/styles.css', '/api/health', '/api/jobs']) {
       const response = await fetch(`http://127.0.0.1:${port}${endpoint}`, { signal: AbortSignal.timeout(5000) });
       if (!response.ok) throw new Error(`隔離 HTTP 檢查失敗：${endpoint}`);
       if (endpoint === '/api/jobs' && (await response.json()).jobs.length !== 0) throw new Error('隔離工作台不應含正式工作');

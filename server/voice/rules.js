@@ -16,7 +16,7 @@ module.exports = function create(ctx) {
   // 收到白名單以外的值一律當預設 —— 不回 400，因為這欄位不是同事填的，是介面送的，
   // 擋下整支工作不如用預設把片出完（使用者定案：「server 收到非 happy/fluent 一律當 fluent」）。
   // 第一個是預設值：舊工作的 job.json 沒有這個欄位，重跑時也會拿到它。
-  // ⚠️ 值要跟 app/app.js 的 EMOTIONS 一致，由 server/tests/voice-tone.test.js 綁住。
+  // ⚠️ 值要跟 app/js/state.js 的 EMOTIONS 一致，由 server/tests/voice-tone.test.js 綁住。
   const EMOTIONS = ['fluent', 'happy'];
   const normalizeEmotion = (v) => (EMOTIONS.includes(v) ? v : EMOTIONS[0]);
 

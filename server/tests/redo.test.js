@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { fixture, write, loadServer, workFile } = require('./isolated-server');
+const { fixture, write, loadServer, workFile, webSource } = require('./isolated-server');
 const { folderName } = require('../../shared/job-store');
 
 /**
@@ -226,7 +226,7 @@ test('標注頁在準備中要讀得到圖與句子，不然確認關卡是空�
 });
 
 test('前台：draft 狀態要開標注頁，重新出片按鈕只給跑完或失敗的工作', () => {
-  const app = fs.readFileSync(path.join(__dirname, '..', '..', 'app', 'app.js'), 'utf8');
+  const app = webSource();
   // 標注卡要在 draft 也出現，不然複製過來的工作看不到框、也就無從確認
   const m = app.match(/if \(\[([^\]]+)\]\.includes\(job\.status\)\) parts\.push\(annotCard\(job\)\)/);
   assert.ok(m, 'app.js 找不到標注卡的狀態判斷');

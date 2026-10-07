@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { fixture, write, loadServer, workFile } = require('./isolated-server');
+const { fixture, write, loadServer, workFile, webSource } = require('./isolated-server');
 const { createJobStore } = require('../../shared/job-store');
 const { applicationPath, cliPath } = require('../../shared/paths');
 
@@ -48,8 +48,7 @@ test('頁型查得到：準備中讀工作區、跑完讀自己的快照，不�
 });
 
 test('前台：截圖總覽兩頁共用同一份實作，點一下的行為各自不同', () => {
-  const app = fs.readFileSync(
-    path.join(__dirname, '..', '..', 'app', 'app.js'), 'utf8');
+  const app = webSource();
 
   assert.match(app, /function shotFigures\(job, images, count, pages, onPick\)/,
     '兩頁要共用同一個函式，各寫一份遲早會漂走');
@@ -57,7 +56,7 @@ test('前台：截圖總覽兩頁共用同一份實作，點一下的行為各�
   // 配圖計畫頁：點一下＝加一段計畫
   assert.match(app, /shotFigures\(job, pv\.images, count, pv\.pages, addSeg\)/);
   // 手動標記頁：點一下＝加一個標注，次數數的是 ANNOTS
-  assert.match(app, /shotFigures\(job, imgs, count, ANNOT_PAGES, \(n\) => addAnnot\(job, n\)\)/);
+  assert.match(app, /shotFigures\(job, imgs, count, S\.ANNOT_PAGES, \(n\) => addAnnot\(job, n\)\)/);
   const annot = app.slice(app.indexOf('function annotCard(job)'), app.indexOf('function autoGoRow'));
   assert.match(annot, /id: 'annotWall'/, '手動標記頁要有截圖總覽的容器');
 
@@ -116,8 +115,7 @@ test('已經結束的工作不給「取消」——那是要刪掉，走列表�
 });
 
 test('前台：取消鈕在頁首、一律顯示，只有已經結束的不畫', () => {
-  const app = fs.readFileSync(
-    path.join(__dirname, '..', '..', 'app', 'app.js'), 'utf8');
+  const app = webSource();
 
   const m = app.match(/function cancelBtn\(job\) \{\n\s*if \(\[([^\]]+)\]\.includes\(job\.status\)\) return '';/);
   assert.ok(m, '找不到 cancelBtn 的狀態判斷');

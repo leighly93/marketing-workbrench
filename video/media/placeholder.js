@@ -65,7 +65,8 @@ function createPlaceholderMedia({
     const sound = audio
       ? ['-i', audio]
       : ['-f', 'lavfi', '-i', `sine=frequency=440:sample_rate=44100:duration=${seconds}`];
-    const length = audio ? ['-shortest'] : ['-t', String(seconds)];
+    // 有音檔就量它的長度、明確指定 -t：-shortest 遇到編碼器緩衝會多出一兩秒（實測 2.5 秒音檔出 3.8 秒影片）
+    const length = ['-t', String(audio ? durationOf(audio) : seconds)];
     ffmpeg(['-f', 'lavfi', '-i', `color=c=0x1f3a5f:s=${width}x${height}:r=30`, ...sound, ...length,
       '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-ar', '44100', file]);
   }

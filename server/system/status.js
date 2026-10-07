@@ -23,10 +23,23 @@ module.exports = function create(ctx) {
   // 改完檔案忘了重開伺服器 → 網頁看起來「沒有變」，因為版型設定是這個程序回答的。
   // 這個坑第一次就踩到了（2026-08-13），所以讓網頁自己判斷、自己提醒。
   const STARTED_AT = Date.now();
-  const WEB_FILES = ['index.html', 'styles.css', 'app.js'].map((name) => path.join(WEB_DIR, name));
+  /** 前台的檔案（index.html、styles.css、app.js 與 js/ 底下的模組，不含測試）。 */
+  function webFiles() {
+    const out = [];
+    const walk = (dir) => {
+      let entries = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+      for (const e of entries) {
+        if (e.isDirectory()) walk(path.join(dir, e.name));
+        else if (/\.(html|css|js)$/.test(e.name) && !e.name.endsWith('.test.js')) out.push(path.join(dir, e.name));
+      }
+    };
+    walk(WEB_DIR);
+    return out;
+  }
   function webChangedAt() {
     let t = 0;
-    for (const file of WEB_FILES) {
+    for (const file of webFiles()) {
       try { t = Math.max(t, fs.statSync(file).mtimeMs); } catch (_) {}
     }
     return t || null;
@@ -49,7 +62,7 @@ module.exports = function create(ctx) {
 
   function codeChangedAt() {
     let t = 0;
-    for (const f of [...serverFiles(), ...WEB_FILES, path.join(VIDEO_DIR, 'run.js')]) {
+    for (const f of [...serverFiles(), ...webFiles(), path.join(VIDEO_DIR, 'run.js')]) {
       try { t = Math.max(t, fs.statSync(f).mtimeMs); } catch (_) {}
     }
     return t;

@@ -31,13 +31,15 @@ describe('createPlaceholderMedia（假 exec）', () => {
   }
 
   test('有音檔就用它並以音檔長度為準；沒有就用指定秒數的正弦波', () => {
-    const { calls, exec } = recorder();
+    const { calls: all, exec } = recorder('3.5\n');
     const media = createPlaceholderMedia({ exec });
     media.video('/o/a.mp4', { audio: '/i/a.mp3', aspectRatio: '16:9' });
     media.video('/o/b.mp4', { seconds: 7 });
+    expect(all.filter((c) => c[0] === 'ffprobe').map((c) => c[1].at(-1))).toEqual(['/i/a.mp3']);
+    const calls = all.filter((c) => c[0] === 'ffmpeg');
     const [a, b] = calls.map((c) => c[1].join(' '));
     expect(a).toMatch(/s=1280x720/);
-    expect(a).toMatch(/-i \/i\/a\.mp3 -shortest/);
+    expect(a).toMatch(/-i \/i\/a\.mp3 -t 3\.5/);
     expect(b).toMatch(/s=720x1280/);
     expect(b).toMatch(/sine=.*duration=7 -t 7/);
     expect(calls.every((c) => c[0] === 'ffmpeg' && c[1].at(-1).endsWith('.mp4'))).toBe(true);

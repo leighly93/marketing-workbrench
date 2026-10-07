@@ -116,4 +116,11 @@ function serverSource() {
   return out.join('\n');
 }
 
-module.exports = { repository, fixture, write, confinedFs, loadServer, workFile, serverSource };
+// 前台原始碼（入口 app.js ＋ js/ 底下的模組，不含測試）：拆成多個模組後，原始碼層級的檢查要看全部。
+function webSource() {
+  const dir = path.join(repository, 'app');
+  const files = ['app.js', ...fs.readdirSync(path.join(dir, 'js')).filter((f) => f.endsWith('.js') && !f.endsWith('.test.js')).sort().map((f) => path.join('js', f))];
+  return files.map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
+}
+
+module.exports = { repository, fixture, write, confinedFs, loadServer, workFile, serverSource, webSource };
