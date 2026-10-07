@@ -252,8 +252,9 @@ test('run.js：動態排在字幕與配圖之後、停在出片前之前', () =>
   // run.js 只做編排，這條順序就是它的契約。
   const src = fs.readFileSync(path.join(repository, 'video/run.js'), 'utf-8');
   const at = (s) => src.indexOf(s, src.indexOf('async function main('));
-  assert.ok(at('transcribeWithRetry(') < at('prepareShots(opts)'));
-  assert.ok(at('prepareShots(opts)') < at('renderMotionClips('), '動態必須排在轉字幕與配圖之後');
+  // prepareShots(opts, say)：第二個參數是步驟記錄用的 log，只比對前綴。
+  assert.ok(at('transcribeWithRetry(') < at('prepareShots(opts'));
+  assert.ok(at('prepareShots(opts') < at('renderMotionClips('), '動態必須排在轉字幕與配圖之後');
   assert.ok(at('renderMotionClips(') < at('if (opts.stopBeforeRender)'), '動態必須在「停在出片前」之前跑完');
 });
 

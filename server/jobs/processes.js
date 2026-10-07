@@ -7,7 +7,7 @@
  */
 
 module.exports = function create(ctx) {
-  const { fs, path, process, config: { ROOT, VIDEO_DIR, PIPELINE_DIR }, jobPath, ensureDir, appendLog, saveJob } = ctx;
+  const { fs, path, process, config: { ROOT, VIDEO_DIR, PIPELINE_DIR }, jobPath, ensureDir, appendLog, saveJob, stepsFile } = ctx;
     const spawn = (...a) => ctx.childProcess.spawn(...a);
     const execFileSync = (...a) => ctx.childProcess.execFileSync(...a);
 
@@ -63,7 +63,8 @@ module.exports = function create(ctx) {
       try {
         child = spawn('node', [path.join(VIDEO_DIR, 'run.js'), ...args], {
           cwd: ROOT,
-          env: { ...process.env, FORCE_COLOR: '0', WORKBENCH_JOB_ID: job.id },
+          // WORKBENCH_STEPS_FILE：run.js 把每一步的結果寫進這支工作的 _meta/steps.json（跟伺服器端共用一個檔）。
+          env: { ...process.env, FORCE_COLOR: '0', WORKBENCH_JOB_ID: job.id, WORKBENCH_STEPS_FILE: stepsFile(job.id) },
           detached: true,
           stdio: ['ignore', fd, fd],
         });

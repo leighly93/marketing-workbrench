@@ -14,6 +14,7 @@ const crypto = require('node:crypto');
 const childProcess = require('node:child_process');
 const { outputPath, dataPath, resolveDataReference } = require('../shared/paths');
 const { createJobStore, outputName } = require('../shared/job-store');
+const { createStepsWriter } = require('../shared/steps');
 const { isMockMode } = require('../shared/mock-mode');
 const { serverTemplates, TEMPLATE_ASSET_PATTERN } = require('../video/templates/registry');
 // 「你教過的東西」記憶庫。memKeyOf／mergeRuns 一定要跟 auto-shot.js 共用同一份實作 ——
@@ -43,6 +44,9 @@ const MODULES = [
   './uploads/images',
   './jobs/production',
   './jobs/queue',
+  './system/local',
+  './system/dashboard',
+  './system/quotas',
   './system/status',
   './http/auth',
   './http/respond',
@@ -98,7 +102,7 @@ function createWorkbench({
     config, store, JOBS_DIR: store.base,
     // 版型設定在 video/templates/registry.js（顯示順序、標題規則、輸出檔名都在那裡）。
     TEMPLATES: serverTemplates(), TEMPLATE_ASSET_PATTERN,
-    outputName, outputPath, dataPath, resolveDataReference, isMockMode,
+    outputName, outputPath, dataPath, resolveDataReference, isMockMode, createStepsWriter,
     SHOT_MEMORY, resolveManualOverlaps, imageSize, pickImageSize,
   };
   for (const name of MODULES) Object.assign(ctx, require(name)(strict(ctx, name)));

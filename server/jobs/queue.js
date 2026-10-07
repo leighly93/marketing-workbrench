@@ -7,7 +7,7 @@
  */
 
 module.exports = function create(ctx) {
-  const { fs, timers, allJobs, LOCK, appendLog, saveJob, doPrepare, doRender, backupJobArtifacts, pruneOldJobs } = ctx;
+  const { fs, timers, allJobs, LOCK, appendLog, saveJob, nowISO, stepsOf, doPrepare, doRender, backupJobArtifacts, pruneOldJobs } = ctx;
 
   // ── 佇列 ──────────────────────────────────
   let busy = false;
@@ -58,6 +58,9 @@ module.exports = function create(ctx) {
         if (job.status === 'cancelled') return;
         job.status = 'failed';
         job.error = e.message;
+        job.failedAt = nowISO();   // 儀表板「要人處理」的清單靠這個排序
+        // 還在跑的步驟（伺服器端的或 run.js 來不及結掉的）一併標成失敗，前台才看得出斷在哪一步。
+        stepsOf(job).failRunning(e.message);
         appendLog(job, '\n❌ ' + e.message + '\n');
         saveJob(job);
       })

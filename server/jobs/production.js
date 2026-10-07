@@ -10,8 +10,29 @@ module.exports = function create(ctx) {
   const { fs, path, config: { ROOT, WORKSPACE_ROOT, SHOTS_DIR }, TEMPLATES, outputPath, jobPath, jobDir, ensureDir, rmrf, nowISO,
     appendLog, saveJob, runPipeline, runMotion, clearWorkspaceInputs, stageJobInputs, snapshotWorkspace, restoreWorkspace,
     collectMotionAssets, buildPlanView, applyPlanEdits, recordCorrections, learnFromEdits, writeEmphasis, readJobEmphasis,
-    readJobMotion, normalizeEmotion, archivePath, finalizeOutput, MOTION_FILE } = ctx;
+    readJobMotion, normalizeEmotion, archivePath, finalizeOutput, MOTION_FILE, stepsOf } = ctx;
     const execFileSync = (...a) => ctx.childProcess.execFileSync(...a);
+
+  /**
+   * 伺服器自己做的那幾步也記進 _meta/steps.json（run.js 跑的那些由它自己記）。
+   * 丟出的錯只記成 failed 就原樣往上丟 —— 失敗的處置（標 failed、寫 log）仍然在 queue.js 的 tick。
+   * 回傳值可以是 promise（runMotion、收尾）。
+   */
+  function traced(steps, id, label, fn) {
+    steps.start(id, { label });
+    const fail = (e) => steps.end(id, { ok: false, error: e && e.message ? e.message : String(e) });
+    try {
+      const out = fn();
+      if (out && typeof out.then === 'function') {
+        return out.then((v) => { steps.end(id, { ok: true }); return v; }, (e) => { fail(e); throw e; });
+      }
+      steps.end(id, { ok: true });
+      return out;
+    } catch (e) {
+      fail(e);
+      throw e;
+    }
+  }
 
   /**
    * 「對照組」計畫：假裝沒有人工標注，讓自動判定自己排一次。
@@ -26,13 +47,15 @@ module.exports = function create(ctx) {
    *   - 不呼叫 HeyGen、不重新轉字幕，只是重跑判定，幾秒鐘的事。
    *   - 整段包在 try 裡，失敗就當沒有對照組（修正紀錄少一種類型，不影響出片）。
    *   - 沒有任何標注就不用跑（多數情況），省下這幾秒。
+   *
+   * 回傳給步驟記錄用：{ skipped: 為什麼不用跑 } ／ { note: '' 成功 } ／ { note: '⚠️ …' 失敗（降級）}。
    */
   function buildCounterfactual(job) {
     try {
       const annFile = jobPath(job.id, 'input', 'annotations.json');
-      if (!fs.existsSync(annFile)) return;
+      if (!fs.existsSync(annFile)) return { skipped: '沒有人工標注' };
       const shots = (JSON.parse(fs.readFileSync(annFile, 'utf-8')).shots || []).filter((a) => a && a.src);
-      if (!shots.length) return;
+      if (!shots.length) return { skipped: '沒有人工標注' };
 
       const out = jobPath(job.id, 'auto-noannots.json');
       // 2026-09-22：planKind 'focus'（三大法人）移除後只剩 auto-shot.js 這一條路。
@@ -41,8 +64,11 @@ module.exports = function create(ctx) {
 
       const n = JSON.parse(fs.readFileSync(out, 'utf-8')).length;
       appendLog(job, `\n🔬 對照組：不看手動標記的話，自動判定會排 ${n} 段（只用來寫修正紀錄，不影響出片）\n`);
+      return { note: '' };
     } catch (e) {
-      appendLog(job, `\n⚠️ 對照組計算失敗（不影響出片，只是修正紀錄少一項）：${e.message}\n`);
+      const note = `⚠️ 對照組計算失敗（不影響出片，只是修正紀錄少一項）：${e.message}`;
+      appendLog(job, `\n${note}\n`);
+      return { note };
     }
   }
 
@@ -50,9 +76,12 @@ module.exports = function create(ctx) {
     job.status = 'preparing';
     job.startedAt = nowISO();
     saveJob(job);
+    const steps = stepsOf(job);
 
-    clearWorkspaceInputs();
-    stageJobInputs(job);
+    traced(steps, 'stage-inputs', '準備素材', () => {
+      clearWorkspaceInputs();
+      stageJobInputs(job);
+    });
 
     // 發音替換是「默默套用」的（使用者定案，畫面上不顯示），但出現怪唸法時
     // 總要查得到是不是它搞的 —— 所以在執行記錄留一行。前台完全看不到這段。
@@ -71,9 +100,15 @@ module.exports = function create(ctx) {
     args.push(`--emotion=${normalizeEmotion(job.emotion)}`);
     await runPipeline(job, args);
 
-    buildCounterfactual(job);
-    snapshotWorkspace(job);
-    job.planView = buildPlanView(job);
+    {
+      // 對照組：沒標注就不用算（備註說明）；算失敗只是降級（修正紀錄少一項），⚠️ 備註會記成 warning。
+      steps.start('counterfactual', { label: '對照組' });
+      const r = buildCounterfactual(job);
+      const note = r.skipped ? `${r.skipped}，不用算` : r.note;
+      steps.end('counterfactual', note ? { ok: true, note } : { ok: true });
+    }
+    traced(steps, 'snapshot', '製作快照', () => snapshotWorkspace(job));
+    traced(steps, 'plan-view', '整理配圖計畫', () => { job.planView = buildPlanView(job); });
     job.preparedAt = nowISO();
 
     if (job.autoApprove) {
@@ -82,6 +117,7 @@ module.exports = function create(ctx) {
       job.approvedAt = nowISO();
       job.approvedBy = '（自動出片）';
       appendLog(job, '\n⏩ 已勾選「直接出片」，跳過人工確認\n');
+      steps.skip('review', { label: '等待人工確認', note: '標好了，直接出片' });
       // 2026-08-25：按「標好了，直接出片」也要留下修正紀錄、也要學進記憶庫。
       // 在這之前這兩支只在 /approve handler 呼叫，而這條路完全繞過它 —— 同事一按那顆按鈕，
       // 這支工作的 data/corrections.jsonl 與 data/shot-memory.json 就什麼都不會寫
@@ -92,6 +128,8 @@ module.exports = function create(ctx) {
       learnFromEdits(job, []);
     } else {
       job.status = 'review';
+      // 「等人確認」也是一步：/approve 會把它結掉、/unapprove 會再開一筆、取消會標成 cancelled。
+      steps.start('review', { label: '等待人工確認' });
     }
     saveJob(job);
   }
@@ -99,19 +137,21 @@ module.exports = function create(ctx) {
   async function doRender(job) {
     job.status = 'rendering';
     saveJob(job);
+    const steps = stepsOf(job);
 
-    restoreWorkspace(job);
-    // ⚠️ 要在 restoreWorkspace 之後（ROOT 才是 render 讀的那一份），跟 applyPlanEdits 同一時機。
-    //    來源是工作自己的 input/emphasis.json，不分是在標注頁、計畫頁還是排隊階段標的
-    //    ——「直接出片」那條路不經過計畫頁，以前就是在這裡整個漏掉。
-    {
+    traced(steps, 'render-prep', '還原快照與套用設定', () => {
+      restoreWorkspace(job);
+      // ⚠️ 要在 restoreWorkspace 之後（ROOT 才是 render 讀的那一份），跟 applyPlanEdits 同一時機。
+      //    來源是工作自己的 input/emphasis.json，不分是在標注頁、計畫頁還是排隊階段標的
+      //    ——「直接出片」那條路不經過計畫頁，以前就是在這裡整個漏掉。
       const marks = writeEmphasis(readJobEmphasis(job));
       if (marks.length) appendLog(job, `\n🖍 字幕重點詞 ${marks.length} 處\n`);
-    }
+    });
     // 動態小影片：同一個時機、同一個理由。快照裡是 prepare 當時的結果，但人可能在
     // 配圖計畫頁又改過、或才第一次標（「直接出片」那條路也不經過計畫頁）。
     // 先把最新設定寫回工作區，再用 --if-changed 決定要不要重做 —— 沒改就 0.09 秒跳過。
     // ⚠️ 失敗一律降級成「這支沒有動態」，跟 run.js 那邊同一個原則。
+    steps.start('motion-render', { label: '動態渲染' });
     try {
       const mf = path.join(ROOT, 'public', 'motion.json');
       const motion = readJobMotion(job);
@@ -124,15 +164,18 @@ module.exports = function create(ctx) {
       let made = 0;
       try { made = JSON.parse(fs.readFileSync(path.join(ROOT, MOTION_FILE), 'utf-8')).length; } catch (_) {}
       if (motion.length) {
-        appendLog(job, made
-          ? `\n🎬 動態小影片 ${made} 段\n`
-          : `\n⚠️ 標了 ${motion.length} 段動態，但一段都沒產出（原因見上面）——這支影片不會有動態\n`);
-      }
+        const warn = `⚠️ 標了 ${motion.length} 段動態，但一段都沒產出（原因見上面）——這支影片不會有動態`;
+        appendLog(job, made ? `\n🎬 動態小影片 ${made} 段\n` : `\n${warn}\n`);
+        steps.end('motion-render', made ? { ok: true, note: `${made} 段` } : { ok: true, note: warn });
+      } else steps.end('motion-render', { ok: true, note: '沒有標動態' });
     } catch (e) {
       // 取消不是「失敗」—— 照原樣寫成「這支沒有動態」會讓人以為出片還在跑、只是少了動態。
+      // （步驟記錄同理：取消那條路由已經把還在跑的步驟標成 cancelled，這裡不再碰。）
       if (job.status !== 'cancelled') {
-        appendLog(job, `\n⚠️ 動態小影片重算失敗（不影響出片，只是這支沒有動態）：${e.message}\n`);
+        const warn = `⚠️ 動態小影片重算失敗（不影響出片，只是這支沒有動態）：${e.message}`;
+        appendLog(job, `\n${warn}\n`);
         try { fs.writeFileSync(path.join(ROOT, MOTION_FILE), '[]\n'); } catch (_) {}
+        steps.end('motion-render', { ok: true, note: warn });
       }
     }
     // ⚠️ 動態渲染那段時間取消鍵是**按得動的**（2026-09-21 改成非同步之後才會這樣；
@@ -144,18 +187,23 @@ module.exports = function create(ctx) {
       return;
     }
     if (job.pendingEdits && job.pendingEdits.length) {
-      applyPlanEdits(job, job.pendingEdits);
-      // 「人工標記」那一類不是這一步套用的（它是標注頁的產物，只為了寫修正紀錄而記），
-      // 算進來會讓這行數字看起來比實際改動多（2026-08-21）。
-      const applied = (job.corrections || []).filter((c) => c.type !== '人工標記').length;
-      appendLog(job, `\n✏️  已套用 ${applied} 項人工修正\n`);
+      // 計畫頁的人工修正要在動態之後才套（上面取消那道檢查在中間），所以另記一步，不併進 render-prep。
+      traced(steps, 'plan-edits', '套用人工修正', () => {
+        applyPlanEdits(job, job.pendingEdits);
+        // 「人工標記」那一類不是這一步套用的（它是標注頁的產物，只為了寫修正紀錄而記），
+        // 算進來會讓這行數字看起來比實際改動多（2026-08-21）。
+        const applied = (job.corrections || []).filter((c) => c.type !== '人工標記').length;
+        appendLog(job, `\n✏️  已套用 ${applied} 項人工修正\n`);
+      });
     }
 
     const args = [`--template=${job.template}`, '--render-only'];
     const renderFrom = Date.now() - 3000; // 容忍一點時鐘誤差
-    await runPipeline(job, args);
+    await runPipeline(job, args);   // run.js 自己記 'render' 這一步
 
     // 收成品
+    steps.start('finalize', { label: '音量校正與歸檔' });
+    let finalizeWarning = '';
     // ⚠️ 只收「這次真的重新產生」的檔。out/ 底下的檔名是固定的，上一支的成品會一直留著；
     //    不比對時間就會把舊檔當成這次的成果交出去
     //   （2026-08-17 實際踩到：只出客製版，卻附上四天前的投廣版）。
@@ -184,6 +232,7 @@ module.exports = function create(ctx) {
           size = fs.statSync(dest).size;
           appendLog(job, `   ✅ 收尾完成（源響度 ${m.input_i} LUFS／TP ${m.input_tp} dBTP → −14／−1.5）\n`);
         } catch (e) {
+          finalizeWarning = finalizeWarning || `⚠️ ${name} 收尾失敗，改用原始渲染檔（音量沒正規化）：${e.message}`;
           appendLog(job, `   ⚠️ 收尾失敗，改用原始渲染檔（音量沒正規化）：${e.message}\n`);
           fs.copyFileSync(from, dest);
         }
@@ -192,10 +241,15 @@ module.exports = function create(ctx) {
         ensureDir(fallbackDir);
         fs.copyFileSync(from, path.join(fallbackDir, name));
         job.outputs.push({ name, size });
+        finalizeWarning = finalizeWarning || `⚠️ ${name} 存進成品庫失敗，先留在工作區：${e.message}`;
         appendLog(job, `⚠️ 存進成品庫失敗，先留在工作區：${e.message}\n`);
       }
     }
-    if (!job.outputs.length) throw new Error('render 跑完了，但找不到輸出檔案。請看執行記錄。');
+    if (!job.outputs.length) {
+      const error = 'render 跑完了，但找不到輸出檔案。請看執行記錄。';
+      steps.end('finalize', { ok: false, error });
+      throw new Error(error);
+    }
 
     // 動態小影片落地（2026-09-21）。實作在 collectMotionAssets()。
     // 存不進去不影響影片本身 —— 動態早就貼進成品了，這裡只是多留一份可下載的素材。
@@ -205,8 +259,10 @@ module.exports = function create(ctx) {
       if (job.motionClips.length)
         appendLog(job, `\n🎬 動態素材 ${job.motionClips.length} 支已存進「素材／動態」，成品頁可以單獨下載\n`);
     } catch (e) {
+      finalizeWarning = finalizeWarning || `⚠️ 動態素材沒能存進工作（影片本身不受影響）：${e.message}`;
       appendLog(job, `\n⚠️ 動態素材沒能存進工作（影片本身不受影響）：${e.message}\n`);
     }
+    steps.end('finalize', finalizeWarning ? { ok: true, note: finalizeWarning } : { ok: true, note: `${job.outputs.length} 支成品` });
 
     job.status = 'done';
     job.archived = job.outputs.map((o) => o.archive).filter(Boolean);

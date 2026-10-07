@@ -26,9 +26,10 @@ const { planPath } = require('./templates/registry');
 const { cleanStaleStaging, backupJob } = require('./pipeline/public-utils');
 const { createProviders, missingCredentials } = require('./providers');
 const { isMockMode } = require('../shared/mock-mode');
+const { createStepsWriter } = require('../shared/steps');
 const { createSpeedUp } = require('./media/speed');
 const { transcribeWithRetry } = require('./steps/transcribe');
-const { startImageAnalysis } = require('./steps/image-analysis');
+const { startImageAnalysis, screenshotsIn } = require('./steps/image-analysis');
 const { renderMotionClips } = require('./steps/motion');
 const { generateAnchorVideo, planVoice, AnchorConfigError } = require('./steps/anchor-video');
 
@@ -43,6 +44,49 @@ class RunError extends Error {}
 /** @param {string} msg */
 function log(msg) {
   console.log(`\n[${new Date().toLocaleTimeString()}] ${msg}`);
+}
+
+// 步驟記錄（_meta/steps.json）：工作台起 run.js 時用 WORKBENCH_STEPS_FILE 指定檔案；
+// 手動在終端機跑沒有這個變數 → 空作業，什麼都不寫。記錄本身永不丟出，見 shared/steps.js。
+const steps = createStepsWriter(process.env.WORKBENCH_STEPS_FILE);
+
+/** 警告備註只留前面一段：錯誤訊息可能帶整段子程序輸出，前台只要看得出「哪一步、為什麼」。 */
+const NOTE_LIMIT = 300;
+
+/**
+ * 跑一步並記錄：丟出的錯記成 failed 後原樣往上丟（log 行一字不改）；
+ * 步驟自己吞掉、只用「⚠️」log 出來的問題（自動配圖、動態、備份都是這種）記成 warning。
+ * fn 拿到的 log 就是上面那個 log，只是多盯著 ⚠️ 開頭的訊息。
+ * @template T
+ * @param {string} id @param {string} label
+ * @param {(log: (msg: string) => void) => T} fn
+ * @returns {T}
+ */
+function step(id, label, fn) {
+  let warning = '';
+  /** @param {string} msg */
+  const watch = (msg) => {
+    if (!warning && /^\s*⚠️/.test(String(msg))) warning = String(msg).trim().slice(0, NOTE_LIMIT);
+    log(msg);
+  };
+  steps.start(id, { label });
+  const done = () => steps.end(id, warning ? { ok: true, note: warning } : { ok: true });
+  /** @param {unknown} e */
+  const fail = (e) => steps.end(id, { ok: false, error: e instanceof Error ? e.message : String(e) });
+  try {
+    const out = fn(watch);
+    if (out && typeof (/** @type {any} */ (out)).then === 'function') {
+      return /** @type {T} */ (/** @type {any} */ (out).then(
+        (/** @type {unknown} */ v) => { done(); return v; },
+        (/** @type {unknown} */ e) => { fail(e); throw e; },
+      ));
+    }
+    done();
+    return out;
+  } catch (e) {
+    fail(e);
+    throw e;
+  }
 }
 
 // Windows（只用於開發）：工作台把 append 模式開的 log 檔直接交給 run.js 當 stdout，
@@ -112,14 +156,14 @@ function checkGenerateConfig(opts) {
   return { useMinimax };
 }
 
-/** @param {ReturnType<typeof parseRunOptions>} opts */
-function prepareShots(opts) {
+/** @param {ReturnType<typeof parseRunOptions>} opts @param {(msg: string) => void} [say] 步驟記錄要盯的 log */
+function prepareShots(opts, say = log) {
   // 手寫標記與人工標注優先，自動配圖不碰它們標到的段落；自動配圖失敗不影響出片。
   run(`node "${TEMPLATE_CLI}" parse --template=${opts.template}`);
   try {
     run(`node "${AUTO_SHOT}" --write --out ${planPath(opts.template)}`);
   } catch (e) {
-    log('⚠️ 自動配圖失敗（不影響出片，只是這支不會插圖）：' + /** @type {Error} */ (e).message);
+    say('⚠️ 自動配圖失敗（不影響出片，只是這支不會插圖）：' + /** @type {Error} */ (e).message);
   }
 }
 
@@ -138,7 +182,7 @@ async function main(argv) {
 
   if (opts.renderOnly) {
     log('▶️  --render-only：沿用現有 public/ 與配圖計畫，直接 render');
-    renderTemplate(opts);
+    step('render', 'Remotion 渲染', () => renderTemplate(opts));
     return;
   }
 
@@ -147,20 +191,32 @@ async function main(argv) {
   if (!fs.existsSync(scriptPath)) throw new RunError('找不到 public/script.txt');
 
   log(`版型：${opts.tpl.emoji} ${opts.tpl.label}${opts.skipGenerate ? '（跳過生成，用現有 public/heygen.mp4）' : ''}`);
-  // 清掉 public/ 裡非當前版型的殘留素材（源頭都在 storage/shared-assets/，可再複製回來）
-  cleanStaleStaging(PROJECT_DIR, opts.template);
-  log(`複製${opts.tpl.label}套版素材`);
-  run(`node "${TEMPLATE_CLI}" assets --template=${opts.template}`);
+  step('assets', '複製套版素材', () => {
+    // 清掉 public/ 裡非當前版型的殘留素材（源頭都在 storage/shared-assets/，可再複製回來）
+    cleanStaleStaging(PROJECT_DIR, opts.template);
+    log(`複製${opts.tpl.label}套版素材`);
+    run(`node "${TEMPLATE_CLI}" assets --template=${opts.template}`);
+  });
 
   // 截圖分析不需要講者影片，先啟動，跟生成平行跑。
   const imageAnalysis = startImageAnalysis({ projectDir: PROJECT_DIR, runBackground, log });
+  if (imageAnalysis) {
+    // 平行跑的這一步在它自己的 promise 結束時記錄，不等主流程 await 它。偵測失敗不是致命的（沿用 regions）。
+    steps.start('image-analysis', { label: '截圖分析' });
+    imageAnalysis.then((r) => steps.end('image-analysis', r.ok ? { ok: true } : { ok: true, note: '⚠️ 版面偵測失敗，沿用既有 regions' }));
+  } else {
+    // null 有兩種：沒截圖可分析，或重新出片沿用了上一支的結果（startImageAnalysis 的 reuseAppImages）。
+    const reused = screenshotsIn(PUBLIC_DIR).length > 0;
+    steps.skip('image-analysis', { label: '截圖分析', note: reused ? '沿用上一支的版面偵測結果' : '沒有截圖' });
+  }
 
   if (!generate) {
     if (!fs.existsSync(HEYGEN_PATH)) throw new RunError('--skip-generate 但找不到 public/heygen.mp4，請先手動放好影片檔');
     log('✅ 找到現有 public/heygen.mp4，跳過 HeyGen/MiniMax 生成');
+    steps.skip('generate', { label: '生成講者影片', note: '用現成的講者影片' });
   } else {
     log('讀取 script.txt');
-    await generateAnchorVideo({
+    await step('generate', '生成講者影片', () => generateAnchorVideo({
       tpl: opts.tpl,
       rawScript: fs.readFileSync(scriptPath, 'utf-8'),
       heygenPath: HEYGEN_PATH,
@@ -168,20 +224,24 @@ async function main(argv) {
       heygenVoice: opts.heygenVoice,
       ...createProviders({ useMinimax: generate.useMinimax, aspectRatio: opts.tpl.anchor.aspectRatio, engine: opts.engine, emotion: opts.emotion, log }),
       log,
-    });
+    }));
   }
 
   // 備份一定在加速之前：原速的講者影片永遠救得回來（2026-08-12 排在加速之後，重跑兩次就把原檔洗掉了）。
-  try {
-    backupJob(PROJECT_DIR, opts.template, WORKSPACE_ROOT);
-  } catch (e) {
-    log('⚠️ 自動備份失敗（不影響出片）：' + /** @type {Error} */ (e).message);
-  }
+  step('backup', '備份講者影片', (say) => {
+    try {
+      backupJob(PROJECT_DIR, opts.template, WORKSPACE_ROOT);
+    } catch (e) {
+      say('⚠️ 自動備份失敗（不影響出片）：' + /** @type {Error} */ (e).message);
+    }
+  });
 
   // 125% 加速（保持音調）。無論影片是現生的還是 --skip-generate 手動放的都要加速（使用者定案）；
   // 這是全流程唯一的加速點，speed.js 另外擋同一輪與跨輪的重複加速。
-  if (opts.noSpeed) log('⏩ 已指定 --no-speed，跳過 125% 加速（保留原始速度）');
-  else createSpeedUp({ log }).speedUp(HEYGEN_PATH, '固定主播版型');
+  if (opts.noSpeed) {
+    log('⏩ 已指定 --no-speed，跳過 125% 加速（保留原始速度）');
+    steps.skip('speed', { label: '加速 125%', note: '已指定 --no-speed，保留原始速度' });
+  } else step('speed', '加速 125%', () => createSpeedUp({ log }).speedUp(HEYGEN_PATH, '固定主播版型'));
 
   if (imageAnalysis) {
     const r = await imageAnalysis;
@@ -193,21 +253,23 @@ async function main(argv) {
   }
 
   log('開始 Remotion 後製');
-  transcribeWithRetry({ run, log });
-  prepareShots(opts);
+  step('transcribe', '字幕轉錄', () => transcribeWithRetry({ run, log }));
+  step('shots', '配圖計畫', (say) => prepareShots(opts, say));
   // 動態排在字幕之後（要用字幕時間軸）、配圖之後（配圖是主、動態是補）；失敗一律降級成這支沒有動態。
-  renderMotionClips({ projectDir: PROJECT_DIR, template: opts.template, run, log });
+  step('motion-clips', '動態小影片', (say) => renderMotionClips({ projectDir: PROJECT_DIR, template: opts.template, run, log: say }));
 
   if (opts.stopBeforeRender) {
     log('⏸  已指定 --stop-before-render：配圖計畫算好了，這裡停下不 render。');
     log('   前台會把計畫拿去給人看，確認後再用 --render-only 接著跑。');
     return;
   }
-  renderTemplate(opts);
+  step('render', 'Remotion 渲染', () => renderTemplate(opts));
 }
 
 if (require.main === module) {
   main(process.argv.slice(2)).catch((err) => {
+    // 還在跑的步驟（例如與生成平行的截圖分析）一併記成失敗，前台才看得出是在哪一步斷掉的。
+    steps.failRunning(err.message);
     if (err instanceof RunError || err instanceof AnchorConfigError) console.error(`❌ ${err.message}`);
     else console.error('\n❌ 錯誤：', err.message);
     process.exit(1);

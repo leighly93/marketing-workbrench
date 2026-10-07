@@ -12,10 +12,84 @@ module.exports = function createRoutes(ctx) {
     tick, normalizeEmotion, mergeVoiceRules, voiceRuleHits, voiceSection, buildScript, reportOwnVoiceRules, nextShotName,
     ensureUsableImage, IMAGE_KIND_LABEL, publishLateUpload, buildPlanView, pendingAnnotsOf } = ctx;
 
+  /**
+   * 標題：行數一律以版型設定為準；每行字數只有「不能換行」的模板（投廣）才截斷。
+   * 會換行的模板讓標題超過上限，交給 composition 自動換行（2026-08-17 使用者定案）。
+   * 建立與草稿改設定共用同一條規則。
+   */
+  function normalizeTitle(template, title) {
+    // 版型已移除的舊草稿（TEMPLATES 裡沒有）用預設規則，不要在這裡炸成 500。
+    const tcfg = (TEMPLATES[template] && TEMPLATES[template].title) || { lines: 2, per: 12, wrap: true };
+    return String(title || '').split('\n')
+      .map((l) => (tcfg.wrap ? l.trim() : l.trim().slice(0, tcfg.per))).filter(Boolean)
+      .slice(0, tcfg.lines).join('\n');
+  }
+
+  /**
+   * 稿件內文：建立時存在 job.scriptBody（草稿改設定要重組 script.txt 用）。
+   * 功能上線前建立的草稿沒有這欄 → 從 script.txt 最後一段救回來（buildScript 的格式，內文永遠是最後一段）。
+   */
+  function scriptBodyOf(job) {
+    if (typeof job.scriptBody === 'string') return job.scriptBody;
+    try {
+      const text = fs.readFileSync(jobPath(job.id, 'input', 'script.txt'), 'utf-8');
+      return text.split('\n===\n').pop().trim() || null;
+    } catch (_) { return null; }
+  }
+
+  /**
+   * 發音替換併進工作並重寫 script.txt。
+   * 共用詞庫在這裡就併進 script.txt —— 之後整條 pipeline 都不知道有這回事，
+   * 而且這支工作的 script.txt 永遠留著「當時實際套了哪些規則」。
+   * 回傳同事自己填的那幾條（呼叫端存完工作後拿去 reportOwnVoiceRules）。
+   */
+  function applyVoice(job, voiceText, body) {
+    const { own, shared } = mergeVoiceRules(voiceText);
+    job.voiceRules = {
+      own: own.map((r) => `${r.from}→${r.to}`),
+      shared: shared.map((r) => `${r.from}→${r.to}`),
+      // 只有打中內文的那幾條才會進 hit —— 前台顯示的是這個，不是整本詞庫。
+      // 算的是內文（body），標題不送 TTS、不套發音替換。
+      hit: voiceRuleHits(body, [
+        ...own.map((r) => ({ ...r, src: 'own' })),
+        ...shared.map((r) => ({ ...r, src: 'shared' })),
+      ]),
+    };
+    ensureDir(jobPath(job.id, 'input'));
+    fs.writeFileSync(jobPath(job.id, 'input', 'script.txt'),
+      buildScript({ voice: voiceSection(own, shared), title: job.title, body }));
+    return own;
+  }
+
+  /** 這支工作 input/ 裡有哪些檔（跟 /submit 同一條規則：全部檔案，另加 script.txt）。 */
+  function inputFiles(job) {
+    const dir = jobPath(job.id, 'input');
+    const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => !n.startsWith('.')) : [];
+    if (fs.existsSync(jobPath(job.id, 'input', 'script.txt'))) files.push('script.txt');
+    return files;
+  }
+
+  /** 草稿階段的素材只在這裡維護：每次上傳／刪除都重掃一次，GET /api/jobs/:id 才看得到草稿已經有哪些檔。 */
+  function refreshDraftFiles(job) {
+    job.files = inputFiles(job);
+    saveJob(job);
+    return job.files;
+  }
+
+  const LIST_LIMIT = 50;
+  const LIST_LIMIT_MAX = 500;
+  const intParam = (value, fallback, min, max) => {
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+  };
+
   return async function handle({ req, res, url, p, seg, admin }) {
     if (p === '/api/jobs' && req.method === 'GET') {
       refreshDetached();
-      return send(res, 200, { jobs: allJobs().slice(0, 50).map((j) => publicJob(j, admin)), busy: isBusy() });
+      const limit = intParam(url.searchParams.get('limit'), LIST_LIMIT, 1, LIST_LIMIT_MAX);
+      const offset = intParam(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
+      const jobs = allJobs();
+      return send(res, 200, { jobs: jobs.slice(offset, offset + limit).map((j) => publicJob(j, admin)), total: jobs.length, busy: isBusy() });
     }
 
     if (p === '/api/jobs' && req.method === 'POST') {
@@ -23,17 +97,11 @@ module.exports = function createRoutes(ctx) {
       if (!TEMPLATES[body.template]) return send(res, 400, { error: '版型不對' });
       if (TEMPLATES[body.template].disabled) return send(res, 400, { error: '這個版型目前關閉中' });
       if (!body.body || !body.body.trim()) return send(res, 400, { error: '腳本是空的' });
-      // 標題：行數一律以版型設定為準；每行字數只有「不能換行」的模板（投廣）才截斷。
-      // 會換行的模板讓標題超過上限，交給 composition 自動換行（2026-08-17 使用者定案）。
-      const tcfg = TEMPLATES[body.template].title || { lines: 2, per: 12, wrap: true };
-      const title = String(body.title || '').split('\n')
-        .map((l) => (tcfg.wrap ? l.trim() : l.trim().slice(0, tcfg.per))).filter(Boolean)
-        .slice(0, tcfg.lines).join('\n');
       const job = {
         id: newId(),
         template: body.template,
         owner: (body.owner || '').trim() || '未署名',
-        title,
+        title: normalizeTitle(body.template, body.title),
         status: 'draft', // 上傳完檔案才轉 queued
         createdAt: nowISO(),
         // 送出這支的機器 IP。owner 是自己填的、可以亂填，這欄是佐證「到底哪台送的」。
@@ -45,29 +113,46 @@ module.exports = function createRoutes(ctx) {
         emotion: normalizeEmotion(body.emotion),
         brand: body.brand ? String(body.brand) : null,
         autoApprove: !!body.autoApprove,
+        // 原始內文另外留一份：草稿改標題或唸法時要重組 script.txt（PATCH /api/jobs/:id）。
+        scriptBody: String(body.body),
         // 模擬模式建立的工作永遠帶著標記：之後關掉模擬模式，也認得出哪些成品是假的
         ...(isMockMode(process.env) ? { mock: true } : {}),
       };
-      // 共用詞庫在這裡就併進 script.txt —— 之後整條 pipeline 都不知道有這回事，
-      // 而且這支工作的 script.txt 永遠留著「當時實際套了哪些規則」。
-      const { own, shared } = mergeVoiceRules(body.voice);
-      job.voiceRules = {
-        own: own.map((r) => `${r.from}→${r.to}`),
-        shared: shared.map((r) => `${r.from}→${r.to}`),
-        // 只有打中內文的那幾條才會進 hit —— 前台顯示的是這個，不是整本詞庫。
-        // 算的是 body.body（＝腳本內文），標題不送 TTS、不套發音替換。
-        hit: voiceRuleHits(body.body, [
-          ...own.map((r) => ({ ...r, src: 'own' })),
-          ...shared.map((r) => ({ ...r, src: 'shared' })),
-        ]),
-      };
       STORE.directory(job.id, job);
-      ensureDir(jobPath(job.id, 'input'));
-      fs.writeFileSync(jobPath(job.id, 'input', 'script.txt'),
-        buildScript({ voice: voiceSection(own, shared), title, body: body.body }));
+      const own = applyVoice(job, body.voice, body.body);
       addJob(job);
       saveJob(job);
       reportOwnVoiceRules(job, own);
+      return send(res, 200, { job: publicJob(job, admin) });
+    }
+
+    /**
+     * 草稿改設定（先建一支最簡單的、再慢慢補素材與設定的流程）。只有 draft 可以改 —— 送出之後
+     * script.txt 已經複製進工作區、標注用字元索引對著稿件，改了就對不上。
+     * 標題與唸法會重組 script.txt（跟建立時同一條規則）；內文本身不給改。
+     */
+    if (seg[0] === 'api' && seg[1] === 'jobs' && seg[2] && seg.length === 3 && req.method === 'PATCH') {
+      const job = getJob(seg[2]);
+      if (!job) return send(res, 404, { error: '找不到工作' });
+      if (job.status !== 'draft') return send(res, 409, { error: '只有草稿可以改設定' });
+      const body = await readJson(req);
+      const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+      const rewrite = has('title') || has('voice');
+      const scriptBody = rewrite ? scriptBodyOf(job) : null;
+      if (rewrite && scriptBody === null) return send(res, 400, { error: '這支草稿沒有留原始稿件，改不了標題與唸法；請重新建立一支' });
+      if (has('owner')) job.owner = String(body.owner || '').trim() || '未署名';
+      if (has('title')) job.title = normalizeTitle(job.template, body.title);
+      for (const flag of ['skipGenerate', 'noSpeed', 'autoApprove']) if (has(flag)) job[flag] = !!body[flag];
+      if (has('emotion')) job.emotion = normalizeEmotion(body.emotion);
+      let own = [];
+      if (rewrite) {
+        // 只改標題時唸法沿用原本自己填的那幾條（voiceRules.own 存的就是「原文→唸法」一行一條）。
+        const voiceText = has('voice') ? String(body.voice || '') : ((job.voiceRules && job.voiceRules.own) || []).join('\n');
+        own = applyVoice(job, voiceText, scriptBody);
+        if (typeof job.scriptBody !== 'string') job.scriptBody = scriptBody;
+      }
+      saveJob(job);
+      if (has('voice')) reportOwnVoiceRules(job, own);
       return send(res, 200, { job: publicJob(job, admin) });
     }
 
@@ -109,13 +194,29 @@ module.exports = function createRoutes(ctx) {
           + `已用 ${fix.tool} 自動轉成 ${path.extname(dest).slice(1).toUpperCase()}`);
       }
       // 事後補上傳（工作已經送出去了）→ 要自己把檔案送到「這支工作正在用的那幾份」。
-      // 建立工作時（status 'draft'）什麼都不用做：/submit 會重掃 input/，doPrepare 會整包複製。
+      // 建立工作時（status 'draft'）不用送：/submit 會重掃 input/，doPrepare 會整包複製。
       if (auto || job.status !== 'draft') publishLateUpload(job, name, dest);
+      // 草稿要讓人看得到「已經傳了哪些」（先建一支再慢慢補素材的流程），每次上傳都重掃一次 input/。
+      if (job.status === 'draft') refreshDraftFiles(job);
       return send(res, 200, {
         ok: true, name, size: fs.statSync(dest).size,
         converted: (fix && fix.converted) || null,
         files: job.files || null,
       });
+    }
+
+    // 草稿階段拿掉傳錯的檔（只有草稿：送出之後標注與工作區都指著這些檔名）。稿件不是上傳的，不給刪。
+    if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'upload' && req.method === 'DELETE') {
+      const job = getJob(seg[2]);
+      if (!job) return send(res, 404, { error: '找不到工作' });
+      if (job.status !== 'draft') return send(res, 409, { error: '只有草稿可以刪素材' });
+      const name = path.basename(url.searchParams.get('name') || '');
+      if (!name || name === '.' || name === '..') return send(res, 400, { error: '缺少檔名' });
+      if (name === 'script.txt') return send(res, 400, { error: '稿件不是上傳的素材，不能從這裡刪' });
+      const file = jobPath(job.id, 'input', name);
+      if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return send(res, 404, { error: '找不到檔案' });
+      fs.unlinkSync(file);
+      return send(res, 200, { ok: true, files: refreshDraftFiles(job) });
     }
 
     // 上傳完成 → 排進佇列
@@ -303,9 +404,12 @@ module.exports = function createRoutes(ctx) {
 
     // 刪除整筆工作（含影片、紀錄）。只有本機管理者能刪；正在跑的不給刪。
     // （2026-08-18 使用者要求：列表加刪除，但只有我本機可以、別人不行。）
+    // 例外：自己的草稿自己可以丟（?by=<署名> 要跟 owner 一樣）—— 草稿還沒跑過、沒有成品也沒花錢。
     if (seg[0] === 'api' && seg[1] === 'jobs' && seg[2] && seg.length === 3 && req.method === 'DELETE') {
-      if (!isAdmin(req)) return send(res, 403, { error: '只有管理者可以刪除工作' });
       const job = getJob(seg[2]);
+      const by = (url.searchParams.get('by') || '').trim();
+      const ownDraft = !!job && job.status === 'draft' && !!by && by === String(job.owner || '').trim();
+      if (!isAdmin(req) && !ownDraft) return send(res, 403, { error: '只有管理者可以刪除工作' });
       if (!job) return send(res, 404, { error: '找不到工作' });
       if (['preparing', 'rendering'].includes(job.status))
         return send(res, 400, { error: '正在跑的工作不能刪，請先取消或等它結束' });

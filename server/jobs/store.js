@@ -7,7 +7,7 @@
  */
 
 module.exports = function create(ctx) {
-  const { fs, path, store: STORE, ensureDir } = ctx;
+  const { fs, path, store: STORE, ensureDir, createStepsWriter } = ctx;
   const JOBS_DIR = STORE.base;
 
   // ── 工作儲存 ──────────────────────────────
@@ -30,6 +30,14 @@ module.exports = function create(ctx) {
     fs.appendFileSync(f, line.endsWith('\n') ? line : line + '\n');
   }
 
+  // ── 步驟記錄（_meta/steps.json）──────────
+  // 伺服器與 run.js 寫同一個檔：run.js 由 runPipeline 用 WORKBENCH_STEPS_FILE 指到這裡，
+  // 伺服器自己做的步驟（準備素材、快照、等待確認、歸檔）用 stepsOf(job) 寫。
+  // 寫入器走 ctx.fs（測試鎖在 fixture 裡）；它永不丟出，見 shared/steps.js。
+  function stepsFile(id) { return jobPath(id, 'steps.json'); }
+  function stepsOf(job) { return createStepsWriter(stepsFile(job.id), fs); }
+  function readSteps(job) { return stepsOf(job).read(); }
+
   function newId() {
     const d = new Date();
     const p = (n) => String(n).padStart(2, '0');
@@ -39,5 +47,5 @@ module.exports = function create(ctx) {
     );
   }
 
-  return { jobDir, jobPath, jobFile, saveJob, appendLog, newId };
+  return { jobDir, jobPath, jobFile, saveJob, appendLog, stepsFile, stepsOf, readSteps, newId };
 };

@@ -8,7 +8,7 @@
 
 module.exports = function createRoutes(ctx) {
   const { fs, process, config: { ADMIN_KEY, CORRECTIONS_LOG }, ADMIN_COOKIE, sameSecret, isAdmin, send, refreshDetached, isBusy, LOCK, TEMPLATES,
-    REASON_TAGS, STARTED_AT, codeChangedAt, webChangedAt, isMockMode, dirSize, JOBS_DIR, allCorrections,
+    REASON_TAGS, STARTED_AT, codeChangedAt, webChangedAt, isMockMode, lockStatus, diskMB, buildDashboard, buildQuotas, allCorrections,
     pruneOldJobs, rmrf } = ctx;
 
   return async function handle({ req, res, url, p, seg, admin }) {
@@ -27,12 +27,8 @@ module.exports = function createRoutes(ctx) {
       refreshDetached();
       return send(res, 200, {
         ok: true, busy: isBusy(),
-        // locked 只代表「有鎖」；externalLock 才是需要提醒的狀況
-        //（伺服器自己在跑的時候 run.js 也會建立 .run.lock，那是正常的）
-        locked: fs.existsSync(LOCK),
-        externalLock: !isBusy() && fs.existsSync(LOCK),
-        lockAgeMin: fs.existsSync(LOCK)
-          ? Math.round((Date.now() - fs.statSync(LOCK).mtimeMs) / 60000) : null,
+        // locked／externalLock／lockAgeMin 跟 /api/quotas 的 local.lock 是同一份算法（system/local.js）
+        ...lockStatus(),
         templates: TEMPLATES, reasonTags: REASON_TAGS,
         startedAt: STARTED_AT, codeChangedAt: codeChangedAt(),
         // 前台檔案本身的時間戳。已經開著的分頁不會自己重抓 index.html，
@@ -41,9 +37,21 @@ module.exports = function createRoutes(ctx) {
         admin: isAdmin(req),
         // 模擬模式（.env WORKBENCH_MOCK=1）：前台頁首掛警示，避免把假成品當真的發出去
         mock: isMockMode(process.env),
-        diskMB: Math.round(dirSize(JOBS_DIR) / 1048576),
+        diskMB: diskMB(),
         keep: { automatic: false },
       });
+    }
+
+    // 儀表板：區間 today／7d／30d／all（預設 7d），全部從真實工作算，不改任何東西。
+    if (p === '/api/dashboard' && req.method === 'GET') {
+      refreshDetached();
+      return send(res, 200, buildDashboard(url.searchParams.get('range') || '7d'));
+    }
+
+    // 額度：供應者（目前是假資料，見 system/quotas.js）＋ 本機狀態（跟 health 同一份算法）。
+    if (p === '/api/quotas' && req.method === 'GET') {
+      refreshDetached();
+      return send(res, 200, await buildQuotas());
     }
 
     // 修正紀錄總覽：哪一類最常被改 → 規則庫還缺什麼

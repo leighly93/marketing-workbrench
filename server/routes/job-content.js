@@ -9,7 +9,7 @@
 module.exports = function createRoutes(ctx) {
   const { fs, path, config: { ROOT, SHOTS_DIR, WORKSPACE_ROOT }, store: STORE, send, sendFile, readJson, ensureDir, rmrf, jobPath,
     getJob, saveJob, isRunJs, pagesOf, readJobEmphasis, saveJobEmphasis, emphasisOf, readJobMotion, saveJobMotion,
-    EMPHASIS_EDITABLE, MOTION_EDITABLE, MOTION_ASSET_DIR } = ctx;
+    EMPHASIS_EDITABLE, MOTION_EDITABLE, MOTION_ASSET_DIR, readSteps } = ctx;
     const execFileSync = (...a) => ctx.childProcess.execFileSync(...a);
 
   return async function handle({ req, res, url, p, seg, admin }) {
@@ -145,6 +145,13 @@ module.exports = function createRoutes(ctx) {
       const mine = ['preparing', 'detached'].includes(job.status) && isRunJs(job.pid);
       const pages = pagesOf(mine ? ROOT : jobPath(job.id, 'state'));
       return send(res, 200, { pages });
+    }
+
+    // 步驟記錄（_meta/steps.json）：run.js 與伺服器各記各的步驟，前台拿去畫進度。沒檔就是空陣列。
+    if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'steps' && req.method === 'GET') {
+      const job = getJob(seg[2]);
+      if (!job) return send(res, 404, { error: '找不到工作' });
+      return send(res, 200, { steps: readSteps(job).steps });
     }
 
     if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'log') {

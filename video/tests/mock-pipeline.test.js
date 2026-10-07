@@ -23,13 +23,16 @@ describe.skipIf(!ready)('模擬出片（WORKBENCH_MOCK=1）', () => {
   });
   afterAll(() => sb && sb.cleanup());
 
+  // 步驟記錄跟工作台一樣用 WORKBENCH_STEPS_FILE 指定（正式服務是 jobs/<id>/_meta/steps.json）。
+  const stepsFile = () => sb.path('storage', 'tmp', 'steps.json');
   const run = (...args) => spawnSync(process.execPath, [sb.path('video', 'run.js'), '--template=midday', ...args], {
     cwd: sb.path('video', 'remotion'), encoding: 'utf8',
     // 不繼承外面的金鑰：證明模擬模式真的不需要它們
-    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, APPDATA: process.env.APPDATA, WORKBENCH_MOCK: '1' },
+    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, APPDATA: process.env.APPDATA, WORKBENCH_MOCK: '1', WORKBENCH_STEPS_FILE: stepsFile() },
   });
   const src = (...p) => sb.path('video', 'remotion', 'src', ...p);
   const json = (...p) => JSON.parse(fs.readFileSync(src(...p), 'utf8'));
+  const stepsById = () => Object.fromEntries(JSON.parse(fs.readFileSync(stepsFile(), 'utf8')).steps.map((s) => [s.id, s]));
 
   test('跑到配圖計畫停下，各步產物齊全', () => {
     const r = run('--stop-before-render');
@@ -63,11 +66,24 @@ describe.skipIf(!ready)('模擬出片（WORKBENCH_MOCK=1）', () => {
     expect(backups.some((f) => f.endsWith('heygen.mp4'))).toBe(true);
 
     expect(fs.existsSync(sb.path('.run.lock'))).toBe(false);
+
+    // 步驟記錄：每一步都有、沒 render 的那步沒有
+    const steps = stepsById();
+    for (const id of ['assets', 'generate', 'image-analysis', 'backup', 'speed', 'transcribe', 'shots', 'motion-clips']) {
+      expect(['ok', 'warning'], `${id} 應該有紀錄`).toContain(steps[id] && steps[id].status);
+    }
+    expect(steps.transcribe).toMatchObject({ status: 'ok', label: '字幕轉錄', attempt: 1 });
+    expect(steps.shots).toMatchObject({ status: 'ok', label: '配圖計畫' });
+    expect(steps.render).toBeUndefined();
   }, 120000);
 
   test('沿用現成影片重跑（--skip-generate）不會重複加速', () => {
     const r = run('--stop-before-render', '--skip-generate');
     expect(r.status, r.stdout + r.stderr).toBe(0);
     expect(r.stdout).toMatch(/之前就被加速過了/);
+    // 同一個記錄檔再跑一次：generate 這次是 skipped，transcribe 是第二次
+    const steps = stepsById();
+    expect(steps.generate).toMatchObject({ status: 'skipped', note: '用現成的講者影片' });
+    expect(steps.transcribe).toMatchObject({ status: 'ok', attempt: 2 });
   }, 120000);
 });

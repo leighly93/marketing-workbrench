@@ -8,7 +8,7 @@
 
 module.exports = function createRoutes(ctx) {
   const { timers, send, readJson, nowISO, rmrf, jobPath, getJob, saveJob, appendLog, publicJob, tick, appendMissingAnnots,
-    recordCorrections, learnFromEdits, saveJobEmphasis, stopMotion, stopRunJs } = ctx;
+    recordCorrections, learnFromEdits, saveJobEmphasis, stopMotion, stopRunJs, stepsOf } = ctx;
 
   return async function handle({ req, res, url, p, seg, admin }) {
     if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'approve' && req.method === 'POST') {
@@ -31,6 +31,7 @@ module.exports = function createRoutes(ctx) {
       }
       job.status = 'approved';
       saveJob(job);
+      stepsOf(job).end('review', { ok: true, note: job.approvedBy });
       // ⚠️ 這裡用 setImmediate，不要直接 tick() —— tick() 會同步一路跑到 doRender 的
       //    第一個 await 為止（restoreWorkspace 要同步複製整份快照），那段期間整個
       //    event loop 都停著，這個 200 也發不出去。
@@ -73,6 +74,7 @@ module.exports = function createRoutes(ctx) {
       delete job.approvedBy;
       appendLog(job, '\n↩️ 已退回「等你確認」\n');
       saveJob(job);
+      stepsOf(job).start('review', { label: '等待人工確認', note: '退回確認' });
       return send(res, 200, { job: publicJob(job, admin) });
     }
 
@@ -97,6 +99,9 @@ module.exports = function createRoutes(ctx) {
       //    2026-09-21 改成非同步之後按得到了 —— 只殺 run.js 的話它會繼續渲完、繼續往下
       //    真的出片，最後把這裡設的 cancelled 蓋成 done（doRender 那邊也有一道檢查）。
       //    兩個都要叫，不能用 || 短路 —— 一支停不掉不代表另一支不用停。
+      // ⚠️ 步驟記錄要在停掉子程序**之前**標成 cancelled：run.js 被 SIGTERM 砍掉後會回報那一步
+      //    「失敗」，寫入器看到已經是 cancelled 就不再補一筆（取消鍵按下去卻看到紅色失敗）。
+      stepsOf(job).cancelRunning('人工取消');
       const stoppedMotion = stopMotion(job);
       const stopped = stopRunJs(job) || stoppedMotion;
       // ⚠️ 要在改 status 之前立旗標：殺掉 run.js 會讓 runPipeline 的 close 以非 0 結束碼
