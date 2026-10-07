@@ -32,10 +32,13 @@ provideJobContent(job);
 
 const selected = ref(null);
 const logOpen = ref(false);
-let picked = false;
-watch(() => job.value && job.value.status, () => { picked = false; });
-watch(pipeline, (p) => { if (p && (!picked || !p.nodes[selected.value])) selected.value = p.current; }, { immediate: true });
-function select(id) { picked = true; selected.value = id; }
+// 只在「換工作」或「狀態變了」的時候把右側切到現在輪到的節點。輪詢每 3 秒重算 pipeline，
+// 不能每次都跟著跳 —— 草稿上傳完一張截圖，面板就從「截圖」跳到「送出」，人還沒傳完（實測踩到）。
+watch(() => job.value && job.value.id + '|' + job.value.status, () => {
+  if (pipeline.value) selected.value = pipeline.value.current;
+});
+watch(pipeline, (p) => { if (p && !p.nodes[selected.value]) selected.value = p.current; }, { immediate: true });
+function select(id) { selected.value = id; }
 
 const node = computed(() => (pipeline.value && pipeline.value.nodes[selected.value]) || null);
 const PANELS = { script: ScriptPanel, shots: ShotsPanel, voice: VoicePanel, anchor: AnchorPanel, submit: SubmitPanel, step: StepPanel,

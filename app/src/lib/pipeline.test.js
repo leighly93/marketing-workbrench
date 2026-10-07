@@ -73,6 +73,20 @@ describe('pipeline 模型', () => {
     expect(stageStatus(p.stages[3])).toBe('ok');
   });
 
+  test('已經停下來的工作：節點裡少記一步（例如沒有人工修正就沒有 plan-edits）不算進行中', () => {
+    const steps = [{ id: 'render-prep', status: 'ok' }, { id: 'motion-render', status: 'ok' }, { id: 'render', status: 'ok' }, { id: 'finalize', status: 'ok' }];
+    const done = buildPipeline({ ...base, status: 'done', outputs: [{ name: 'a.mp4', size: 1 }] }, steps);
+    expect(done.nodes.renderprep.status).toBe('ok');
+    expect(stageStatus(done.stages[3])).toBe('ok');
+    // 還在跑的時候同樣的記錄就是「進行中」
+    const running = buildPipeline({ ...base, status: 'rendering' }, [{ id: 'render-prep', status: 'ok' }]);
+    expect(running.nodes.renderprep.status).toBe('running');
+    // 失敗在準備階段：出片節點維持等待，不要被誤標成失敗
+    const failed = buildPipeline({ ...base, status: 'failed', error: 'x' }, [{ id: 'assets', status: 'ok' }, { id: 'generate', status: 'failed', error: 'HeyGen 掛了' }]);
+    expect(failed.nodes.generate.status).toBe('failed');
+    expect(failed.nodes.render.status).toBe('pending');
+  });
+
   test('取消：還沒跑到的節點全部標成已取消', () => {
     const p = buildPipeline({ ...base, status: 'cancelled' }, [{ id: 'generate', status: 'cancelled' }]);
     expect(p.nodes.generate.status).toBe('cancelled');

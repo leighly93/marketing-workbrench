@@ -50,16 +50,18 @@ export function latestSteps(steps) {
   return map;
 }
 
-/** 幾個步驟合成一個節點的狀態。 */
-function aggregate(ids, latest) {
+/**
+ * 幾個步驟合成一個節點的狀態。
+ * active＝工作正在跑：有些步驟還沒跑到（備份完、加速還沒開始）就當「進行中」，比較不會讓人以為卡住；
+ * 工作已經停了（完成／失敗／等人）就只看有記到的 —— 有些步驟本來就不一定會寫（例如沒有人工修正就沒有 plan-edits）。
+ */
+function aggregate(ids, latest, active) {
   const entries = ids.map((id) => latest[id]).filter(Boolean);
   if (!entries.length) return { status: 'pending', entries };
   if (entries.some((e) => e.status === 'running')) return { status: 'running', entries };
   if (entries.some((e) => e.status === 'failed')) return { status: 'failed', entries };
   if (entries.some((e) => e.status === 'cancelled')) return { status: 'cancelled', entries };
-  // 有些步驟還沒跑到（例如備份完、加速還沒開始）→ 整個節點還在等
-  if (entries.length < ids.length && !entries.every((e) => e.status === 'skipped')) {
-    // 只要有一個已經結束而其他還沒開始，就當「進行中」比較不會讓人以為卡住
+  if (active && entries.length < ids.length && !entries.every((e) => e.status === 'skipped')) {
     return { status: 'running', entries };
   }
   if (entries.some((e) => e.status === 'warning')) return { status: 'warning', entries };
@@ -111,8 +113,9 @@ export function buildPipeline(job, steps) {
   ];
 
   // ── 準備 ──
+  const active = ['preparing', 'rendering', 'detached'].includes(st);
   const prepare = PREPARE_NODES.map((n) => {
-    const { status, entries } = aggregate(n.steps, latest);
+    const { status, entries } = aggregate(n.steps, latest, active);
     let s = status;
     if (s === 'pending' && draft) s = 'pending';
     return { id: n.id, label: n.label, status: s, note: stepNote(entries), ms: msOf(entries), parallel: !!n.parallel, panel: 'step', steps: n.steps };
@@ -149,7 +152,7 @@ export function buildPipeline(job, steps) {
 
   // ── 出片 ──
   const render = RENDER_NODES.map((n) => {
-    const { status, entries } = aggregate(n.steps, latest);
+    const { status, entries } = aggregate(n.steps, latest, active);
     return { id: n.id, label: n.label, status, note: stepNote(entries), ms: msOf(entries), panel: 'step', steps: n.steps };
   });
   if (st === 'approved') render.forEach((n) => { if (n.status === 'pending') n.note = job.queuePosition > 0 ? `排隊等出片，前面還有 ${job.queuePosition} 支` : '排隊等出片'; });
