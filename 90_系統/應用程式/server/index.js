@@ -120,6 +120,9 @@ const TEMPLATES = {
     //    這是使用者看過成品截圖後拍板的。wrap 仍是 true，超過只是折行、字級不變。
     title: { lines: 2, per: 10, wrap: true, where: '開場第一秒' },
     label: '盤中焦點',
+    // 2026-10-07 使用者要求「先隱藏，只留大盤小報」：前台選版型清單不畫出來（見 public/app.js 的 pickable）。
+    //    只藏不關：舊工作照樣能開、能重新出片；要恢復就刪掉這行。
+    hidden: true,
     // 這支的 timeline 有把 arrow 傳給渲染端 → 前台才給畫箭頭（2026-09-16）。
     // ⚠️ 沒接的模板不要加這個旗標：畫得出來、成品卻沒有，就是靜默失效。
     arrow: true,
@@ -150,6 +153,9 @@ const TEMPLATES = {
     // （兩行、每行 10 字參考值；wrap 仍是 true，超過只是折行、字級不變）。
     title: { lines: 2, per: 10, wrap: true, where: '開場第一秒' },
     label: '美股焦點',
+    // 2026-10-07 使用者要求「先隱藏，只留大盤小報」：前台選版型清單不畫出來（見 public/app.js 的 pickable）。
+    //    只藏不關：舊工作照樣能開、能重新出片；要恢復就刪掉這行。
+    hidden: true,
     // 這支的 timeline 有把 arrow 傳給渲染端 → 前台才給畫箭頭（2026-09-16）。
     // ⚠️ 沒接的模板不要加這個旗標：畫得出來、成品卻沒有，就是靜默失效。
     arrow: true,
