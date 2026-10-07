@@ -315,7 +315,8 @@ const HEYGEN_DUAL_VOICES = {
 
 // 大盤小報：固定單一 avatar（「每日固定主播」形式，不像投廣模板從池子隨機抽），
 // 2026-08-06 使用者定案。只在 TEMPLATE === "dapan" 時使用。
-const DAPAN_AVATAR = { id: "77012ed52edb488bbf32587afc0ec288", gender: "female" }; // 2026-10-01 使用者改回這支（用過 5bad6432…／484b6346…／77012ed5…／cf57d300…／8032bdb6…／c2c2963b…）
+const DAPAN_AVATAR = { id: "facb6557265845d3b95cfe7b2d75bbf2", gender: "female" }; // 2026-10-07 使用者更換（原 77012ed5…；用過 5bad6432…／484b6346…／77012ed5…／cf57d300…／8032bdb6…／c2c2963b…）
+// ⚠️ 2026-10-07 這支 facb6557… 還沒驗過下面「換 look 三件事」（比例／水平位置／頭頂 y）；出片後看 heygen.mp4 再決定要不要調版位。
 // 2026-10-01 改用 77012ed5…：頭頂 y≈145，比 5bad6432…（≈157）高約 12px，構圖差距小，未重算版位。
 // 2026-09-16 換回 5bad6432… 的原因：484b6346… 的**構圖偏高**。三支的來源 heygen.mp4（都是
 // 1920×1080）量到的頭頂 y：5bad6432≈157、77012ed5≈145、484b6346≈103。版型沒有任何垂直位置參數
@@ -387,7 +388,8 @@ const USSTOCK_HEYGEN_VOICE_ID = "";
 //    對照素材留在 90_系統/暫存/產線輸出/tts-ab/，檔名帶 newA／newB。
 //    重跑：node scripts/tts-ab.js --voice-id=<id> --text-file=<稿子> --dict --emotion=happy --trad-only
 const MINIMAX_FIXED_ANCHOR_VOICES = {
-  dapan: "moss_audio_b47d71d2-ada4-11f1-8900-9edb4a3ef07d",       // 大盤小報（2026-09-11 換，原 e9e9da93…）
+  dapan: "moss_audio_f85dc873-ada4-11f1-a626-8a59b47fb1f9",      // 大盤小報（2026-10-07 使用者指定，與盤中焦點同一支；原 b47d71d2…，更早 e9e9da93…）
+  // ⚠️ 大盤小報與盤中焦點目前是**同一支 MiniMax 聲音**（使用者指定，不是複製貼上的失誤）；兩行各寫字面值、不互相引用。
   midday: "moss_audio_f85dc873-ada4-11f1-a626-8a59b47fb1f9",      // 盤中焦點（2026-09-11 換，原本與大盤小報共用 e9e9da93…）
   usstock: "moss_audio_3a75102e-54db-11f1-981b-8a143315d498",     // 美股焦點（2026-09-15 使用者提供）
   // ⚠️ 美股焦點與焦點股日報目前是**同一支 MiniMax 聲音**（使用者指定，不是複製貼上的失誤）。
