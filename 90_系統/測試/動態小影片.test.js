@@ -544,6 +544,111 @@ test('prompt 要求每項最多 9 個字，但驗證**不**擋 —— 擋了就�
   assert.equal(超長.items[0].text, '三大法人同步站在買方這邊', '也不能偷偷截斷');
 });
 
+// ── 卡片內容要對得上原文（2026-10-08）──────────────────────────
+// 那天兩支片的真實輸出：「單日賣超逾719億」（719 億其實是 10/5 的買超）、
+// 「連假前兩大重點」（休市只是背景，真正的重點只有台積電法說）。
+const 第二段原文 = '今天一天賣超的金額，超過10月5日大漲1,236點，那天的買超719億。'
+  + '外資從9月29日起的累計，10月7日還是買超約450億，今天轉成賣超約308億。';
+const 第三段原文 = '明天台股休市放雙十連假，下周市場密切關注，10月15日台積電法說的結果。';
+
+test('prompt：比較基準、背景交代、自加數量三條要寫進去，附當天的錯誤示範', () => {
+  const { buildPrompt } = require(path.join(app, 'scripts/motion-engine.js'));
+  const p = buildPrompt('隨便一段旁白');
+  assert.match(p, /比較的基準/);
+  assert.match(p, /單日賣超逾719億/, '錯誤示範要用真實踩過的那句');
+  assert.match(p, /背景的交代/);
+  assert.match(p, /不准自己加數量/);
+  assert.match(p, /一個重點就\*\*只寫一行\*\*/, 'quote 也不能一句拆兩行');
+});
+
+test('對照原文：標題自己湊出「兩大重點」要抓出來', () => {
+  const { checkAgainstSource } = require(path.join(app, 'scripts/motion-engine.js'));
+  const 問題 = checkAgainstSource({ template: 'list', kicker: '台股行事曆', title: '連假前|兩大重點',
+    items: [{ text: '台股休市放連假' }, { text: '10/15台積電法說' }] }, 第三段原文);
+  assert.equal(問題.length, 1);
+  assert.match(問題[0], /兩大/);
+  // 改對之後：日期寫成 10/15 不算錯，原文是「10月15日」
+  assert.deepEqual(checkAgainstSource({ template: 'list', title: '連假後|台積電法說',
+    items: [{ text: '10/15台積電法說' }] }, 第三段原文), []);
+});
+
+test('對照原文：原文有說幾個就可以寫，「4 條鏈」對「四大」也算', () => {
+  const { checkAgainstSource } = require(path.join(app, 'scripts/motion-engine.js'));
+  assert.deepEqual(checkAgainstSource({ template: 'list', title: '四大|產品線', items: [{ text: '電容' }] },
+    '被動元件4條鏈，電容、電感、電阻、濾波振盪'), []);
+  assert.deepEqual(checkAgainstSource({ template: 'quote', title: '三大法人|連兩天賣超',
+    lines: [[{ t: '合計404.6億' }]] }, '三大法人連兩天賣超，合計賣了404.6億'), []);
+});
+
+test('對照原文：數字要逐字找得到 —— 四捨五入、別段的數字都擋', () => {
+  const { checkAgainstSource } = require(path.join(app, 'scripts/motion-engine.js'));
+  assert.equal(checkAgainstSource({ template: 'list', items: [{ text: '賣超758億' }] },
+    '外資今天在上市現貨賣超 758.5 億').length, 1, '758.5 寫成 758 是四捨五入');
+  assert.equal(checkAgainstSource({ template: 'list', items: [{ text: '今日賣超758.5億' }] },
+    第二段原文).length, 1, '758.5 億在上一段，不在這段');
+  assert.deepEqual(checkAgainstSource({ template: 'list', items: [{ text: '大漲1236點' }] }, 第二段原文), [],
+    '千分位逗號拿掉不算改數字');
+  assert.deepEqual(checkAgainstSource({ template: 'quote', lines: [[{ t: 'Q4指引' }]] }, '第四季指引'), []);
+});
+
+test('對照原文：「數字對、意思錯」抓不到 —— 這條只能靠 prompt 與人工，寫明白別誤以為有擋', () => {
+  const { checkAgainstSource } = require(path.join(app, 'scripts/motion-engine.js'));
+  assert.deepEqual(checkAgainstSource({ template: 'list', kicker: '外資動向', title: '外資|轉賣超',
+    items: [{ text: '單日賣超逾719億' }] }, 第二段原文), []);
+});
+
+/** 一支假的 claude 指令：依序吐出 answers，並把每次收到的 prompt 記下來。 */
+function 假Claude(answers) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-claude-'));
+  fs.writeFileSync(path.join(dir, 'answers.json'), JSON.stringify(answers));
+  const bin = path.join(dir, 'claude');
+  fs.writeFileSync(bin, `#!/usr/bin/env node
+const fs = require('fs'), path = require('path');
+const d = ${JSON.stringify(dir)};
+const n = fs.readdirSync(d).filter((f) => f.startsWith('call-')).length;
+fs.writeFileSync(path.join(d, 'call-' + n + '.txt'), process.argv[process.argv.indexOf('-p') + 1]);
+const a = JSON.parse(fs.readFileSync(path.join(d, 'answers.json'), 'utf8'));
+process.stdout.write(JSON.stringify({ result: JSON.stringify(a[Math.min(n, a.length - 1)]) }));
+`, { mode: 0o755 });
+  const prompts = () => fs.readdirSync(dir).filter((f) => f.startsWith('call-')).sort()
+    .map((f) => fs.readFileSync(path.join(dir, f), 'utf8'));
+  return { dir, prompts };
+}
+
+function 用假Claude(t, answers) {
+  const fake = 假Claude(answers);
+  const oldPath = process.env.PATH;
+  process.env.PATH = fake.dir + path.delimiter + oldPath;
+  t.after(() => { process.env.PATH = oldPath; });
+  const { plan } = require(path.join(app, 'scripts/motion-engine.js'));
+  return { fake, plan: (text) => plan({ text }, { MOTION_ENGINE: 'claude-cli' }) };
+}
+
+const 湊兩大 = { template: 'list', title: '連假前|兩大重點',
+  items: [{ text: '台股休市放連假', at: '台股休市' }, { text: '10/15台積電法說', at: '台積電法說' }] };
+const 改對了 = { template: 'list', title: '連假後|台積電法說', items: [{ text: '10/15台積電法說', at: '台積電法說' }] };
+
+test('claude-cli：對不上原文就帶著問題重產一次，第二次對了就用第二次的', (t) => {
+  const { fake, plan } = 用假Claude(t, [湊兩大, 改對了]);
+  const spec = plan(第三段原文);
+  assert.equal(spec.title, '連假後|台積電法說');
+  const p = fake.prompts();
+  assert.equal(p.length, 2);
+  assert.match(p[1], /上一版有這些問題[\s\S]*兩大/, '重產時要把問題告訴它，不然只是再抽一次籤');
+});
+
+test('claude-cli：重產還是對不上就不做這段 —— 寧可少一段，也不要放錯的數字', (t) => {
+  const { fake, plan } = 用假Claude(t, [湊兩大, 湊兩大]);
+  assert.equal(plan(第三段原文), null);
+  assert.equal(fake.prompts().length, 2, '只重產一次，不能無限重試吃額度');
+});
+
+test('claude-cli：第一次就對，只叫一次', (t) => {
+  const { fake, plan } = 用假Claude(t, [改對了]);
+  assert.equal(plan(第三段原文).title, '連假後|台積電法說');
+  assert.equal(fake.prompts().length, 1);
+});
+
 test('條列字級：放不下就要縮，不能硬撐原本的大小', () => {
   // 2026-09-21 踩到：一開始寫成「只放大不縮小」，下限設成原本的 66，
   // 結果長文字在加了外框、可用寬變窄之後，硬撐 66 反而折行
