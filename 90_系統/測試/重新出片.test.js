@@ -107,6 +107,47 @@ test('重新出片：稿件、截圖、標注與講者影片原封不動帶到�
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, '工作紀錄', src, '_製作資料', 'job.json'), 'utf8')).status, 'done');
 });
 
+// 2026-10-08：莉莉那支在配圖計畫頁「上傳更多截圖」補了 shot14 並放上去，重新出片後那段不見了 ——
+// 計畫頁的修改存在 job.pendingEdits，不在素材裡。使用者定案：轉成標注帶過去（刪掉的自動段不帶）。
+test('重新出片：配圖計畫頁的人工段落轉成標注帶過去，改過的標注用新版、刪掉的標注不復活', async (t) => {
+  const root = fixture(t);
+  const src = doneJob(root);
+  write(workFile(root, src, 'input', 'shot14.jpg'), '計畫頁才補上傳的圖');
+  // 來源準備階段的計畫（edits 的 i 指的就是這份的列）
+  write(workFile(root, src, 'state', 'src', 'DapanXiaobao', 'dapan-shots.generated.json'), { shots: [
+    { src: 'shot2.png', startCharIdx: 50, endCharIdx: 55 },                    // 0 自動
+    { src: 'shot1.png', startCharIdx: 0, endCharIdx: 27, _annotated: true },   // 1 來自標注
+    { src: 'shot1.png', startCharIdx: 28, endCharIdx: 41, _annotated: true },  // 2 來自標注
+    { src: 'shot3.png', startCharIdx: 90, endCharIdx: 95 },                    // 3 自動
+  ] });
+  const jf = path.join(root, '工作紀錄', src, '_製作資料', 'job.json');
+  const j = JSON.parse(fs.readFileSync(jf, 'utf8'));
+  j.pendingEdits = [
+    { i: 0, src: 'shot2.png', deleted: false, _manual: false, startCharIdx: 50, endCharIdx: 55 },
+    { i: 1, src: 'shot1.png', deleted: false, _manual: true, startCharIdx: 0, endCharIdx: 20,
+      cell: { x: 1, y: 2, w: 3, h: 4 }, imgW: 980, imgH: 1671 },
+    { i: 2, src: 'shot1.png', deleted: true, _manual: false, startCharIdx: 28, endCharIdx: 41 },
+    { i: 3, src: 'shot3.png', deleted: true, _manual: false, startCharIdx: 90, endCharIdx: 95 },
+    { i: 'a0', _added: true, _manual: true, deleted: false, src: 'shot14.jpg', startCharIdx: 60, endCharIdx: 80,
+      region: { x: 0, y: 10, w: 500, h: 300 }, imgW: 1080, imgH: 2340 },
+  ];
+  fs.writeFileSync(jf, JSON.stringify(j));
+  const request = loadServer(root, { childProcess: 假子程序, idleTimers: true });
+
+  const r = await request('POST', `/api/jobs/${src}/redo`, {});
+  assert.equal(r.status, 200);
+  const ann = JSON.parse(fs.readFileSync(newWorkFile(root, r.body.job, 'input', 'annotations.json'), 'utf8')).shots;
+  assert.deepEqual(ann, [
+    { src: 'shot1.png', startCharIdx: 0, endCharIdx: 20, cell: { x: 1, y: 2, w: 3, h: 4 }, imgW: 980, imgH: 1671 },
+    { src: 'shot14.jpg', startCharIdx: 60, endCharIdx: 80, region: { x: 0, y: 10, w: 500, h: 300 }, imgW: 1080, imgH: 2340 },
+  ], '計畫頁補上傳的 shot14 要在；改過的標注只留新版；刪掉的標注不能復活；自動段不轉');
+  assert.equal(fs.readFileSync(newWorkFile(root, r.body.job, 'input', 'shot14.jpg'), 'utf8'), '計畫頁才補上傳的圖');
+  assert.equal(r.body.job.annotationCount, 2);
+  const log = fs.readFileSync(newWorkFile(root, r.body.job, 'log.txt'), 'utf8');
+  assert.match(log, /配圖計畫頁的 2 段人工配圖已轉成標注/);
+  assert.match(log, /刪掉的自動段落帶不過來/, '帶不過來的要講清楚，不然以為全都帶了');
+});
+
 test('重新出片：素材裡自己就有講者影片時，用素材那份（那是這支當初真正送進去的）', async (t) => {
   const root = fixture(t);
   const src = doneJob(root);

@@ -790,6 +790,61 @@ function pendingAnnotsOf(job, rows) {
 }
 
 /**
+ * 重新出片：把來源工作在**配圖計畫頁**做的人工段落轉成標注（2026-10-08 使用者定案 A）。
+ *
+ * 為什麼要有：重新出片只複製「素材」，而計畫頁的修改（加一段、換圖、拖框、改範圍）
+ * 存在 job.pendingEdits，不在素材裡 —— 計畫頁「上傳更多截圖」再放上去的那段，
+ * 重新出片後就整段不見（10/8 莉莉那支 shot14 就是這樣掉的）。
+ *
+ * 轉法：計畫頁的人工段（_manual／_added、沒刪掉、有字元範圍）一律寫成標注；
+ * 它若是從某筆標注改來的，原本那筆標注拿掉，免得新舊兩份都出現。
+ * 在計畫頁被**刪掉**的標注段也拿掉，不要在新工作復活。
+ * ⚠️ 被刪掉的**自動**段落帶不過去 —— 標注只能說「這裡放什麼」，說不出「這裡不要放」。
+ *    新工作的自動計畫可能又排出來，要在計畫頁再刪一次（使用者已知並接受）。
+ *
+ * edits 的 `i` 是來源工作準備階段那份計畫的列索引（快照只在 doPrepare 拍一次），
+ * 所以用來源快照的計畫就查得到「這一列原本是不是標注」。
+ * 回傳 { shots, carried }：新的標注清單，以及這次轉過去幾段。
+ */
+function carryPlanEditsAsAnnots(src, annShots) {
+  const edits = Array.isArray(src.pendingEdits) ? src.pendingEdits : [];
+  const rows = planItemsOf(jobPath(src.id, 'state'), src.template).items;
+  const span = (x) => (x && x.src && typeof x.startCharIdx === 'number' && typeof x.endCharIdx === 'number'
+    ? { src: x.src, lo: Math.min(x.startCharIdx, x.endCharIdx), hi: Math.max(x.startCharIdx, x.endCharIdx) }
+    : null);
+  let shots = Array.isArray(annShots) ? annShots.slice() : [];
+  const drop = (t) => {
+    if (!t) return;
+    shots = shots.filter((s) => {
+      const a = span(s);
+      return !(a && a.src === t.src && !(a.hi < t.lo || a.lo > t.hi));
+    });
+  };
+  let carried = 0;
+  for (const e of edits) {
+    if (!e) continue;
+    const orig = !e._added && Number.isInteger(e.i) ? rows[e.i] : null;
+    const fromAnnot = orig && orig._annotated ? span(orig) : null;
+    if (e.deleted) { drop(fromAnnot); continue; }
+    if (!(e._manual || e._added)) continue;
+    const t = span(e);
+    if (!t) continue;
+    drop(fromAnnot);
+    drop(t);   // 「標注補回」那種列本身就是一筆標注，換成計畫頁改過的版本
+    shots.push({
+      src: e.src, startCharIdx: t.lo, endCharIdx: t.hi,
+      ...(e.cell ? { cell: e.cell } : {}),
+      ...(e.region ? { region: e.region } : {}),
+      ...(e.arrow ? { arrow: e.arrow } : {}),
+      ...(e.imgW ? { imgW: e.imgW } : {}),
+      ...(e.imgH ? { imgH: e.imgH } : {}),
+    });
+    carried += 1;
+  }
+  return { shots, carried };
+}
+
+/**
  * approve 的當下再算一次「還沒進計畫的人工標注」，補成人工段。
  *
  * 為什麼要再算一次：`pendingAnnotsOf()` 只在**進編輯頁的那一刻**算一次，判斷「這筆標注
@@ -2869,7 +2924,8 @@ const server = http.createServer(async (req, res) => {
      *
      * 帶過去的東西：
      *   稿件.txt（已含當時實際套用的發音詞庫段）／素材全部（截圖 ＋ annotations.json）
-     *   ／講者影片（優先用素材裡的，沒有就用製作快照那份）／版型、語氣、品牌等旗標。
+     *   ／講者影片（優先用素材裡的，沒有就用製作快照那份）／版型、語氣、品牌等旗標
+     *   ／配圖計畫頁的人工段落（轉成標注，2026-10-08，見 carryPlanEditsAsAnnots）。
      *
      * ⚠️ 一律 skipGenerate：不呼叫 HeyGen、不呼叫 MiniMax，**不會重新扣點數**。
      * ⚠️ 稿件不給改：annotations.json 是用字元索引（startCharIdx／endCharIdx）定位的，
@@ -2963,6 +3019,18 @@ const server = http.createServer(async (req, res) => {
       if (!fs.existsSync(jobPath(job.id, 'input', 'heygen.mp4'))) {
         fs.copyFileSync(heygenFrom, jobPath(job.id, 'input', 'heygen.mp4'));
       }
+      // 計畫頁的人工段落不在素材裡，轉成標注帶過去（見 carryPlanEditsAsAnnots）。
+      // 壞了也不擋重新出片 —— 最差就是跟以前一樣，計畫頁的修改要重做。
+      let carriedEdits = 0;
+      try {
+        const annFile = jobPath(job.id, 'input', 'annotations.json');
+        const before = fs.existsSync(annFile) ? JSON.parse(fs.readFileSync(annFile, 'utf-8')).shots || [] : [];
+        const { shots, carried } = carryPlanEditsAsAnnots(src, before);
+        if (carried || shots.length !== before.length) {
+          fs.writeFileSync(annFile, JSON.stringify({ shots }, null, 2));
+        }
+        carriedEdits = carried;
+      } catch (_) { /* 見上 */ }
       // OCR 沿用：截圖是原封不動複製過來的，版面偵測結果不可能不一樣。
       // 實測一支 8 張截圖的工作，準備階段 22 秒裡有 18 秒花在這段分析上 —— 重跑純粹是浪費。
       // 這裡把來源快照的結果連同「每張截圖的 md5」寫進新工作的 input/，
@@ -2989,13 +3057,21 @@ const server = http.createServer(async (req, res) => {
 
       job.files = fs.readdirSync(jobPath(job.id, 'input')).filter((n) => !n.startsWith('.'));
       job.files.push('script.txt');
-      job.annotationCount = src.annotationCount || 0;
+      job.annotationCount = (() => {
+        try {
+          return (JSON.parse(fs.readFileSync(jobPath(job.id, 'input', 'annotations.json'), 'utf-8')).shots || []).length;
+        } catch (_) { return src.annotationCount || 0; }
+      })();
 
       JOBS.unshift(job);
       saveJob(job);
       appendLog(job, `♻️ 重新出片：沿用工作 ${src.id} 的稿件、截圖、標注與講者影片。\n`
         + '   不會重新呼叫 HeyGen／MiniMax，也不會重新扣點數。\n'
         + `   帶過來的檔案：${job.files.join('、')}\n`
+        + (carriedEdits
+          ? `   配圖計畫頁的 ${carriedEdits} 段人工配圖已轉成標注一起帶過來`
+            + '（在計畫頁刪掉的自動段落帶不過來，新計畫若又排出來要再刪一次）。\n'
+          : '')
         + '   直接開始準備（轉字幕、排配圖計畫），跑完會停在「待確認」等你看配圖計畫。\n');
       // setImmediate 不是 tick()，理由同 /approve —— doPrepare 也是同步複製完輸入檔
       // 才交出 event loop，回應要先出去。
