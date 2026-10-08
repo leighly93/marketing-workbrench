@@ -224,6 +224,26 @@ test('命名規則：public 用 ASCII、素材用看得懂的中文名', () => {
   assert.match(out, /public\/motion-1-l\.mp4/, '橫式 public 檔名');
 });
 
+test('三段（2026-10-08 起的上限）：各自編號、各自算時間，檔名不會互相蓋掉', () => {
+  const 字 = '外資買超八百七十億，投信賣超二十億，自營商小買五億，散戶融資增加';
+  const dir = 隔離環境(字);
+  const 段 = (s, e, a, b) => ({ startCharIdx: s, endCharIdx: e,
+    spec: { template: 'list', items: [{ text: a, at: a }, { text: b, at: b }] } });
+  fs.writeFileSync(path.join(dir, 'public/motion.json'), JSON.stringify([
+    段(0, 9, '外資', '八百七十億'), 段(10, 17, '投信', '二十億'), 段(18, 25, '自營商', '五億'),
+  ]));
+  const out = 跑(dir, '--dry-run', '--template=dapan');
+  for (const n of [1, 2, 3]) {
+    assert.match(out, new RegExp(`動態 ${n}：`), `第 ${n} 段要有自己的編號`);
+    assert.match(out, new RegExp(`public/motion-${n}-p\\.mp4`), `第 ${n} 段直式檔名`);
+    assert.match(out, new RegExp(`public/motion-${n}-l\\.mp4`), `第 ${n} 段橫式檔名`);
+  }
+  // 第二段從第 10 字開始 ＝ 2.0 秒；「二十億」在段內第 4 字（從 0 算）＝ 相對 0.8 秒
+  assert.match(out, /動態 2：charIdx 10–17　2\.00s/);
+  assert.match(out, /二十億　→ 第 0\.8 秒進場/);
+  assert.match(out, /算出 3 段/);
+});
+
 test('字幕還沒轉好就跑：要報錯，不能默默產出沒有時間的動態', () => {
   const dir = 隔離環境('');   // _scriptCharTimes 是空的
   fs.writeFileSync(path.join(dir, 'public/motion.json'), JSON.stringify([{ startCharIdx: 0, endCharIdx: 1, spec: {} }]));
@@ -287,7 +307,7 @@ test('run.js：清殘留的 regex 只打中動態檔，不能誤刪講者影片�
 // 動態的設定存在工作自己的 input/motion.json。選這個位置是因為 stageJobInputs 會把
 // 整個 input/ 複製進 ROOT/public，而 render-motion.js 讀的就是 public/motion.json ——
 // 不必另外接線，「重新出片」整包帶走 input/ 也自動沿用。
-// 要盯的是：正規化（只收一段、丟壞值、spec 原樣留著）、狀態守門、以及 preparing 時
+// 要盯的是：正規化（最多 3 段、丟壞值、spec 原樣留著）、狀態守門、以及 preparing 時
 // 要補寫 ROOT/public（那代表 run.js 正佔著 ROOT 在跑，不補就趕不上 renderMotionClips）。
 
 const { fixture: 沙箱, write: 寫檔, loadServer } = require('./隔離服務');
@@ -301,21 +321,79 @@ const 工作檔 = (root, id, ...parts) => path.join(createJobStore(root).directo
 const 純 = (v) => JSON.parse(JSON.stringify(v));
 const 稿件 = { template: 'dapan', title: '合成標題', body: '這是合成稿件。' };
 
-test('伺服器：只收一段、丟掉壞值、spec 原樣保留', (t) => {
+test('伺服器：最多收 3 段、依開頭排序、丟掉壞值、spec 原樣保留', (t) => {
+  // 2026-10-08 使用者定案從每支 1 段放寬到 3 段。
   const root = 沙箱(t);
   const api = loadServer(root);
   const got = 純(api.normalizeMotion([
+    { startCharIdx: 50, endCharIdx: 60 },
     { startCharIdx: 10, endCharIdx: 40, keyword: '三大法人', spec: { template: 'list', items: [] } },
-    { startCharIdx: 50, endCharIdx: 60 },          // 第二段 → 使用者定案每支只有 1 段，丟掉
     { startCharIdx: 'x', endCharIdx: 9 },          // 不是數字 → 丟掉
     { startCharIdx: 9, endCharIdx: 3 },            // 頭尾顛倒 → 丟掉（不自動翻正，那會猜錯意圖）
     null,
+    { startCharIdx: 70, endCharIdx: 80 },
+    { startCharIdx: 90, endCharIdx: 95 },          // 第四段 → 超過上限，丟掉
   ]));
-  assert.equal(got.length, 1);
+  assert.deepEqual(got.map((m) => [m.startCharIdx, m.endCharIdx]), [[10, 40], [50, 60], [70, 80]],
+    '要依腳本順序排好，第四段以後丟掉');
   assert.deepEqual(got[0], {
     startCharIdx: 10, endCharIdx: 40, keyword: '三大法人',
     spec: { template: 'list', items: [] },
   });
+});
+
+test('伺服器：互相重疊的段只留先開始的那段 —— 兩支動態疊在一起沒有意義', (t) => {
+  const root = 沙箱(t);
+  const api = loadServer(root);
+  const got = 純(api.normalizeMotion([
+    { startCharIdx: 30, endCharIdx: 50 },
+    { startCharIdx: 10, endCharIdx: 30 },          // 跟上面那段共用第 30 字
+    { startCharIdx: 60, endCharIdx: 70 },
+  ]));
+  assert.deepEqual(got.map((m) => [m.startCharIdx, m.endCharIdx]), [[10, 30], [60, 70]]);
+});
+
+test('前台與伺服器的段數上限是同一個數字', () => {
+  const 取 = (file) => {
+    const m = fs.readFileSync(appPath(repository, file), 'utf8').match(/\nconst MOTION_MAX = (\d+);/);
+    assert.ok(m, `找不到 MOTION_MAX：${file}（改名或改寫法時這個測試要跟著改）`);
+    return Number(m[1]);
+  };
+  const 伺服器 = 取('server/index.js');
+  assert.equal(取('server/public/app.js'), 伺服器,
+    '前台多給的段會被伺服器默默丟掉（同事選了沒作用），少給則是白開放');
+  assert.equal(伺服器, 3, '2026-10-08 使用者定案每支最多 3 段');
+});
+
+test('APP 配圖優先：跟任何一張配圖重疊一個字的動態就不做', (t) => {
+  const root = 沙箱(t);
+  const api = loadServer(root);
+  const { keep, dropped } = 純(api.motionClearOfShots(
+    [
+      { startCharIdx: 0, endCharIdx: 9 },     // 跟配圖 9–20 共用第 9 字 → 不做
+      { startCharIdx: 21, endCharIdx: 30 },   // 緊貼著配圖之後，沒有重疊 → 照做
+      { startCharIdx: 40, endCharIdx: 50 },   // 配圖頭尾寫反了也要認得 → 不做
+    ],
+    [
+      { src: 'a.png', startCharIdx: 9, endCharIdx: 20 },
+      { src: 'b.png', startCharIdx: 45, endCharIdx: 42 },
+      { src: 'c.png' },                        // 沒有字元範圍的不算（解不出時間，畫面上也不會出現）
+    ]));
+  assert.deepEqual(keep.map((m) => m.startCharIdx), [21]);
+  assert.deepEqual(dropped.map((m) => m.startCharIdx), [0, 40]);
+});
+
+test('清工作區要清掉上一支的動態設定 —— 不然準備階段會拿別份腳本的字元索引去渲染', (t) => {
+  // 2026-10-08 本機驗收踩到：annotations.json 有指名清，motion.json 沒有，
+  // 新工作在準備階段讀到上一支的段落，報「charIdx 539–607 超出腳本範圍」。
+  const root = 沙箱(t);
+  const api = loadServer(root);
+  寫檔(appPath(root, 'public/motion.json'), [{ startCharIdx: 539, endCharIdx: 607 }]);
+  寫檔(appPath(root, 'public/deeplinks.json'), { 品牌素材: true });
+  api.clearWorkspaceInputs();
+  assert.equal(fs.existsSync(appPath(root, 'public/motion.json')), false);
+  assert.equal(fs.existsSync(appPath(root, 'public/deeplinks.json')), true,
+    '不能用 *.json 一律清 —— deeplinks.json 是品牌素材');
 });
 
 test('伺服器：spec 的內容不在這裡驗 —— 那是 motion-engine 的事', (t) => {
@@ -795,6 +873,34 @@ test('動態渲染跑到一半按取消：不往下出片，也不會被蓋成�
   assert.match(log, /動態渲染已停止/);
   assert.doesNotMatch(log, /動態小影片重算失敗/,
     '取消不是失敗 —— 寫成「這支沒有動態」會讓人以為出片還在跑');
+});
+
+test('出片前：跟最終配圖重疊的動態段不送去渲染（APP 優先），其餘照做', { timeout: 10000 }, async (t) => {
+  const root = 沙箱(t);
+  const id = 待出片工作(root);
+  // 快照裡的配圖計畫：第 10–20 字放了一張 APP 截圖
+  寫檔(path.join(root, '工作紀錄', id, '_製作資料', '快照', 'src', 'DapanXiaobao',
+    'dapan-shots.generated.json'), { shots: [{ src: 'a.png', startCharIdx: 10, endCharIdx: 20 }] });
+  寫檔(path.join(root, '工作紀錄', id, '素材', 'motion.json'), [
+    { startCharIdx: 0, endCharIdx: 5 },
+    { startCharIdx: 15, endCharIdx: 30 },
+    { startCharIdx: 40, endCharIdx: 50 },
+  ]);
+  const 子程序 = 假子程序();
+  const api = loadServer(root, { childProcess: 子程序, idleTimers: true });
+
+  const job = api.getJob(id);
+  const 出片 = api.doRender(job);
+  await new Promise((r) => setImmediate(r));   // 讓 doRender 跑到 await runMotion
+
+  assert.ok(子程序.動態, '還有兩段可以做，動態渲染應該照常起來');
+  const 送去的 = JSON.parse(fs.readFileSync(appPath(root, 'public/motion.json'), 'utf8'));
+  assert.deepEqual(送去的.map((m) => m.startCharIdx), [0, 40], '蓋到截圖的那段不能送去渲染');
+
+  子程序.動態.emit('close', 0, null);
+  await assert.rejects(出片, /找不到輸出檔案/);   // 合成環境沒有成品檔，見上一支測試
+  const log = fs.readFileSync(path.join(root, '工作紀錄', id, '_製作資料', 'log.txt'), 'utf-8');
+  assert.match(log, /第 15–30 字）跟 APP 配圖重疊，APP 優先/, '要在記錄裡說清楚哪一段為什麼沒做');
 });
 
 test('取消排隊中的另一支，不能打斷正在跑的那支動態', { timeout: 10000 }, async (t) => {

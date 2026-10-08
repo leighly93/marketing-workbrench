@@ -1636,6 +1636,8 @@ function planCard(job) {
     // 改了某一段的出現範圍之後，重點詞那一區的藍底線要跟著更新
     //（不然「哪裡已經有圖」會停在剛進頁面的那一刻，愈改愈不準）。
     drawEmph();
+    // 動態那一區同理，而且還要即時標紅「這段已經被配圖蓋到、出片時不做」
+    drawMotion();
   }
 
   function addSeg(src) {
@@ -2160,9 +2162,14 @@ function charsCoveredBy(list) {
   return set;
 }
 
-// ── 動態小影片（2026-09-18）────────────────────────────────
-// 跟重點詞同一套手勢（在腳本上拖選），但**每支只有一段**：再拖一次就是取代，
-// 點已選的地方就取消。使用者定案「每支預設 1 段」。
+// ── 動態小影片（2026-09-18；2026-10-08 起最多 3 段）──────────────
+// 跟重點詞同一套手勢（在腳本上拖選），每段前面標編號：
+//   拖到沒選過的地方＝加一段；拖到碰到已選的段＝取代那段；點已選的段＝取消那段。
+//   碰到藍底線（已經有 APP 配圖）的字不給選 —— 動態會整片蓋掉截圖（使用者定案 APP 優先）。
+// 配圖在計畫頁還能再改，所以已選的段之後才被配圖蓋到時標紅提醒；
+// 真正的判定在伺服器出片前（motionClearOfShots），那時重疊的段直接不做。
+// ⚠️ MOTION_MAX 要跟 server/index.js 一致，由 90_系統/測試/動態小影片.test.js 綁住。
+const MOTION_MAX = 3;
 let MOTION = [];
 let MOTION_JOB = null;
 let MOTION_COVERED = null;   // 「哪些字已經有配圖」，畫藍底線用；各階段來源不同
@@ -2175,35 +2182,23 @@ function motionBox(job, covered) {
   MOTION_JOB = job;
   MOTION_COVERED = covered || (() => []);
   if (switched) { MOTION = []; setTimeout(() => loadMotion(job), 0); }
-  const box = el('details', { class: 'emph' },
+  const box = el('details', { class: 'emph motion' },
     el('summary', {},
       '動態小影片（選填）　',
       el('span', { id: 'motionCount', class: 'sec' }, '尚未指定'),
       el('span', { id: 'motionSaved', class: 'sec', style: 'margin-left:10px' }, '')),
     el('div', { class: 'tip', html:
-      '在下面的腳本上拖選一段，那段畫面會換成帶動畫的文字卡 —— '
-      + '卡片上的每一項會<b>跟著旁白唸到它的時間</b>依序出現。再拖一次就換一段，點已選的地方取消。' }),
+      `在下面的腳本上拖選一段，那段畫面會換成帶動畫的文字卡，最多 ${MOTION_MAX} 段 —— `
+      + '卡片上的每一項會<b>跟著旁白唸到它的時間</b>依序出現。點已選的黃色段落就取消那段。' }),
     el('div', { class: 'tip', html:
-      '挑「一次講三件事以上、大約 10 秒以上」的段落效果最好；'
-      + '<b>沒有配圖的地方</b>（字底下沒有藍線）最適合，那裡原本畫面上只有講者。' }),
+      '挑「一次講三件事以上、大約 10 秒以上」的段落效果最好。'
+      + '<b>字底下有藍線的地方已經放了 APP 配圖，不能選</b> —— 動態會整片蓋掉截圖。' }),
     el('div', { class: 'range', id: 'motionRange' }),
-    el('div', { id: 'motionPicked', class: 'tip', style: 'margin-top:6px' }),
-    el('details', { style: 'margin-top:10px' },
-      el('summary', { class: 'sec' }, '進階：自己指定卡片內容'),
-      el('div', { class: 'tip', html:
-        '留空的話，卡片文字由 Claude 讀那段旁白自己濃縮。要自己指定就貼一份參數 JSON，例如：<br>'
-        + '<code>{"template":"list","kicker":"三大法人","title":"買超|超過1165億",'
-        + '"items":[{"text":"外資買超","at":"外資在買"}]}</code><br>'
-        + 'template 可用 list（條列）／contrast（不是X而是Y）／quote（一句話）。'
-        + '每一項的 <code>at</code> 要是旁白原文裡真的有的字串，用來算進場時間。' }),
-      el('textarea', { id: 'motionSpec', rows: '6',
-        style: 'width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px',
-        placeholder: '留空＝交給 Claude',
-        onchange: () => saveMotion(), onblur: () => saveMotion() }),
-      el('div', { id: 'motionSpecMsg', class: 'tip', style: 'color:var(--warn)' })),
+    el('div', { id: 'motionMsg', class: 'tip', style: 'color:var(--bad);min-height:0' }),
+    el('div', { id: 'motionPicked', style: 'margin-top:6px' }),
     el('div', { style: 'margin-top:8px' },
       el('button', { class: 'ghost tiny', id: 'motionClear',
-        onclick: () => { MOTION = []; drawMotion(); saveMotion(); } }, '清除')));
+        onclick: () => { MOTION = []; motionSay(''); drawMotion(); saveMotion(); } }, '全部清除')));
   if (MOTION.length) box.open = true;
   setTimeout(drawMotion, 0);
   return box;
@@ -2219,18 +2214,33 @@ function loadMotion(job, after) {
   });
 }
 
+function motionSay(text) {
+  const m = $('#motionMsg');
+  if (m) m.textContent = text;
+}
+
+/** 這段有沒有任何一個字已經有配圖。 */
+function motionClash(m, covered) {
+  for (let i = m.startCharIdx; i <= m.endCharIdx; i++) if (covered.has(i)) return true;
+  return false;
+}
+
 function drawMotion() {
   const wrap = $('#motionRange');
   if (!wrap) return;
   if (!CHARS.length) return wrap.replaceChildren(el('span', {}, '（腳本還在讀…）'));
   const covered = charsCoveredBy(MOTION_COVERED ? MOTION_COVERED() : []);
-  const m = MOTION[0];
+  const clash = MOTION.map((m) => motionClash(m, covered));
   const nodes = [];
   CHARS.forEach((c) => {
+    const k = MOTION.findIndex((m) => c.i >= m.startCharIdx && c.i <= m.endCharIdx);
+    // 編號不帶 data-mo —— 拖選時滑過它不算選到字
+    if (k >= 0 && c.i === MOTION[k].startCharIdx)
+      nodes.push(el('b', { class: 'mono' + (clash[k] ? ' clash' : '') }, String(k + 1)));
     const cls = [];
-    if (covered.has(c.i)) cls.push('used');                                      // 藍底線＝已經有配圖
-    if (inPreview(MOTION_PREVIEW, c.i)) cls.push('sel');                         // 藍底＝正在拖、還沒放手
-    else if (m && c.i >= m.startCharIdx && c.i <= m.endCharIdx) cls.push('emph'); // 黃＝這段要做動態
+    if (covered.has(c.i)) cls.push('used');                    // 藍底線＝已經有配圖
+    if (inPreview(MOTION_PREVIEW, c.i)) cls.push('sel');       // 藍底＝正在拖、還沒放手
+    else if (k >= 0) cls.push('emph', ...(clash[k] ? ['clash'] : []));  // 黃＝這段要做動態
     if (c.b) cls.push('br');
     nodes.push(el('i', { 'data-mo': c.i, class: cls.join(' ') }, c.c));
     if (c.p) nodes.push(el('br', { class: 'para' }));
@@ -2238,48 +2248,70 @@ function drawMotion() {
   wrap.replaceChildren(...nodes);
 
   const n = $('#motionCount');
-  if (n) n.textContent = m ? `已選 ${m.endCharIdx - m.startCharIdx + 1} 個字` : '尚未指定';
-  const picked = $('#motionPicked');
-  if (picked) {
-    if (!m) picked.textContent = '';
-    else {
-      const txt = CHARS.slice(m.startCharIdx, m.endCharIdx + 1).map((c) => c.c).join('');
-      // 秒數只有配圖計畫那一頁算得出來（標注階段字幕還不存在）
-      const sec = CHAR_SEC ? `　約 ${((m.endCharIdx - m.startCharIdx + 1) * CHAR_SEC).toFixed(1)} 秒` : '';
-      // 用 textContent 不用 innerHTML —— 腳本內容是使用者打的，不做跳脫直接塞 HTML 會出事，
-      // 而這個檔案沒有現成的跳脫函式，不值得為了一個粗體字自己造一個。
-      picked.replaceChildren(
-        el('span', {}, '這一段：'),
-        el('b', {}, txt.slice(0, 60) + (txt.length > 60 ? '…' : '')),
-        el('span', {}, sec));
-    }
+  if (n) {
+    const skip = clash.filter(Boolean).length;
+    n.textContent = MOTION.length
+      ? `已選 ${MOTION.length} / ${MOTION_MAX} 段` + (skip ? `，${skip} 段跟配圖重疊` : '')
+      : '尚未指定';
   }
   const btn = $('#motionClear');
-  if (btn) { btn.disabled = !m; btn.style.opacity = m ? 1 : 0.35; }
-  const spec = $('#motionSpec');
-  if (spec && document.activeElement !== spec) {
-    spec.value = m && m.spec ? JSON.stringify(m.spec, null, 2) : '';
+  if (btn) { btn.disabled = !MOTION.length; btn.style.opacity = MOTION.length ? 1 : 0.35; }
+
+  // 正在打進階參數時不重畫，不然打到一半的字會被洗掉
+  const picked = $('#motionPicked');
+  if (!picked || picked.contains(document.activeElement)) return;
+  picked.replaceChildren(...MOTION.map((m, k) => motionRow(m, k, clash[k])));
+}
+
+/** 已選的一段：編號、原文、秒數、重疊提醒、移除，以及收起來的進階參數。 */
+function motionRow(m, k, clash) {
+  const txt = CHARS.slice(m.startCharIdx, m.endCharIdx + 1).map((c) => c.c).join('');
+  // 秒數只有配圖計畫那一頁算得出來（標注階段字幕還不存在）
+  const sec = CHAR_SEC ? `　約 ${((m.endCharIdx - m.startCharIdx + 1) * CHAR_SEC).toFixed(1)} 秒` : '';
+  const msg = el('div', { class: 'tip', style: 'color:var(--warn)' });
+  // 用 textContent 不用 innerHTML —— 腳本內容是使用者打的，不做跳脫直接塞 HTML 會出事。
+  return el('div', { class: 'mrow' },
+    el('div', { class: 'tip' },
+      el('b', { class: 'mono' + (clash ? ' clash' : '') }, String(k + 1)),
+      el('b', {}, txt.slice(0, 60) + (txt.length > 60 ? '…' : '')),
+      el('span', {}, sec),
+      el('button', { class: 'ghost tiny', style: 'margin-left:10px',
+        onclick: () => { MOTION.splice(k, 1); motionSay(''); drawMotion(); saveMotion(); } }, '移除')),
+    clash ? el('div', { class: 'ovr bad' },
+      '這段跟 APP 配圖重疊了，出片時這段不做動態（APP 優先）。要保留就改選別的段落。') : null,
+    el('details', {},
+      el('summary', { class: 'sec' }, '進階：自己指定卡片內容'),
+      el('div', { class: 'tip', html:
+        '留空的話，卡片文字由 Claude 讀那段旁白自己濃縮。要自己指定就貼一份參數 JSON，例如：<br>'
+        + '<code>{"template":"list","kicker":"三大法人","title":"買超|超過1165億",'
+        + '"items":[{"text":"外資買超","at":"外資在買"}]}</code><br>'
+        + 'template 可用 list（條列）／contrast（不是X而是Y）／quote（一句話）。'
+        + '每一項的 <code>at</code> 要是旁白原文裡真的有的字串，用來算進場時間。' }),
+      el('textarea', { rows: '6',
+        style: 'width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px',
+        placeholder: '留空＝交給 Claude',
+        onchange: (ev) => motionSpecInput(m, ev.target, msg) },
+        m.spec ? JSON.stringify(m.spec, null, 2) : ''),
+      msg));
+}
+
+/** 進階參數：留空＝交給 Claude；有填就要是合法 JSON，不然擋下來並說清楚。 */
+function motionSpecInput(m, ta, msg) {
+  const raw = ta.value.trim();
+  if (!raw) delete m.spec;
+  else {
+    try { m.spec = JSON.parse(raw); }
+    catch (e) {
+      msg.textContent = 'JSON 格式有問題，這份參數還沒存進去：' + e.message;
+      return;
+    }
   }
+  msg.textContent = '';
+  saveMotion();
 }
 
 async function saveMotion() {
   if (!MOTION_JOB) return;
-  // 進階參數：留空＝交給 Claude；有填就要是合法 JSON，不然擋下來並說清楚
-  const ta = $('#motionSpec');
-  const msg = $('#motionSpecMsg');
-  if (ta && MOTION.length) {
-    const raw = ta.value.trim();
-    if (!raw) { delete MOTION[0].spec; if (msg) msg.textContent = ''; }
-    else {
-      try {
-        MOTION[0].spec = JSON.parse(raw);
-        if (msg) msg.textContent = '';
-      } catch (e) {
-        if (msg) msg.textContent = 'JSON 格式有問題，這份參數還沒存進去：' + e.message;
-        return;
-      }
-    }
-  }
   const seq = ++motionSaveSeq;
   const note = $('#motionSaved');
   try {
@@ -2295,7 +2327,32 @@ async function saveMotion() {
   }
 }
 
-// 拖選：跟重點詞同一套手勢，差別是**只留一段**（再拖就是取代）。
+/**
+ * 放手後怎麼處理這次拖選。純粹改 MOTION，回傳要給人看的提示（空字串＝沒事）。
+ * 順序有意義：先看是不是「點一下取消」，再擋配圖，再判斷取代或新增。
+ */
+function applyMotionPick(lo, hi, covered) {
+  const hit = MOTION.findIndex((m) => lo === hi && lo >= m.startCharIdx && lo <= m.endCharIdx);
+  if (hit >= 0) { MOTION.splice(hit, 1); return ''; }
+  if (lo === hi) return '';     // 點一個字不算一段，動態至少要一句話
+  for (let i = lo; i <= hi; i++) {
+    if (covered.has(i)) return '這段有字已經放了 APP 配圖（藍底線），動態會把截圖蓋掉。請避開藍底線再選。';
+  }
+  const pick = { startCharIdx: lo, endCharIdx: hi };
+  const over = MOTION.filter((m) => !(hi < m.startCharIdx || lo > m.endCharIdx));
+  if (over.length) {
+    // 取代：被碰到的段換成這次拖的範圍，第一段的進階參數跟著留下
+    if (over[0].spec) pick.spec = over[0].spec;
+    MOTION = MOTION.filter((m) => !over.includes(m));
+  } else if (MOTION.length >= MOTION_MAX) {
+    return `已經選滿 ${MOTION_MAX} 段。先點掉其中一段，再選新的。`;
+  }
+  MOTION.push(pick);
+  MOTION.sort((a, b) => a.startCharIdx - b.startCharIdx);
+  return '';
+}
+
+// 拖選：跟重點詞同一套手勢。放手後交給 applyMotionPick 決定是取消、取代還是新增。
 {
   const idxOf = (t) => (t && t.dataset && t.dataset.mo != null ? +t.dataset.mo : null);
   let dragging = false, anchor = null, last = null;
@@ -2306,6 +2363,7 @@ async function saveMotion() {
     if (i == null) return;
     dragging = true; anchor = i; last = i;
     MOTION_PREVIEW = { lo: i, hi: i };   // 點下去就上色，不等放手
+    motionSay('');                       // 上一次的提示到這裡就過時了
     drawMotion();
     ev.preventDefault();
   });
@@ -2321,14 +2379,11 @@ async function saveMotion() {
     if (!dragging) return;
     dragging = false;
     MOTION_PREVIEW = null;               // 預覽讓位給下面真正套用的結果
-    const lo = Math.min(anchor, last);
-    const hi = Math.max(anchor, last);
-    const m = MOTION[0];
-    // 單點在已選範圍內＝取消；其餘一律取代（每支只有一段）
-    if (m && lo === hi && lo >= m.startCharIdx && lo <= m.endCharIdx) MOTION = [];
-    else MOTION = [{ ...(m && m.spec ? { spec: m.spec } : {}), startCharIdx: lo, endCharIdx: hi }];
+    const before = JSON.stringify(MOTION);
+    const covered = charsCoveredBy(MOTION_COVERED ? MOTION_COVERED() : []);
+    motionSay(applyMotionPick(Math.min(anchor, last), Math.max(anchor, last), covered));
     drawMotion();
-    saveMotion();
+    if (JSON.stringify(MOTION) !== before) saveMotion();
   });
 }
 

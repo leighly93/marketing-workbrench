@@ -435,6 +435,10 @@ function clearWorkspaceInputs() {
   // 所以留著也不會誤用；但殘留檔本身就是坑（同一類的「撞名截圖用到上一支的尺寸」踩過），
   // 這支工作沒帶沿用檔就不該在 public 看到別人的。
   rmrf(path.join(pub, 'app-images.reuse.json'));
+  // 動態設定同理（2026-10-08 本機驗收踩到）：沒標動態的工作會在準備階段拿上一支的段落去渲染，
+  // 字元索引是別份腳本的 —— 超出範圍就報錯，沒超出就做出毫不相干的字卡。
+  // 出片前 doRender 會重寫這個檔，所以成品不受影響，但準備階段白跑（最多 3 段 × claude ＋ 渲染）。
+  rmrf(path.join(pub, 'motion.json'));
 }
 
 function snapshotWorkspace(job) {
@@ -918,21 +922,54 @@ function readJobMotion(job) {
 }
 
 /**
- * 只留下能用的欄位，而且**只收一段**（使用者定案：每支預設 1 段）。
+ * 每支最多幾段動態（2026-10-08 使用者定案從 1 段放寬到 3 段）。
+ * ⚠️ 要跟 server/public/app.js 的 MOTION_MAX 一致，由 90_系統/測試/動態小影片.test.js 綁住。
+ */
+const MOTION_MAX = 3;
+
+/**
+ * 只留下能用的欄位，依開頭排序，**互相重疊的只留先開始的那段**，最多 MOTION_MAX 段。
+ * 兩段重疊在畫面上就是兩支動態疊在一起，前台本來就擋，這裡是擋直接打 API 的。
  * spec 原樣保留 —— 它的驗證在 motion-engine.js，那裡才知道三種模板各要什麼。
  */
 function normalizeMotion(raw) {
   if (!Array.isArray(raw)) return [];
-  return raw
+  const valid = raw
     .filter((m) => m && Number.isInteger(m.startCharIdx) && Number.isInteger(m.endCharIdx)
       && m.endCharIdx >= m.startCharIdx)
-    .slice(0, 1)
+    .sort((a, b) => a.startCharIdx - b.startCharIdx);
+  const kept = [];
+  for (const m of valid) {
+    const last = kept[kept.length - 1];
+    if (last && m.startCharIdx <= last.endCharIdx) continue;
+    kept.push(m);
+  }
+  return kept
+    .slice(0, MOTION_MAX)
     .map((m) => ({
       startCharIdx: m.startCharIdx,
       endCharIdx: m.endCharIdx,
       ...(m.keyword ? { keyword: String(m.keyword).slice(0, 40) } : {}),
       ...(m.spec && typeof m.spec === 'object' ? { spec: m.spec } : {}),
     }));
+}
+
+/**
+ * APP 配圖優先（2026-10-08 使用者定案）：動態會整片蓋掉截圖，所以跟任何一張配圖
+ * 有一個字重疊的動態段落就不做。配圖在計畫頁還能改，前台只能提醒，
+ * 真正的判定在出片前、拿套用修正之後的計畫比對。
+ */
+function motionClearOfShots(entries, shots) {
+  const ranges = (shots || [])
+    .filter((s) => s && typeof s.startCharIdx === 'number' && typeof s.endCharIdx === 'number')
+    .map((s) => [Math.min(s.startCharIdx, s.endCharIdx), Math.max(s.startCharIdx, s.endCharIdx)]);
+  const keep = [];
+  const dropped = [];
+  for (const m of entries || []) {
+    const hit = ranges.some(([a, b]) => !(m.endCharIdx < a || m.startCharIdx > b));
+    (hit ? dropped : keep).push(m);
+  }
+  return { keep, dropped };
 }
 
 function saveJobMotion(job, raw) {
@@ -1980,13 +2017,27 @@ async function doRender(job) {
     const marks = writeEmphasis(readJobEmphasis(job));
     if (marks.length) appendLog(job, `\n🖍 字幕重點詞 ${marks.length} 處\n`);
   }
+  // ⚠️ 人工修正要排在動態**之前**（2026-10-08）：動態要讓位給 APP 配圖，
+  //    比對的必須是套用修正之後、真正會出片的那份配圖計畫。
+  //    這一步只改 ROOT 的計畫檔，下面動態被取消時整個工作區本來就不會再用。
+  if (job.pendingEdits && job.pendingEdits.length) {
+    applyPlanEdits(job, job.pendingEdits);
+    // 「人工標記」那一類不是這一步套用的（它是標注頁的產物，只為了寫修正紀錄而記），
+    // 算進來會讓這行數字看起來比實際改動多（2026-08-21）。
+    const applied = (job.corrections || []).filter((c) => c.type !== '人工標記').length;
+    appendLog(job, `\n✏️  已套用 ${applied} 項人工修正\n`);
+  }
   // 動態小影片：同一個時機、同一個理由。快照裡是 prepare 當時的結果，但人可能在
   // 配圖計畫頁又改過、或才第一次標（「直接出片」那條路也不經過計畫頁）。
   // 先把最新設定寫回工作區，再用 --if-changed 決定要不要重做 —— 沒改就 0.09 秒跳過。
   // ⚠️ 失敗一律降級成「這支沒有動態」，跟 run.js 那邊同一個原則。
   try {
     const mf = path.join(ROOT, 'public', 'motion.json');
-    const motion = readJobMotion(job);
+    const { keep: motion, dropped } =
+      motionClearOfShots(readJobMotion(job), planItemsOf(ROOT, job.template).items);
+    for (const m of dropped) {
+      appendLog(job, `\n⏭  動態（第 ${m.startCharIdx}–${m.endCharIdx} 字）跟 APP 配圖重疊，APP 優先，這段不做動態\n`);
+    }
     if (motion.length) fs.writeFileSync(mf, JSON.stringify(motion, null, 2) + '\n');
     else rmrf(mf);
     // 輸出進 log、子程序可被取消、跑太久會被停掉，全都在 runMotion 裡。
@@ -2009,18 +2060,11 @@ async function doRender(job) {
   }
   // ⚠️ 動態渲染那段時間取消鍵是**按得動的**（2026-09-21 改成非同步之後才會這樣；
   //    以前 event loop 被 spawnSync 綁住，請求根本進不來）。按了就到此為止 ——
-  //    再往下走會 applyPlanEdits、真的出片，最後一句 job.status = 'done' 還會把
+  //    再往下走會真的出片，最後一句 job.status = 'done' 還會把
   //    cancelled 蓋掉，變成「按了取消卻拿到成品」，而且製作快照已經被取消那邊刪了。
   if (job.status === 'cancelled') {
     appendLog(job, '\n⛔ 動態渲染已停止，這支不再往下出片\n');
     return;
-  }
-  if (job.pendingEdits && job.pendingEdits.length) {
-    applyPlanEdits(job, job.pendingEdits);
-    // 「人工標記」那一類不是這一步套用的（它是標注頁的產物，只為了寫修正紀錄而記），
-    // 算進來會讓這行數字看起來比實際改動多（2026-08-21）。
-    const applied = (job.corrections || []).filter((c) => c.type !== '人工標記').length;
-    appendLog(job, `\n✏️  已套用 ${applied} 項人工修正\n`);
   }
 
   const args = [`--template=${job.template}`, '--render-only'];

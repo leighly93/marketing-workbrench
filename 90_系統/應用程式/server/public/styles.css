@@ -333,6 +333,13 @@
   /* 標成重點的字：黃底黑字，對應成品的「放大變黃」（預覽不放大，不然整段會跳動） */
   .emph .range i.emph{background:#FFE600;color:#111;border-radius:3px;font-weight:700}
   .emph .range i.emph.used{border-bottom-color:#b9a600}
+  /* 動態小影片（2026-10-08 起最多 3 段）：每段前面的編號，腳本上和下面的清單用同一個樣式。
+     跟配圖重疊的段換成紅色 —— 出片時那段不做（APP 優先）。 */
+  .motion b.mono{display:inline-block;min-width:16px;text-align:center;font-size:11px;line-height:16px;
+    background:#FFE600;color:#111;border-radius:4px;padding:0 4px;margin:0 3px;font-weight:700}
+  .motion b.mono.clash{background:var(--bad);color:#fff}
+  .motion .range i.emph.clash{background:#fdecec;color:var(--bad)}
+  .motion .mrow{border-top:1px solid var(--line);padding:6px 0}
   /* 「這一選會蓋掉誰」的提示行（掛在 #edRangeText 裡） */
   .ovr{margin-top:3px;color:var(--warn)}
   .ovr.bad{color:var(--bad);font-weight:600}
