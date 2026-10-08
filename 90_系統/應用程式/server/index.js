@@ -56,6 +56,41 @@ const HOST = process.env.HOST || '127.0.0.1';
 // ⚠️ 暗號會出現在網址列與瀏覽器歷史紀錄，不要把帶暗號的網址貼給同事。
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 
+// ── HeyGen 餘額（header 右上角那顆，所有人都看得到）──
+// 帳號是預付儲值（billing_type: wallet，currency: usd），讀 wallet.remaining_balance。
+// 2026-10-08 跟 HeyGen 後台核對過：$804.96 − $730.33 = $74.63，與 API 回傳一致。
+// ⚠️ 只有伺服器問 HeyGen，key 不送到瀏覽器；前台 3 秒輪詢只拿快取，5 分鐘才真的問一次，
+//    每支 run.js 跑完（HeyGen 已經扣款）再立刻補問一次。沒設 key（開發副本）就不顯示。
+const HEYGEN_BALANCE_TTL_MS = 5 * 60 * 1000;
+const heygenBalance = { usd: null, at: null, error: null, pending: false, again: false };
+function refreshHeygenBalance(force = false) {
+  const key = process.env.HEYGEN_API_KEY;
+  if (!key) return;
+  // 正在問的那次可能是扣款前發出去的 → 強制更新要排在它後面再問一次，不能直接略過
+  if (heygenBalance.pending) { if (force) heygenBalance.again = true; return; }
+  if (!force && heygenBalance.at && Date.now() - heygenBalance.at < HEYGEN_BALANCE_TTL_MS) return;
+  heygenBalance.pending = true;
+  fetch('https://api.heygen.com/v3/users/me', {
+    headers: { 'X-Api-Key': key }, signal: AbortSignal.timeout(10000),
+  })
+    .then(async (r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const usd = (((await r.json()).data || {}).wallet || {}).remaining_balance;
+      if (typeof usd !== 'number') throw new Error('回應裡沒有 wallet.remaining_balance');
+      Object.assign(heygenBalance, { usd, error: null });
+    })
+    .catch((e) => { heygenBalance.error = e.message; })
+    // 失敗也記時間：HeyGen 掛掉時不要每 3 秒重打，5 分鐘後再試
+    .finally(() => {
+      Object.assign(heygenBalance, { at: Date.now(), pending: false });
+      if (heygenBalance.again) { heygenBalance.again = false; refreshHeygenBalance(true); }
+    });
+}
+function heygenBalanceView() {
+  if (!process.env.HEYGEN_API_KEY) return null;
+  return { usd: heygenBalance.usd, at: heygenBalance.at, error: heygenBalance.error };
+}
+
 // 工作紀錄、素材及製作快照持續保留，不按日期自動刪除。
 
 // 修正原因的快選標籤。
@@ -612,6 +647,7 @@ function runPipeline(job, args) {
     child.on('error', reject);
     child.on('close', (code) => {
       job.pid = null;
+      refreshHeygenBalance(true);   // 生成過 HeyGen 就扣款了，header 的餘額馬上跟著更新
       code === 0 ? resolve() : reject(new Error(`run.js 結束碼 ${code}，詳見執行記錄`));
     });
   });
@@ -2497,6 +2533,7 @@ const server = http.createServer(async (req, res) => {
     // ── API ──
     if (p === '/api/health') {
       refreshDetached();
+      refreshHeygenBalance();   // 不等它：這次先回快取，問完下一輪輪詢就拿得到
       return send(res, 200, {
         ok: true, busy,
         // locked 只代表「有鎖」；externalLock 才是需要提醒的狀況
@@ -2512,6 +2549,7 @@ const server = http.createServer(async (req, res) => {
         webBuiltAt: webChangedAt(),
         admin: isAdmin(req, url),
         diskMB: Math.round(dirSize(JOBS_DIR) / 1048576),
+        heygen: heygenBalanceView(),
         keep: { automatic: false },
       });
     }

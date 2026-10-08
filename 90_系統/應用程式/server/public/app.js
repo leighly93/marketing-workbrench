@@ -537,6 +537,27 @@ function drawHeygenMode() {
     }, label)));
 }
 
+// HeyGen 剩多少美金（預付儲值，沒開自動加值 —— 用完就出不了片）。所有人都看得到。
+// 低於 $20 變黃、低於 $5 變紅（2026-10-08 使用者定案：顯示美金、要變色）。
+// 伺服器沒設 key（開發副本）時 h.heygen 是 null → 整顆藏起來。
+const HEYGEN_WARN_USD = 20, HEYGEN_LOW_USD = 5;
+function drawHeygen(hg) {
+  const b = $('#heygen');
+  if (!hg) { b.hidden = true; return; }
+  b.hidden = false;
+  if (hg.usd == null) {
+    b.className = 'pill';
+    b.textContent = 'HeyGen —';
+    b.title = hg.error ? `查不到 HeyGen 餘額（${hg.error}），5 分鐘後會再試` : '正在查 HeyGen 餘額…';
+    return;
+  }
+  b.className = 'pill' + (hg.usd < HEYGEN_LOW_USD ? ' bad' : hg.usd < HEYGEN_WARN_USD ? ' run' : '');
+  b.textContent = `HeyGen $${hg.usd.toFixed(2)}`;
+  const at = new Date(hg.at).toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
+  b.title = `HeyGen 剩餘儲值（美金），更新於 ${at}`
+    + (hg.error ? `\n最近一次更新失敗（${hg.error}），顯示的是上次查到的數字` : '');
+}
+
 async function poll() {
   try {
     const h = await api('/api/health');
@@ -559,6 +580,7 @@ async function poll() {
       $('#disk').textContent = `💾 ${h.diskMB} MB`;
       $('#disk').title = '工作紀錄佔用空間；影片、稿件與素材會持續保留。';
     } else $('#disk').hidden = true;
+    drawHeygen(h.heygen);
     // ⚠️ 順序：busy 要先判斷。run.js 一跑就會建立 .run.lock，
     // 先看 locked 的話「每支影片跑的時候」都會顯示「被鎖住」，正常狀況長得像出事
     //（2026-08-17 使用者回報）。
