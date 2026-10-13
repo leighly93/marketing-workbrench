@@ -92,7 +92,7 @@ function runCorrect(body, segments, voice = '') {
     try {
       const out = execFileSync('node', [path.join(dir, 'scripts', 'correct-subtitles.js')], { encoding: 'utf8', stdio: 'pipe' });
       const subs = JSON.parse(fs.readFileSync(path.join(dir, 'src', 'subtitles.json'), 'utf8'));
-      return { code: 0, out, text: subs.segments.map((s) => s.text).join('') };
+      return { code: 0, out, text: subs.segments.map((s) => s.text).join(''), subs };
     } catch (e) {
       return { code: e.status, out: (e.stdout || '') + (e.stderr || '') };
     }
@@ -134,6 +134,42 @@ test('有在內文換到的發音規則，字幕照樣還原回原字', () => {
   const { code, out, text } = runCorrect(body, [evenSegment(0, spoken, 0, 0.3)], '反彈→反談');
   assert.equal(code, 0, out);
   assert.equal(text, body);
+});
+
+// ── 重點詞的對位前提（2026-10-13）─────────────────────────────
+// 渲染端（Subtitles.tsx）把重點詞的「腳本第幾個字」對到字幕上，靠每顆 word 的 scriptLen 往前數。
+// 「萬海→one海」這種字數會變的規則：稿件是 one海（4 字）、字幕換回萬海（2 字）。
+// 以前照顯示字數數，10/12 那支差 4 格，後面的重點詞全部標到隔壁字。
+const 字數 = (subs) => subs.segments.flatMap((s) => s.words || []);
+
+test('字數會變的發音規則：每顆 word 記下稿件字數，加總等於時間軸長度', () => {
+  const body = '長榮漲停萬海漲8.5%陽明也漲萬海最強';
+  const spoken = '長榮漲停one海漲8.5%陽明也漲one海最強';
+  const { code, out, text, subs } = runCorrect(body, [evenSegment(0, spoken, 0, 0.2)], '萬海→one海');
+  assert.equal(code, 0, out);
+  assert.equal(text, body, '字幕要換回萬海');
+  const words = 字數(subs);
+  const 稿件字數 = words.reduce((n, w) => n + w.scriptLen, 0);
+  assert.equal(稿件字數, subs._scriptCharTimes.length, 'scriptLen 加總要等於 _scriptCharTimes');
+  const 顯示字數 = words.map((w) => w.word.trim()).join('').length;
+  assert.equal(subs._scriptCharTimes.length - 顯示字數, 4,
+    '前提：兩個萬海各少 2 字 —— 照顯示字數數的舊做法在這裡一定會錯開');
+});
+
+test('沒有字數會變的規則時，scriptLen 就等於顯示的字數（舊行為不變）', () => {
+  const body = '指數反彈之後資金開始重新選股';
+  const { code, out, subs } = runCorrect(body, [evenSegment(0, '指數反談之後資金開始重新選股', 0, 0.3)], '反彈→反談');
+  assert.equal(code, 0, out);
+  for (const w of 字數(subs)) assert.equal(w.scriptLen, w.word.trim().length);
+  assert.equal(字數(subs).reduce((n, w) => n + w.scriptLen, 0), subs._scriptCharTimes.length);
+});
+
+test('渲染端照 scriptLen 前進，不是照顯示的字數', () => {
+  const src = fs.readFileSync(path.join(APP, 'src', 'Subtitles.tsx'), 'utf8');
+  assert.match(src, /cursor \+= scriptLen/, '游標要照 scriptLen 前進');
+  assert.doesNotMatch(src, /cursor \+= wordText\.length/, '照顯示字數前進就是 10/12 那個錯');
+  assert.match(src, /if \(!wordText\) \{ cursor \+= scriptLen; continue; \}/,
+    '換字後變空的 word 不顯示，但它佔的稿件字數照樣要跳過');
 });
 
 test('whisper 少轉一大段 → 稿件剩下的字全擠在最後一顆 word，要擋下來', () => {

@@ -17,6 +17,12 @@ type WhisperWord = {
    * 舊的 subtitles.json 沒有這個欄位 → 整份都沒有 → 退回時間比對那條路。
    */
   breakAfter?: boolean;
+  /**
+   * 這顆 word 在稿件裡佔幾個字（correct-subtitles.js 第 9b 步，2026-10-13）。
+   * 字幕換回顯示用的字之後，word 的字數可能跟稿件不同（「one海」→「萬海」），
+   * 重點詞的游標要照這個數前進才對得上 `_scriptCharTimes`。舊檔沒有這欄 → 退回字數。
+   */
+  scriptLen?: number;
 };
 
 type WhisperSegment = {
@@ -42,8 +48,9 @@ type Phrase = {
    *
    * 重點詞（2026-09-17）標的是腳本字元範圍，而字幕是 word 拼出來的短句 —— 中間隔著
    * 標點裁切、空白還原、編號合併三道加工，長度對不上，所以要逐字帶著索引走。
-   * ⚠️ 驗證過：所有 word 去空白後拼起來，剛好等於 `_scriptCharTimes` 的字元序列
-   *    （同一支 303 = 303），所以游標只在「非空 word」前進就對得上。
+   * ⚠️ 游標照每顆 word 的 `scriptLen` 前進（加總＝`_scriptCharTimes` 的長度）。
+   *    以前照顯示的字數前進，遇到字數會變的發音規則（「萬海→one海」）就整串錯開
+   *    （2026-10-13，10/12 那支差 4 格）。
    */
   map: number[];
 };
@@ -199,11 +206,19 @@ function splitIntoPhrases(
     //    這裡是保險：用 --skip-transcribe 沿用舊 subtitles.json 時也要對。
     const hasLeadingSpace = /^\s/.test(w.word);
     const wordText = w.word.trim();
-    if (!wordText) continue;
-    // 這顆 word 佔腳本的哪幾個字
+    // 稿件裡佔幾個字：有 scriptLen 就用它（見型別說明），舊檔退回顯示的字數
+    const scriptLen = typeof w.scriptLen === 'number' ? w.scriptLen : wordText.length;
+    // 換字後變成空的 word 不顯示，但它在稿件裡佔的字照樣要跳過
+    if (!wordText) { cursor += scriptLen; continue; }
+    // 這顆 word 佔腳本的哪幾個字。顯示字數跟稿件字數不同時按比例對過去
+    //（「萬海」2 個字對「one海」4 個字：萬→o、海→e…只要落在同一顆 word 裡，標起來就是整個詞）
     const idx: number[] = [];
-    for (let k = 0; k < wordText.length; k++) idx.push(cursor + k);
-    cursor += wordText.length;
+    for (let k = 0; k < wordText.length; k++) {
+      idx.push(scriptLen > 0
+        ? cursor + Math.min(scriptLen - 1, Math.floor((k * scriptLen) / wordText.length))
+        : -1);
+    }
+    cursor += scriptLen;
     if (current === null) {
       current = { start: w.start, end: w.end, text: wordText, map: idx };
       lastWord = w;

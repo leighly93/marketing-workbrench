@@ -93,20 +93,9 @@ test('換下一支工作時，上一支的重點詞要被清掉（它不會被�
     '會被 auto-shot 重算的檔案不要動它');
 });
 
-test('渲染端的對位前提：words 去空白拼起來，長度要等於 _scriptCharTimes', () => {
-  // 重點詞存的是「腳本第幾個字」，而字幕是 word 拼出來的。Subtitles.tsx 靠這條等式
-  // 把兩者對起來（見 Phrase.map 的說明）。這裡拿真實產線檔驗，破了就是標到錯的字上。
-  const subtitles = path.join(applicationPath(repository), 'src/subtitles.json');
-  const data = JSON.parse(fs.readFileSync(subtitles, 'utf8'));
-  const times = data._scriptCharTimes || [];
-  if (!times.length) return;   // 空工作台（剛 init 過）沒有字幕可驗，跳過
-  const chars = (data.segments || [])
-    .flatMap((s) => s.words || [])
-    .map((w) => String(w.word).trim())
-    .join('').length;
-  assert.equal(chars, times.length,
-    'words 拼接長度與 _scriptCharTimes 對不上 —— 重點詞會標到隔壁字');
-});
+// 「渲染端的對位前提」原本在這裡，讀的是**工作區裡真實的 src/subtitles.json**（最後一支出片留下的）。
+// 2026-10-13 搬到 字幕時間軸.test.js 改用合成資料：verify 不能讀正式工作（AGENTS.md），
+// 而且 10/12 那支稿件有「萬海→one海」，讓 Mac mini 上的更新被一支無關的工作擋下來。
 
 // ── 三個階段都要標得到（2026-09-17 使用者回報第二次）──────────────────
 // 原本只有配圖計畫頁開放，而且那一區還排在「確認，開始出片」的**下面**：

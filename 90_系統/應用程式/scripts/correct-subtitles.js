@@ -450,6 +450,18 @@ function applyCrossWordReplace(words, from, to) {
   }
 }
 
+// ─── 9b. 記下每顆 word 在稿件裡佔幾個字（scriptLen，2026-10-13）
+// 到這一步為止，所有 word 去空白拼起來＝cleanScriptText（＝_scriptCharTimes 的長度）。
+// 下面兩步會把字幕換回顯示用的字，換之前跟換之後**字數不一定一樣**：
+// 「萬海→one海」這條規則讓稿件是 one海（4 字）、字幕是萬海（2 字）。渲染端的重點詞
+// 是照 word 的字數往前數腳本位置的，字數一變，後面每個重點詞都標到隔壁字
+//（10/12「淨買超450億」那支差 4 格，update-studio 的測試因此擋下更新）。
+// 先把原本佔幾個字記在 word 上，渲染端照這個數前進，不管後面怎麼換字都對得上。
+// 替換只改 word 的內容、不增減 word，所以這個數會一路跟著正確的那顆 word。
+for (const seg of subs.segments) {
+  for (const w of seg.words || []) w.scriptLen = w.word.replace(/\s/g, '').length;
+}
+
 // ─── 10. 反向發音替換（先跑，當權威來源 — 例：「百分之四點三九 → 4.39%」）
 // 順序重要：反向發音替換代表 script.txt 作者的意圖，要比 subtitles-replacements（fallback）優先觸發。
 // 若 fallback 先跑，會把「四點三九」攔截成「4.39」，讓反向規則的「百分之四點三九 → 4.39%」失效。
