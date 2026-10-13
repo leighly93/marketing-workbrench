@@ -42,19 +42,27 @@ function buildPrompt(text) {
     `旁白原文：「${text}」`,
     '',
     '規則：',
-    '1. template 三選一：',
+    '1. template 五選一：',
     '   list     —— 並列的點，2~5 個最好（例：四大關鍵問題、三個觀察重點）。',
     '              這段旁白真的只講了一個重點，就**只給一項**，不要為了湊數硬編第二點 ——',
     '              硬編的那一點通常沒有內容，比只有一項更糟。',
     '   contrast —— 「不是 X，而是 Y」的轉折（例：不是傳統火藥，而是高頻微波）',
     '   quote    —— 一句有力的話，關鍵詞著色（例：大盤摜破4萬6，資安股掀漲停潮）。',
     '              一個重點就**只寫一行**，不要為了好看拆成兩行。',
+    '   event    —— 段落在講「接下來的某個事件」：法說、財報公布、央行會議、連假後開盤。',
+    '              when 放日期或「明天」「下週」（最多 5 個字），event 放事件本身（最多 9 個字），',
+    '              items 放 0~2 個看點。休市、連假這類背景放進 when 或省略，不要列成看點。',
+    '              kicker 跟著原文講的時間改字：明天→「明日焦點」、下週→「下週焦點」，同一種卡片只換字。',
+    '   level    —— 段落在講某個關鍵價位被測試：整數關口、前高、壓力、支撐。',
+    '              kind 用 resistance（上方過不去）或 support（下方守住）；level 放價位（例「50,000」）；',
+    '              items 放每一次碰到這條線（1~3 次，例「昨 49,969」）；gap 放差距（例「差 33 點」）、',
+    '              verdict 放結論（例「連兩天過不去」），原文沒講就省略。走勢是示意圖，數字一律照原文。',
     '2. 卡片上放**濃縮後的關鍵詞**，不是旁白原句 —— 原句下方就是字幕，重複會很擠。',
     '3. **每一項最多 9 個字**（不含前面的編號）。這條最重要 —— 超過的話卡片上的字會被',
     '   自動縮小才塞得下，一長就變小、畫面很難看。寧可再濃縮：',
     '   「外資買超創今年新高紀錄」→「外資買超創新高」、「營收落地或由虧轉盈」剛好 9 個字。',
-    '   這條對 list 的 items、contrast 的 negative 與 positives 都適用。',
-    '4. list 的每一項都要附 at：那一項對應的**旁白原文片段**（用來算進場時間）。',
+    '   這條對 list／event／level 的 items、contrast 的 negative 與 positives、event 的 event 都適用。',
+    '4. list、event、level 的每一項都要附 at：那一項對應的**旁白原文片段**（用來算進場時間）。',
     '   at 必須是原文裡真的出現過的連續字串，而且要照原文的先後順序排列。',
     '5. title 可以用 | 分隔，| 之後的部分會套品牌黃色（例：「四大|關鍵問題」）。',
     '6. quote 的 lines 是每行一串 token，token 可帶 c：up（漲，紅）／down（跌，綠）／hl（重點，黃）。',
@@ -76,10 +84,12 @@ function buildPrompt(text) {
     '10. title 與 kicker 不准自己加數量（兩大、三個、N 項）—— 原文有說幾個才能寫；',
     '    也不准加原文沒有的判斷或形容（例如原文只說「轉成賣超」，就不能寫「急轉」）。',
     '',
-    '輸出格式（三選一）：',
+    '輸出格式（五選一）：',
     '{"template":"list","kicker":"法說會","title":"四大|關鍵問題","items":[{"text":"電容影響多大","at":"電容問題影響多大"}]}',
     '{"template":"contrast","kicker":"美國太空軍","title":"首度證實|部署太空武器","negative":"傳統火藥","positives":["高頻微波","電子戰設備"]}',
     '{"template":"quote","kicker":"今日盤勢","lines":[[{"t":"大盤"},{"t":"摜破4萬6","c":"down"}]]}',
+    '{"template":"event","kicker":"明日焦點","when":"10/15","event":"台積電法說","items":[{"text":"展望定半導體方向","at":"展望"}]}',
+    '{"template":"level","kicker":"今日盤勢","title":"5萬|關卡","kind":"resistance","level":"50,000","items":[{"text":"昨 49,969","at":"昨天盤中最高"},{"text":"今 49,967","at":"今天台股盤中高點"}],"gap":"差 33 點","verdict":"連兩天過不去","verdictC":"hl"}',
   ].join('\n');
 }
 
@@ -105,7 +115,7 @@ function extractJson(raw) {
 function validate(spec) {
   if (!spec || typeof spec !== 'object') return null;
   const t = spec.template;
-  if (!['list', 'contrast', 'quote'].includes(t)) return null;
+  if (!['list', 'contrast', 'quote', 'event', 'level'].includes(t)) return null;
   const str = (v) => typeof v === 'string' && v.trim().length > 0;
 
   if (t === 'list') {
@@ -116,6 +126,25 @@ function validate(spec) {
     //    畫面上就是一張卡片一個重點，不會壞（實際 render 確認過）。
     if (items.length < 1 || items.length > 5) return null;
     return { ...spec, items: items.map((x) => ({ text: x.text.trim(), at: str(x.at) ? x.at.trim() : undefined })) };
+  }
+  // 事件預告與關卡線的 items 跟 list 同一個形狀：text 必填，at 讓產線對齊旁白
+  const cleanItems = (arr) => (Array.isArray(arr) ? arr.filter((x) => x && str(x.text)) : [])
+    .map((x) => ({ text: x.text.trim(), at: str(x.at) ? x.at.trim() : undefined }));
+  if (t === 'event') {
+    if (!str(spec.when) || !str(spec.event)) return null;
+    return { ...spec, when: spec.when.trim(), event: spec.event.trim(), items: cleanItems(spec.items).slice(0, 2) };
+  }
+  if (t === 'level') {
+    const items = cleanItems(spec.items);
+    if (!str(spec.level) || items.length < 1) return null;
+    return {
+      ...spec,
+      // 只有明說 support 才畫在下面；其餘一律當壓力（大盤小報講關卡的時候多半是這個）
+      kind: spec.kind === 'support' ? 'support' : 'resistance',
+      level: spec.level.trim(),
+      items: items.slice(0, 3),
+      verdictC: ['up', 'down', 'hl'].includes(spec.verdictC) ? spec.verdictC : undefined,
+    };
   }
   if (t === 'contrast') {
     const pos = Array.isArray(spec.positives) ? spec.positives.filter(str) : [];
@@ -132,7 +161,8 @@ function validate(spec) {
 
 /** 卡片上看得到的每一段字（kicker、title、badge、各項內容）。 */
 function cardTexts(spec) {
-  const out = [spec.kicker, spec.title, spec.badge, spec.foot, spec.negative];
+  const out = [spec.kicker, spec.title, spec.badge, spec.foot, spec.negative,
+    spec.when, spec.event, spec.level, spec.gap, spec.verdict];
   for (const p of spec.positives || []) out.push(p);
   for (const it of spec.items || []) out.push(it && it.text);
   for (const line of spec.lines || []) out.push(line.map((tk) => tk.t).join(''));
@@ -159,6 +189,17 @@ function checkAgainstSource(spec, text) {
   const 原文數字 = new Set(src.match(/\d+(?:\.\d+)?/g) || []);
   // 原文寫「第四季」、卡片寫「Q4」也算有出現 —— 只放寬單一中文數字，大數字照樣要逐字對得上
   for (const ch of src) if (中文數字[ch]) 原文數字.add(String(中文數字[ch]));
+  // 「5萬」「4萬6」與「50000」「46000」互通：關卡線的價位兩種寫法都常見（2026-10-08）
+  for (const m of src.matchAll(/(\d+(?:\.\d+)?)萬(\d)?(?![\d.])/g)) {
+    原文數字.add(String(Math.round(Number(m[1]) * 10000 + (m[2] ? Number(m[2]) * 1000 : 0))));
+  }
+  for (const n of [...原文數字]) {
+    const v = Number(n);
+    if (v >= 10000 && v % 1000 === 0) {
+      原文數字.add(String(Math.floor(v / 10000)));
+      if (v % 10000) 原文數字.add(String((v % 10000) / 1000));
+    }
+  }
   const problems = [];
   for (const s of cardTexts(spec)) {
     const flat = s.replace(/[,，\s|]/g, '');
@@ -316,4 +357,4 @@ function plan(input, env = process.env) {
   return createEngine(env.MOTION_ENGINE).plan(input || {});
 }
 
-module.exports = { plan, createEngine, validate, checkAgainstSource, extractJson, buildPrompt, describeFailure, ENGINES, MODELS };
+module.exports = { plan, createEngine, validate, checkAgainstSource, cardTexts, extractJson, buildPrompt, describeFailure, ENGINES, MODELS };

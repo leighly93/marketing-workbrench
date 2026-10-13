@@ -6,6 +6,7 @@
  *   contrast  不是 X，而是 Y —— 轉折、破除迷思、新舊替換
  *   list      2~5 個並列的點 —— 逐項對齊旁白唸到它的時間進場
  *   quote     一句有力的話 —— 關鍵詞逐段著色
+ * 2026-10-08 加第一批新型別：event（事件預告）、level（關卡線），見下面各自的說明。
  *
  * ⚠️ 卡片上放的是**濃縮後的關鍵詞**，不是旁白原句。原句由字幕負責，
  *    兩邊放一樣的字會重複又擠（使用者定案）。每項建議 10 字以內。
@@ -66,4 +67,42 @@ export type QuoteSpec = Base & {
   lines: QuoteToken[][];
 };
 
-export type MotionClipSpec = ContrastSpec | ListSpec | QuoteSpec;
+/**
+ * 事件預告（2026-10-08 使用者定案加的第一批）：段落在講「接下來的某個事件」——
+ * 法說、財報、央行、連假後開盤。大盤小報幾乎每支都用它收尾。
+ * 時間與背景（休市、連假）不是重點，放在 when 這個日期牌上，不另外列一項。
+ */
+export type EventSpec = Base & {
+  template: 'event';
+  /** 日期牌上的字，例如「10/15」「明天」「下週」。最多 5 個字。 */
+  when: string;
+  /** 事件本身，例如「台積電法說」。最多 9 個字。 */
+  event: string;
+  /** 看點，0~2 項（例如「展望定光學族群方向」）。跟條列一樣用 at 對齊旁白。 */
+  items?: ListItem[];
+};
+
+/**
+ * 關卡線（2026-10-08 使用者定案加的第一批）：某個關鍵價位被測試 ——
+ * 整數關口、前高、壓力、支撐。**走勢是示意圖**，不是真實行情；數字全部來自稿件。
+ */
+export type LevelSpec = Base & {
+  template: 'level';
+  /** 壓力（上方過不去）或支撐（下方守住／跌破）。決定線畫在上面還是下面。 */
+  kind: 'resistance' | 'support';
+  /** 線上的標籤，例如「50,000」「5萬點」。 */
+  level: string;
+  /**
+   * 每一次碰到這條線，1~3 次，例如「昨 49,969」「今 49,967」。
+   * 用 at 對齊旁白：唸到哪一次，那一段走勢才畫出來。
+   */
+  items: ListItem[];
+  /** 差距的大字，例如「差 33 點」。可省略。 */
+  gap?: string;
+  /** 結論，例如「連兩天過不去」。可省略。 */
+  verdict?: string;
+  /** 結論的顏色，跟 quote 同一套：up 紅／down 綠／hl 黃。 */
+  verdictC?: Emphasis;
+};
+
+export type MotionClipSpec = ContrastSpec | ListSpec | QuoteSpec | EventSpec | LevelSpec;

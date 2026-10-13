@@ -70,7 +70,7 @@ export const RemotionRoot: React.FC = () => {
         height={VIDEO_HEIGHT}
       />
       {/* ── 動態小影片（MG）：獨立 render 成 mp4，再由 MotionOverlay 貼回各版型 ──
-          三種型別（contrast／list／quote）、深藍＋黃、漲紅跌綠、零圖示素材。
+          五種型別（contrast／list／quote，2026-10-08 加 event 事件預告／level 關卡線）、深藍＋黃、漲紅跌綠、零圖示素材。
           ⚠️ 尺寸＝**該版型整個可見畫面**，不是只有內容區 —— 背景有漸層與掃光，
              只鋪內容區的話光掃到邊界就斷掉。內容由 safeTop／safeBottom 限制在安全區內。
                直式 1080×1920（內容 y310–1440，避開招牌 bar 與字幕）

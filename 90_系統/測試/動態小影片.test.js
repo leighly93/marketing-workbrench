@@ -597,6 +597,68 @@ test('對照原文：「數字對、意思錯」抓不到 —— 這條只能靠
     items: [{ text: '單日賣超逾719億' }] }, 第二段原文), []);
 });
 
+// ── 第一批新卡片：事件預告、關卡線（2026-10-08 使用者定案）──────────────
+test('事件預告：日期與事件必填，看點最多兩項、保留 at', () => {
+  const { validate } = require(path.join(app, 'scripts/motion-engine.js'));
+  const ok = validate({ template: 'event', kicker: '下週焦點', when: ' 10/15 ', event: '台積電法說',
+    items: [{ text: '法說結果', at: '台積電法說' }, { text: 'b' }, { text: 'c' }] });
+  assert.equal(ok.when, '10/15');
+  assert.deepEqual(ok.items.map((x) => x.text), ['法說結果', 'b'], '看點最多兩項');
+  assert.equal(ok.items[0].at, '台積電法說', 'at 要留著，產線才對得上旁白');
+  assert.ok(validate({ template: 'event', when: '明天', event: '大立光法說' }), '沒有看點也可以');
+  assert.equal(validate({ template: 'event', when: '明天' }), null, '沒有事件就沒東西可畫');
+});
+
+test('關卡線：價位與至少一次碰線必填，最多三次；沒說 support 一律當壓力', () => {
+  const { validate } = require(path.join(app, 'scripts/motion-engine.js'));
+  const v = validate({ template: 'level', level: '50,000', verdictC: '亂寫',
+    items: [{ text: '1' }, { text: '2' }, { text: '3' }, { text: '4' }] });
+  assert.equal(v.kind, 'resistance');
+  assert.equal(v.items.length, 3);
+  assert.equal(v.verdictC, undefined, '不認得的顏色丟掉，不要讓它變成白字以外的怪色');
+  assert.equal(validate({ template: 'level', kind: 'support', level: '月線', items: [{ text: 'x' }] }).kind, 'support');
+  assert.equal(validate({ template: 'level', level: '5萬', items: [] }), null);
+  assert.equal(validate({ template: 'level', items: [{ text: 'x' }] }), null);
+});
+
+test('prompt：五種卡片都要教到，明日／下週焦點是同一種卡片只換字', () => {
+  const { buildPrompt } = require(path.join(app, 'scripts/motion-engine.js'));
+  const p = buildPrompt('隨便一段旁白');
+  assert.match(p, /五選一/);
+  assert.match(p, /"template":"event"/);
+  assert.match(p, /"template":"level"/);
+  assert.match(p, /下週焦點/);
+  assert.match(p, /走勢是示意圖/);
+});
+
+test('對照原文：「5萬」與「50,000」兩種寫法互通，但換了數字照樣擋', () => {
+  const { checkAgainstSource } = require(path.join(app, 'scripts/motion-engine.js'));
+  const 關卡 = (level, src) => checkAgainstSource({ template: 'level', level, items: [{ text: 'x' }] }, src);
+  assert.deepEqual(關卡('50,000', '離 5 萬只差 33 點'), []);
+  assert.deepEqual(關卡('5萬', '站上 50,000 點'), []);
+  assert.deepEqual(關卡('4萬6', '跌破 46,000'), []);
+  assert.equal(關卡('4萬7', '跌破 46,000').length, 1);
+  // 新卡片的每個欄位都要納入檢查
+  assert.equal(checkAgainstSource({ template: 'level', level: '50,000', items: [{ text: '今 49,967' }],
+    gap: '差 34 點' }, '今天盤中高點 49,967，離 5 萬只差 33 點').length, 1, 'gap 的數字也要對');
+  assert.equal(checkAgainstSource({ template: 'event', when: '10/16', event: '台積電法說' },
+    '10 月 15 日台積電法說').length, 1, '日期牌的數字也要對');
+});
+
+test('關卡線與事件預告：每一項照樣對齊旁白，log 印出卡片上的字', () => {
+  const 字 = '昨天盤中最高四九九六九今天盤中高點四九九六七連兩天過不去';
+  const dir = 隔離環境(字);
+  fs.writeFileSync(path.join(dir, 'public/motion.json'), JSON.stringify([{
+    startCharIdx: 0, endCharIdx: 字.length - 1,
+    spec: { template: 'level', kicker: '今日盤勢', level: '五萬', kind: 'resistance',
+      items: [{ text: '昨', at: '昨天盤中最高' }, { text: '今', at: '今天盤中高點' }], verdict: '過不去' },
+  }]));
+  const out = 跑(dir, '--dry-run');
+  assert.match(out, /1\. 昨　→ 第 0 秒進場/);
+  assert.match(out, /2\. 今　→ 第 2\.2 秒進場/, '「今天盤中高點」從第 11 字開始 ＝ 2.2 秒');
+  assert.match(out, /卡片（level）：今日盤勢｜五萬｜過不去｜昨｜今/);
+});
+
 /** 一支假的 claude 指令：依序吐出 answers，並把每次收到的 prompt 記下來。 */
 function 假Claude(answers) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-claude-'));

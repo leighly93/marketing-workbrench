@@ -293,6 +293,8 @@ function main() {
       + `　${range.startSec.toFixed(2)}s–${收尾秒.toFixed(2)}s（${durationSec} 秒）`
       + (toEnd ? `　※ 做在結尾 → 延續到影片結束，不淡出回講者` : ''));
     log(`   原文：${phrase.slice(0, 40)}${phrase.length > 40 ? '…' : ''}`);
+    // 卡片上實際會出現的字。以前只印條列的項目，金句／對照卡做錯時從 log 看不出寫了什麼（2026-10-08）
+    log(`   卡片（${spec.template}）：${motionEngine.cardTexts(spec).join('｜')}`);
     (spec.items || []).forEach((it, i) =>
       log(`   ${i + 1}. ${it.text}　→ 第 ${it.atSec} 秒進場${it._fallback ? '（等距，比對不到）' : ''}`));
 

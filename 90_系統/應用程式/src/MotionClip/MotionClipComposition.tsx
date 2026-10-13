@@ -9,6 +9,9 @@ import {
 import type {
   ContrastSpec,
   Emphasis,
+  EventSpec,
+  LevelSpec,
+  ListItem,
   ListSpec,
   MotionClipSpec,
   QuoteSpec,
@@ -508,6 +511,165 @@ const Quote: React.FC<{ spec: QuoteSpec; beats: number[] }> = ({ spec, beats }) 
   );
 };
 
+/** 某一項的進場 frame：有 atSec（產線對齊旁白算好的）就用，沒有就退回節奏拍。 */
+const itemAt = (it: ListItem, fallback: number, fps: number) =>
+  typeof it.atSec === 'number' ? it.atSec * fps : fallback;
+
+// ── ④ 事件預告：日期牌＋事件＋0~2 個看點（2026-10-08）────────────
+const EventCard: React.FC<{ spec: EventSpec; beats: number[] }> = ({ spec, beats }) => {
+  const { fps } = useVideoConfig();
+  const tileAt = beats[2] ?? 0;
+  const items = (spec.items ?? []).slice(0, 2);
+  // 日期牌 260 寬、跟事件文字之間 44 → 事件文字可用寬 = 1080 − pad×2 − 260 − 44
+  const eventFont = fitFontSize(1080 - MC.pad * 2 - 260 - 44, [spec.event], 88, ITEM_FONT_MAX);
+  // 日期牌裡的字：牌內可用 260 − 左右 24
+  const whenFont = fitFontSize(212, [spec.when], 96, 120);
+  const pointFont = fitFontSize(1080 - MC.pad * 2 - 70, items.map((i) => i.text), 58, 72);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 56 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 44 }}>
+        <Pop at={tileAt}>
+          <div
+            style={{
+              width: 260,
+              height: 260,
+              borderRadius: 28,
+              border: `4px solid ${MC.yellow}`,
+              background: 'rgba(255,216,77,0.10)',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            {/* 日曆的「頁首」：純裝飾，兩個環 */}
+            <div style={{ height: 58, background: MC.yellow, display: 'flex',
+              justifyContent: 'space-around', alignItems: 'center', padding: '0 54px' }}>
+              {[0, 1].map((k) => (
+                <span key={k} style={{ width: 18, height: 18, borderRadius: '50%', background: '#0e2f6e' }} />
+              ))}
+            </div>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: whenFont, fontWeight: 900, color: MC.white, letterSpacing: -2 }}>
+              {spec.when}
+            </div>
+          </div>
+        </Pop>
+        <Enter at={tileAt + 0.3 * fps} dy={0}>
+          <div style={{ fontSize: eventFont, fontWeight: 900, color: MC.white, lineHeight: 1.15 }}>
+            {spec.event}
+          </div>
+        </Enter>
+      </div>
+      {items.map((it, i) => (
+        <Enter key={i} at={itemAt(it, beats[3 + i] ?? tileAt, fps)}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 22, fontSize: pointFont,
+            fontWeight: 800, color: MC.white }}>
+            <span style={{ color: MC.yellow, fontWeight: 900 }}>▸</span>
+            {it.text}
+          </div>
+        </Enter>
+      ))}
+    </div>
+  );
+};
+
+// ── ⑤ 關卡線：一條價位線＋每次碰線的示意走勢（2026-10-08）───────────
+// ⚠️ 走勢是示意，不是行情：形狀只表達「碰到、沒過」或「守住」，數字全部來自稿件。
+const CHART_W = 1080 - MC.pad * 2;
+const CHART_H = 430;
+/** 走勢只畫到這裡，右邊留給價位標籤接在線的末端 —— 放在線的上下方都會壓到某一段走勢。 */
+const PATH_W = CHART_W - 260;
+
+/** 第 i 次碰線那一段走勢的折線點（壓力：由下往上碰線再回落）。support 由呼叫端上下翻轉。 */
+function trySegment(i: number, n: number): [number, number][] {
+  const lineY = 70;
+  const peakX = (PATH_W * (i + 1)) / (n + 1);
+  const prevX = i === 0 ? 0 : (PATH_W * (i + 0.5)) / (n + 1);
+  const nextX = i === n - 1 ? PATH_W : (PATH_W * (i + 1.5)) / (n + 1);
+  // 起點：第一段從底部出發，之後接在上一段的回落點
+  const startY = i === 0 ? CHART_H - 30 : 230;
+  const span = peakX - prevX;
+  return [
+    [prevX, startY],
+    [prevX + span * 0.35, startY - (startY - lineY) * 0.45],
+    [prevX + span * 0.55, startY - (startY - lineY) * 0.3],
+    [peakX, lineY + 12],              // 碰線但沒過：停在線下 12px
+    [peakX + (nextX - peakX) * 0.5, 190],
+    [nextX, 230],
+  ];
+}
+
+const LevelCard: React.FC<{ spec: LevelSpec; beats: number[] }> = ({ spec, beats }) => {
+  const frame = useCurrentFrame();
+  const { fps, durationInFrames } = useVideoConfig();
+  const tries = spec.items.slice(0, 3);
+  const n = Math.max(1, tries.length);
+  const flip = spec.kind === 'support';
+  const y = (v: number) => (flip ? CHART_H - v : v);
+  const lineAt = beats[2] ?? 0;
+  const lineP = interpolate(frame, [lineAt, lineAt + 0.5 * fps], [0, 1],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  const ats = tries.map((it, i) => itemAt(it, beats[3 + i] ?? lineAt + (i + 1) * 0.7 * fps, fps));
+  // 大字與結論接在最後一次碰線之後；片子太短就往前收，至少留 0.8 秒站住
+  const lastAt = Math.max(lineAt, ...ats);
+  const cap = durationInFrames - 0.8 * fps;
+  const gapAt = Math.min(lastAt + 0.6 * fps, cap);
+  const verdictAt = Math.min(gapAt + 0.6 * fps, cap);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 30 }}>
+      {/* 支撐的碰線標籤在線下方、會超出圖框，下面多留一點，不然會貼到結論 */}
+      <svg width={CHART_W} height={CHART_H} viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+        style={{ overflow: 'visible', marginBottom: flip ? (n === 3 ? 90 : 40) : 0 }}>
+        <line x1={0} x2={(PATH_W + 24) * lineP} y1={y(70)} y2={y(70)}
+          stroke={MC.yellow} strokeWidth={5} strokeDasharray="18 12" />
+        {/* 價位標籤接在線的末端；每次碰線的標籤放在線的另一側 —— 那一側沒有走勢，
+            字不會壓到線（2026-10-08 試片：放在線上下方都會壓到最後一段走勢）。 */}
+        <text x={CHART_W} y={y(70) + 15} textAnchor="end"
+          fill={MC.yellow} fontSize={40} fontWeight={900} opacity={lineP}>
+          {spec.level}
+        </text>
+        {tries.map((it, i) => {
+          const pts = trySegment(i, n).map(([px, py]) => [px, y(py)] as [number, number]);
+          const len = pts.reduce((sum, p, k) => (k ? sum + Math.hypot(p[0] - pts[k - 1][0], p[1] - pts[k - 1][1]) : 0), 0);
+          const p = interpolate(frame, [ats[i], ats[i] + 0.6 * fps], [0, 1],
+            { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+          const peak = pts[3];
+          const labelP = interpolate(frame, [ats[i] + 0.4 * fps, ats[i] + 0.7 * fps], [0, 1],
+            { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+          return (
+            <g key={i}>
+              <polyline points={pts.map((q) => q.join(',')).join(' ')} fill="none"
+                stroke={i === tries.length - 1 ? MC.white : MC.muted} strokeWidth={i === tries.length - 1 ? 7 : 5}
+                strokeLinejoin="round" strokeLinecap="round"
+                strokeDasharray={len} strokeDashoffset={len * (1 - p)} />
+              <circle cx={peak[0]} cy={peak[1]} r={11} fill={MC.white} opacity={labelP} />
+              {/* 三次碰線時峰距只剩 168px，標籤會連成一串 —— 中間那個錯開一排 */}
+              <text x={peak[0]}
+                y={(flip ? y(70) + 58 : y(70) - 24) + (n === 3 && i === 1 ? (flip ? 48 : -48) : 0)}
+                textAnchor="middle"
+                fill={MC.white} fontSize={40} fontWeight={800} opacity={labelP}>
+                {it.text}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      {spec.gap ? (
+        <Pop at={gapAt}>
+          <div style={{ fontSize: 84, fontWeight: 900, color: MC.yellow, lineHeight: 1.1 }}>{spec.gap}</div>
+        </Pop>
+      ) : null}
+      {spec.verdict ? (
+        <Enter at={verdictAt}>
+          <div style={{ fontSize: 64, fontWeight: 900, color: colorOf(spec.verdictC), lineHeight: 1.2 }}>
+            {spec.verdict}
+          </div>
+        </Enter>
+      ) : null}
+    </div>
+  );
+};
+
 /** 依型別算「要幾拍」：kicker、title 各一拍，主體每項一拍，註腳一拍。 */
 function stepsOf(spec: MotionClipSpec): number {
   const head = 2;
@@ -516,7 +678,11 @@ function stepsOf(spec: MotionClipSpec): number {
       ? 1 + Math.min(2, spec.positives.length)
       : spec.template === 'list'
         ? Math.min(5, spec.items.length)
-        : Math.min(4, spec.lines.length);
+        : spec.template === 'event'
+          ? 1 + Math.min(2, (spec.items ?? []).length)
+          : spec.template === 'level'
+            ? 1 + Math.min(3, spec.items.length)
+            : Math.min(4, spec.lines.length);
   return head + body + 1;
 }
 
@@ -550,6 +716,8 @@ export const MotionClip: React.FC<{
       {spec.template === 'contrast' ? <Contrast spec={spec} beats={beats} /> : null}
       {spec.template === 'list' ? <Bullets spec={spec} beats={beats} /> : null}
       {spec.template === 'quote' ? <Quote spec={spec} beats={beats} /> : null}
+      {spec.template === 'event' ? <EventCard spec={spec} beats={beats} /> : null}
+      {spec.template === 'level' ? <LevelCard spec={spec} beats={beats} /> : null}
     </Shell>
   );
 };
