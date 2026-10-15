@@ -1254,9 +1254,9 @@ function annotCard(job) {
 
   if (annotJobId !== job.id) {
     annotJobId = job.id;
-    ANNOTS = []; UNITS = []; CHARS = []; EMPH = []; ANNOT_PAGES = {};
+    ANNOTS = []; UNITS = []; CHARS = []; EMPH = []; ANNOT_PAGES = {}; CHARS_ERR = '';
     Promise.all([
-      api(`/api/jobs/${job.id}/sentences`).catch(() => ({ units: [] })),
+      api(`/api/jobs/${job.id}/sentences`).catch((e) => ({ units: [], _err: e.message })),
       api(`/api/jobs/${job.id}/annotations`).catch(() => ({ shots: [] })),
       api(`/api/jobs/${job.id}/emphasis`).catch(() => ({ marks: [] })),
       // 頁型：準備中還沒有 planView，所以走自己的端點（計畫頁是從 planView.pages 拿）。
@@ -1266,6 +1266,7 @@ function annotCard(job) {
     ]).then(([sv, av, ev, pv]) => {
       UNITS = sv.units || [];
       CHARS = sv.chars || [];
+      CHARS_ERR = sv._err || '';
       ANNOTS = av.shots || [];
       ANNOT_PAGES = pv.pages || {};
       EMPH = (ev.marks || [])
@@ -1276,6 +1277,9 @@ function annotCard(job) {
       const box = $('.emph');
       if (box && EMPH.length) box.open = true;
       drawEmph();
+      // 動態區建好時 CHARS 還是空的，它自己的 loadMotion() 又通常比 sentences 先回來，
+      // 這裡不補畫就會一直停在「腳本還在讀…」（2026-10-15 使用者回報）。
+      drawMotion();
     });
   } else setTimeout(() => { drawAnnots(job); drawEmph(); }, 0);
   return c;
@@ -1536,6 +1540,7 @@ function planCard(job) {
 
   UNITS = pv.units || [];   // 點一下選整句用
   CHARS = pv.chars || [];   // 逐字拖選用
+  CHARS_ERR = '';
   // 這支已經標過的重點詞（伺服器從 src/emphasis.generated.json 讀出來的）
   EMPH = (pv.emphasis || [])
     .filter((m) => Number.isInteger(m.startCharIdx) && Number.isInteger(m.endCharIdx))
@@ -1786,19 +1791,21 @@ function emphasisBox(job, covered) {
 
 /**
  * 重點詞與腳本字元讀進來（標注頁／排隊階段用；計畫頁的 planView 本來就帶了這兩份）。
- * 讀完才畫 —— CHARS 是空的話 drawEmph() 只會顯示「腳本還在讀…」。
+ * 讀完才畫 —— CHARS 是空的話 drawEmph()／drawMotion() 只會顯示「腳本還在讀…」。
  */
 function loadEmph(job, after) {
   Promise.all([
-    CHARS.length ? Promise.resolve(null) : api(`/api/jobs/${job.id}/sentences`).catch(() => null),
+    CHARS.length ? Promise.resolve(null)
+      : api(`/api/jobs/${job.id}/sentences`).catch((e) => ({ _err: e.message })),
     api(`/api/jobs/${job.id}/emphasis`).catch(() => ({ marks: [] })),
   ]).then(([sv, ev]) => {
-    if (sv) { UNITS = sv.units || UNITS; CHARS = sv.chars || CHARS; }
+    if (sv) { UNITS = sv.units || UNITS; CHARS = sv.chars || CHARS; CHARS_ERR = sv._err || ''; }
     EMPH = (ev.marks || [])
       .filter((m) => Number.isInteger(m.startCharIdx) && Number.isInteger(m.endCharIdx))
       .map((m) => ({ startCharIdx: m.startCharIdx, endCharIdx: m.endCharIdx }));
     if (after) after();
     drawEmph();
+    drawMotion();   // 同一份 CHARS，動態區也要跟著補畫（理由見 annotCard 那段）
   });
 }
 
@@ -2228,7 +2235,7 @@ function motionClash(m, covered) {
 function drawMotion() {
   const wrap = $('#motionRange');
   if (!wrap) return;
-  if (!CHARS.length) return wrap.replaceChildren(el('span', {}, '（腳本還在讀…）'));
+  if (!CHARS.length) return wrap.replaceChildren(charsPending());
   const covered = charsCoveredBy(MOTION_COVERED ? MOTION_COVERED() : []);
   const clash = MOTION.map((m) => motionClash(m, covered));
   const nodes = [];
@@ -2417,7 +2424,7 @@ async function saveEmph() {
 function drawEmph() {
   const wrap = $('#emphRange');
   if (!wrap) return;
-  if (!CHARS.length) return wrap.replaceChildren(el('span', {}, '（腳本還在讀…）'));
+  if (!CHARS.length) return wrap.replaceChildren(charsPending());
   const covered = charsCoveredBy(EMPH_COVERED());
   const nodes = [];
   CHARS.forEach((c) => {
@@ -2474,6 +2481,12 @@ function drawEmph() {
 // 做到字級是因為「友達群創雙漲停。」是一個子句卻要配兩張圖
 //（2026-08-17 使用者：「有可能真的要細分到文字」）。
 let CHARS = [];
+// /sentences 讀失敗的原因。空字串＝還在讀或讀成功；有值時三個逐字區改顯示「讀不到」，
+// 不然失敗會跟「還在讀」長得一樣，看起來像永遠在等。
+let CHARS_ERR = '';
+function charsPending() {
+  return el('span', {}, CHARS_ERR ? `（腳本讀不到：${CHARS_ERR}）` : '（腳本還在讀…）');
+}
 
 // 一個字大約幾秒 —— 只有配圖計畫那一頁算得出來（自動列身上才有 start/end 秒數）。
 // 標注階段字幕還不存在、秒數也還不存在，所以那邊是 null，提示只講「剩幾個字」。
@@ -2521,7 +2534,7 @@ function shortChars() {
 function drawRange() {
   const wrap = $('#edRange');
   if (!wrap) return;
-  if (!CHARS.length) return wrap.replaceChildren(el('span', {}, '（腳本還在讀…）'));
+  if (!CHARS.length) return wrap.replaceChildren(charsPending());
   const a = edCtx.from, b = edCtx.to;
   const lo = a == null ? -1 : Math.min(a, b), hi = a == null ? -2 : Math.max(a, b);
   const used = usedRanges();
