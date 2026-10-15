@@ -7,6 +7,7 @@ import {
   useVideoConfig,
 } from 'remotion';
 import type {
+  BarItem,
   ContrastSpec,
   Emphasis,
   EventSpec,
@@ -14,7 +15,10 @@ import type {
   ListItem,
   ListSpec,
   MotionClipSpec,
+  NumberSpec,
   QuoteSpec,
+  RankSpec,
+  SectorSpec,
 } from './motion-clip-types';
 
 /**
@@ -670,6 +674,143 @@ const LevelCard: React.FC<{ spec: LevelSpec; beats: number[] }> = ({ spec, beats
   );
 };
 
+// ── ⑥ 大數字：一個數字從 0 跳到原文的值（2026-10-15）──────────────────
+/**
+ * 跳到一半時要顯示的字。小數位數與千分位照原文的寫法（「404.6」跳的時候一直是一位小數）。
+ * 不是純數字（例「4萬6」）就不跳，直接顯示。
+ */
+function countText(value: string, p: number): string {
+  const n = Number(value.replace(/,/g, ''));
+  if (!Number.isFinite(n)) return value;
+  const dec = (value.split('.')[1] ?? '').length;
+  const v = n * p;
+  return value.includes(',')
+    ? v.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec })
+    : v.toFixed(dec);
+}
+
+const NumberCard: React.FC<{ spec: NumberSpec; beats: number[] }> = ({ spec, beats }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const numAt = typeof spec.atSec === 'number' ? spec.atSec * fps : beats[2] ?? 0;
+  // 前快後慢（ease-out cubic），0.9 秒跳完 —— 再久人就等不及了
+  const k = interpolate(frame, [numAt, numAt + 0.9 * fps], [0, 1],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  const p = 1 - Math.pow(1 - k, 3);
+  const items = (spec.items ?? []).slice(0, 2);
+  // 單位用半大的字，拿整串估寬會略估大一點，剛好當餘裕
+  const numFont = fitFontSize(1080 - MC.pad * 2,
+    [`${spec.prefix ?? ''}${spec.value}${spec.unit ?? ''}`], 200, 240);
+  const pointFont = fitFontSize(1080 - MC.pad * 2 - 70, items.map((i) => i.text), 58, 72);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 40 }}>
+      <div>
+        {spec.label ? (
+          <Enter at={numAt}>
+            <div style={{ fontSize: 52, fontWeight: 800, color: MC.muted }}>{spec.label}</div>
+          </Enter>
+        ) : null}
+        <Pop at={numAt}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, color: colorOf(spec.valueC),
+            fontWeight: 900, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums', letterSpacing: -4 }}>
+            <span style={{ fontSize: numFont }}>{(spec.prefix ?? '') + countText(spec.value, p)}</span>
+            {spec.unit ? <span style={{ fontSize: Math.round(numFont * 0.45), letterSpacing: 0 }}>{spec.unit}</span> : null}
+          </div>
+        </Pop>
+      </div>
+      {items.map((it, i) => (
+        <Enter key={i} at={itemAt(it, beats[3 + i] ?? numAt, fps)}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 22, fontSize: pointFont,
+            fontWeight: 800, color: MC.white }}>
+            <span style={{ color: MC.yellow, fontWeight: 900 }}>▸</span>
+            {it.text}
+          </div>
+        </Enter>
+      ))}
+    </div>
+  );
+};
+
+// ── ⑦⑧ 排行長條／族群漲幅：同一套長條；排行結尾蓋總結章，族群結尾放提問（2026-10-15）──────
+const isLimit = (v: string) => /漲停|跌停/.test(v);
+const barNum = (v: string) => {
+  const m = v.replace(/,/g, '').match(/\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : NaN;
+};
+/** 沒指定顏色就看數值：負號或「跌」是綠，其餘紅（台股慣例）。 */
+const barColor = (it: BarItem) =>
+  it.c ? colorOf(it.c) : /^[-−－]|跌/.test(it.value) ? MC.down : MC.up;
+
+/** 一枚斜著蓋上去的章（「漲停」「全部雙位數」）。 */
+const Stamp: React.FC<{ at: number; text: string; color: string; size: number }> = ({ at, text, color, size }) => (
+  <Pop at={at} style={{ display: 'inline-block' }}>
+    <div style={{ border: `5px solid ${color}`, color, borderRadius: 12, padding: '4px 20px',
+      fontSize: size, fontWeight: 900, transform: 'rotate(-6deg)', whiteSpace: 'nowrap' }}>
+      {text}
+    </div>
+  </Pop>
+);
+
+const Bars: React.FC<{ spec: RankSpec | SectorSpec; beats: number[] }> = ({ spec, beats }) => {
+  const frame = useCurrentFrame();
+  const { fps, durationInFrames } = useVideoConfig();
+  const items = spec.items.slice(0, 5);
+  const sector = spec.template === 'sector';
+  // 長度依數值比例。有漲停／跌停時以 10%（台股漲跌幅上限）當滿格，
+  // 不然「南亞 +7.17%」會跟漲停的台塑一樣長。看不出數字的（漲停本身）一律滿格。
+  const nums = items.map((it) => (isLimit(it.value) ? NaN : barNum(it.value)));
+  const top = Math.max(0, ...nums.filter(Number.isFinite), items.some((it) => isLimit(it.value)) ? 10 : 0);
+  const widthOf = (n: number) => (Number.isFinite(n) && top > 0 ? Math.max(0.06, n / top) : 1);
+  const ats = items.map((it, i) => itemAt(it, beats[2 + i] ?? 0, fps));
+  const lastAt = Math.max(0, ...ats);
+  const endAt = Math.min(lastAt + 0.7 * fps, durationInFrames - 0.8 * fps);
+  const dense = items.length >= 5;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: dense ? 22 : 36 }}>
+      {items.map((it, i) => {
+        const grow = interpolate(frame, [ats[i] + 0.15 * fps, ats[i] + 0.95 * fps], [0, 1],
+          { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+        const ease = 1 - Math.pow(1 - grow, 3);
+        const c = barColor(it);
+        return (
+          <Enter key={i} at={ats[i]} dy={0}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              fontSize: 58, fontWeight: 800, color: MC.white, lineHeight: 1.2 }}>
+              <span>{it.text}</span>
+              {/* 漲停／跌停本身就是數值，直接用章蓋在數值的位置 —— 名稱旁再蓋一個會重複 */}
+              {isLimit(it.value)
+                ? <Stamp at={ats[i] + 0.4 * fps} text={it.value} color={c} size={46} />
+                : <span style={{ color: c, fontWeight: 900, fontVariantNumeric: 'tabular-nums' }}>{it.value}</span>}
+            </div>
+            <div style={{ marginTop: 12, height: 26, borderRadius: 8, background: 'rgba(255,255,255,0.10)' }}>
+              <div style={{ height: '100%', borderRadius: 8, background: c,
+                width: `${widthOf(nums[i]) * ease * 100}%` }} />
+            </div>
+          </Enter>
+        );
+      })}
+      {!sector && spec.stamp ? (
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
+          <Stamp at={endAt} text={spec.stamp} color={spec.stampC ? colorOf(spec.stampC) : MC.yellow} size={60} />
+        </div>
+      ) : null}
+      {sector && (spec.tags ?? []).length ? (
+        <Enter at={endAt}>
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginTop: 10 }}>
+            {(spec.tags ?? []).slice(0, 2).map((tg, k) => (
+              <span key={k} style={{ border: `3px solid ${k ? MC.yellow : MC.muted}`,
+                color: k ? MC.yellow : MC.white, borderRadius: 14, padding: '10px 26px',
+                fontSize: 50, fontWeight: 800 }}>
+                {tg}
+              </span>
+            ))}
+          </div>
+        </Enter>
+      ) : null}
+    </div>
+  );
+};
+
 /** 依型別算「要幾拍」：kicker、title 各一拍，主體每項一拍，註腳一拍。 */
 function stepsOf(spec: MotionClipSpec): number {
   const head = 2;
@@ -682,7 +823,11 @@ function stepsOf(spec: MotionClipSpec): number {
           ? 1 + Math.min(2, (spec.items ?? []).length)
           : spec.template === 'level'
             ? 1 + Math.min(3, spec.items.length)
-            : Math.min(4, spec.lines.length);
+            : spec.template === 'number'
+              ? 1 + Math.min(2, (spec.items ?? []).length)
+              : spec.template === 'rank' || spec.template === 'sector'
+                ? Math.min(5, spec.items.length) + 1
+                : Math.min(4, spec.lines.length);
   return head + body + 1;
 }
 
@@ -718,6 +863,8 @@ export const MotionClip: React.FC<{
       {spec.template === 'quote' ? <Quote spec={spec} beats={beats} /> : null}
       {spec.template === 'event' ? <EventCard spec={spec} beats={beats} /> : null}
       {spec.template === 'level' ? <LevelCard spec={spec} beats={beats} /> : null}
+      {spec.template === 'number' ? <NumberCard spec={spec} beats={beats} /> : null}
+      {spec.template === 'rank' || spec.template === 'sector' ? <Bars spec={spec} beats={beats} /> : null}
     </Shell>
   );
 };

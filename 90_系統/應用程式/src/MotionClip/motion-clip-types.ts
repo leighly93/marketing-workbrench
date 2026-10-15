@@ -7,6 +7,9 @@
  *   list      2~5 個並列的點 —— 逐項對齊旁白唸到它的時間進場
  *   quote     一句有力的話 —— 關鍵詞逐段著色
  * 2026-10-08 加第一批新型別：event（事件預告）、level（關卡線），見下面各自的說明。
+ * 2026-10-15 加數字型三種：number（大數字）、rank（排行長條）、sector（族群漲幅）。
+ *   9/16 拿掉「數據型」的理由（有數字就用 APP 截圖）仍然成立 —— 前台不給選有配圖的字，
+ *   這三種只會用在**沒有截圖可配**的段落。使用者：「不一定用得到但至少有」。
  *
  * ⚠️ 卡片上放的是**濃縮後的關鍵詞**，不是旁白原句。原句由字幕負責，
  *    兩邊放一樣的字會重複又擠（使用者定案）。每項建議 10 字以內。
@@ -105,4 +108,56 @@ export type LevelSpec = Base & {
   verdictC?: Emphasis;
 };
 
-export type MotionClipSpec = ContrastSpec | ListSpec | QuoteSpec | EventSpec | LevelSpec;
+/**
+ * 大數字（2026-10-15）：整段只為一個讓人記住的數字服務，例如「合計賣超 404.6 億」。
+ * 數字唸到時從 0 跳到 value；補充說明放 items。數字全部照稿件（checkAgainstSource 擋）。
+ */
+export type NumberSpec = Base & {
+  template: 'number';
+  /** 數字上方的小字：這個數字是什麼，例如「合計賣超」。 */
+  label?: string;
+  /** 數字本身，照原文寫，例如「404.6」「49,806」「7」。小數位數與千分位照這裡顯示。 */
+  value: string;
+  /** 只放正負號，例如「+」「−」。 */
+  prefix?: string;
+  /** 單位，例如「億」「%」「天」。 */
+  unit?: string;
+  /** 數字的顏色：up 紅（漲、買超）／down 綠（跌、賣超）／hl 黃。省略是白字。 */
+  valueC?: Emphasis;
+  /** 唸到這個數字的旁白原文片段；產線解成 atSec。省略就照節奏拍。 */
+  at?: string;
+  atSec?: number;
+  /** 補充說明，0~2 項，例如「指數守在高檔」。 */
+  items?: ListItem[];
+};
+
+/** 長條的一項：名稱放 text，數值放 value（例「+67.4%」「漲停」）。長度依 value 的數字比例。 */
+export type BarItem = ListItem & {
+  value: string;
+  /** 顏色；省略時看 value：有負號或「跌」是綠，其餘紅（台股慣例）。 */
+  c?: Emphasis;
+};
+
+/** 排行長條（2026-10-15）：2~5 個同一種數字放在一起比長短，例如三檔 9 月營收年增率。 */
+export type RankSpec = Base & {
+  template: 'rank';
+  items: BarItem[];
+  /** 最後蓋上去的總結章，例如「全部雙位數」。可省略。 */
+  stamp?: string;
+  stampC?: Emphasis;
+};
+
+/**
+ * 族群漲幅（2026-10-15）：同一個族群好幾檔一起動，例如塑化股齊漲。
+ * 長條跟 rank 同一套；value 寫「漲停」「跌停」的那一檔，數值的位置改成一枚章、長條滿格。
+ */
+export type SectorSpec = Base & {
+  template: 'sector';
+  items: BarItem[];
+  /** 結尾的觀察或疑問，0~2 個，例如「資金輪動？」。 */
+  tags?: string[];
+};
+
+export type MotionClipSpec =
+  | ContrastSpec | ListSpec | QuoteSpec | EventSpec | LevelSpec
+  | NumberSpec | RankSpec | SectorSpec;

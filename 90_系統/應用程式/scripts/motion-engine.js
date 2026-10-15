@@ -42,7 +42,7 @@ function buildPrompt(text) {
     `旁白原文：「${text}」`,
     '',
     '規則：',
-    '1. template 五選一：',
+    '1. template 八選一：',
     '   list     —— 並列的點，2~5 個最好（例：四大關鍵問題、三個觀察重點）。',
     '              這段旁白真的只講了一個重點，就**只給一項**，不要為了湊數硬編第二點 ——',
     '              硬編的那一點通常沒有內容，比只有一項更糟。',
@@ -57,12 +57,26 @@ function buildPrompt(text) {
     '              kind 用 resistance（上方過不去）或 support（下方守住）；level 放價位（例「50,000」）；',
     '              items 放每一次碰到這條線（1~3 次，例「昨 49,969」）；gap 放差距（例「差 33 點」）、',
     '              verdict 放結論（例「連兩天過不去」），原文沒講就省略。走勢是示意圖，數字一律照原文。',
+    // number／rank／sector 是 2026-10-15 加的數字型。有 APP 截圖的段落前台本來就不給選，
+    // 所以這三種只會遇到「沒有截圖、但數字是重點」的段落。
+    '   number   —— 整段的重點是**一個**讓人記住的數字（例：三大法人合計賣超 404.6 億、連漲 7 天）。',
+    '              value 只放數字本身（照原文，例「404.6」），unit 放單位（例「億」），prefix 只放正負號；',
+    '              label 放這個數字是什麼（例「合計賣超」）；valueC 用 up（漲、買超）／down（跌、賣超）／hl。',
+    '              at 放唸到這個數字的原文片段；items 放 0~2 句補充（例「指數守在高檔」）。',
+    '   rank     —— 2~5 個**同一種數字**放在一起比（例：三檔 9 月營收年增率）。',
+    '              items 每項 text 放名稱、value 放照原文的數值（例「+67.4%」）、c 放顏色，照原文唸到的順序排；',
+    '              stamp 放一句總結（例「全部雙位數」），原文沒講就省略。',
+    '   sector   —— 同一個族群好幾檔一起動（例：塑化股南亞、台塑、台塑化齊漲）。title 放族群名；',
+    '              items 同 rank，漲停／跌停直接寫在 value（例「漲停」）；',
+    '              tags 放 0~2 個結尾的觀察或疑問（例「資金輪動？」），原文沒講就省略。',
+    '              只有一個數字用 number，不要硬做成一條長條。',
     '2. 卡片上放**濃縮後的關鍵詞**，不是旁白原句 —— 原句下方就是字幕，重複會很擠。',
     '3. **每一項最多 9 個字**（不含前面的編號）。這條最重要 —— 超過的話卡片上的字會被',
     '   自動縮小才塞得下，一長就變小、畫面很難看。寧可再濃縮：',
     '   「外資買超創今年新高紀錄」→「外資買超創新高」、「營收落地或由虧轉盈」剛好 9 個字。',
-    '   這條對 list／event／level 的 items、contrast 的 negative 與 positives、event 的 event 都適用。',
-    '4. list、event、level 的每一項都要附 at：那一項對應的**旁白原文片段**（用來算進場時間）。',
+    '   這條對 list／event／level／number／rank／sector 的 items、contrast 的 negative 與 positives、',
+    '   event 的 event、number 的 label 都適用。',
+    '4. list、event、level、number、rank、sector 的每一項都要附 at：那一項對應的**旁白原文片段**（用來算進場時間）。',
     '   at 必須是原文裡真的出現過的連續字串，而且要照原文的先後順序排列。',
     '5. title 可以用 | 分隔，| 之後的部分會套品牌黃色（例：「四大|關鍵問題」）。',
     '6. quote 的 lines 是每行一串 token，token 可帶 c：up（漲，紅）／down（跌，綠）／hl（重點，黃）。',
@@ -84,12 +98,15 @@ function buildPrompt(text) {
     '10. title 與 kicker 不准自己加數量（兩大、三個、N 項）—— 原文有說幾個才能寫；',
     '    也不准加原文沒有的判斷或形容（例如原文只說「轉成賣超」，就不能寫「急轉」）。',
     '',
-    '輸出格式（五選一）：',
+    '輸出格式（八選一）：',
     '{"template":"list","kicker":"法說會","title":"四大|關鍵問題","items":[{"text":"電容影響多大","at":"電容問題影響多大"}]}',
     '{"template":"contrast","kicker":"美國太空軍","title":"首度證實|部署太空武器","negative":"傳統火藥","positives":["高頻微波","電子戰設備"]}',
     '{"template":"quote","kicker":"今日盤勢","lines":[[{"t":"大盤"},{"t":"摜破4萬6","c":"down"}]]}',
     '{"template":"event","kicker":"明日焦點","when":"10/15","event":"台積電法說","items":[{"text":"展望定半導體方向","at":"展望"}]}',
     '{"template":"level","kicker":"今日盤勢","title":"5萬|關卡","kind":"resistance","level":"50,000","items":[{"text":"昨 49,969","at":"昨天盤中最高"},{"text":"今 49,967","at":"今天台股盤中高點"}],"gap":"差 33 點","verdict":"連兩天過不去","verdictC":"hl"}',
+    '{"template":"number","kicker":"籌碼面","title":"三大法人|連兩天賣超","label":"合計賣超","value":"404.6","unit":"億","valueC":"down","at":"合計賣了","items":[{"text":"指數守在高檔","at":"指數還是守在高檔"}]}',
+    '{"template":"rank","kicker":"9月營收 年增率","title":"被動元件|全面成長","items":[{"text":"光頡","value":"+67.4%","c":"up","at":"光頡"},{"text":"禾伸堂","value":"+27.1%","c":"up","at":"禾伸堂"}],"stamp":"全部雙位數"}',
+    '{"template":"sector","kicker":"新資金方向","title":"|塑化","items":[{"text":"南亞","value":"+7.17%","at":"南亞"},{"text":"台塑","value":"漲停","at":"台塑漲停"}],"tags":["資金輪動？","新主力題材？"]}',
   ].join('\n');
 }
 
@@ -115,7 +132,7 @@ function extractJson(raw) {
 function validate(spec) {
   if (!spec || typeof spec !== 'object') return null;
   const t = spec.template;
-  if (!['list', 'contrast', 'quote', 'event', 'level'].includes(t)) return null;
+  if (!['list', 'contrast', 'quote', 'event', 'level', 'number', 'rank', 'sector'].includes(t)) return null;
   const str = (v) => typeof v === 'string' && v.trim().length > 0;
 
   if (t === 'list') {
@@ -146,6 +163,30 @@ function validate(spec) {
       verdictC: ['up', 'down', 'hl'].includes(spec.verdictC) ? spec.verdictC : undefined,
     };
   }
+  const color = (c) => (['up', 'down', 'hl'].includes(c) ? c : undefined);
+  if (t === 'number') {
+    // 大字一定要是數字 —— 「漲停」這種字放大跳不起來，該用 quote
+    if (!str(spec.value) || !/\d/.test(spec.value)) return null;
+    return {
+      ...spec,
+      value: spec.value.trim(),
+      valueC: color(spec.valueC),
+      at: str(spec.at) ? spec.at.trim() : undefined,
+      items: cleanItems(spec.items).slice(0, 2),
+    };
+  }
+  if (t === 'rank' || t === 'sector') {
+    // 長條沒有數值就畫不出來；一項也照出（理由同 list），prompt 另外要它至少給兩項
+    const items = (Array.isArray(spec.items) ? spec.items : [])
+      .filter((x) => x && str(x.text) && str(x.value))
+      .map((x) => ({ text: x.text.trim(), at: str(x.at) ? x.at.trim() : undefined,
+        value: x.value.trim(), c: color(x.c) }));
+    if (items.length < 1) return null;
+    const out = { ...spec, items: items.slice(0, 5) };
+    if (t === 'rank') out.stampC = color(spec.stampC);
+    else out.tags = (Array.isArray(spec.tags) ? spec.tags.filter(str) : []).map((x) => x.trim()).slice(0, 2);
+    return out;
+  }
   if (t === 'contrast') {
     const pos = Array.isArray(spec.positives) ? spec.positives.filter(str) : [];
     if (!str(spec.negative) || pos.length < 1) return null;
@@ -162,9 +203,11 @@ function validate(spec) {
 /** 卡片上看得到的每一段字（kicker、title、badge、各項內容）。 */
 function cardTexts(spec) {
   const out = [spec.kicker, spec.title, spec.badge, spec.foot, spec.negative,
-    spec.when, spec.event, spec.level, spec.gap, spec.verdict];
+    spec.when, spec.event, spec.level, spec.gap, spec.verdict, spec.label, spec.stamp];
+  if (spec.value) out.push(`${spec.prefix || ''}${spec.value}${spec.unit || ''}`);
   for (const p of spec.positives || []) out.push(p);
-  for (const it of spec.items || []) out.push(it && it.text);
+  for (const it of spec.items || []) out.push(it && it.text, it && it.value);
+  for (const tg of spec.tags || []) out.push(tg);
   for (const line of spec.lines || []) out.push(line.map((tk) => tk.t).join(''));
   return out.filter((s) => typeof s === 'string' && s.trim());
 }

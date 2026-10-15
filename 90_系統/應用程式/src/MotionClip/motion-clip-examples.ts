@@ -1,4 +1,4 @@
-import type { ContrastSpec, ListSpec, QuoteSpec } from './motion-clip-types';
+import type { ContrastSpec, ListSpec, NumberSpec, QuoteSpec, RankSpec, SectorSpec } from './motion-clip-types';
 
 /**
  * Studio 預覽用的範例參數（2026-09-16 使用者提供的真實稿件片段）。
@@ -34,4 +34,40 @@ export const EXAMPLE_QUOTE: QuoteSpec = {
     [{ t: '資安股' }, { t: '掀漲停潮', c: 'up' }],
     [{ t: '黃仁勳一句話', c: 'hl' }, { t: '引爆行情' }],
   ],
+};
+
+// 2026-10-15 數字型三種：用 2026-10-08 大盤稿的真實段落（當天的草稿就是這幾段）
+export const EXAMPLE_NUMBER: NumberSpec = {
+  template: 'number',
+  kicker: '籌碼面',
+  title: '三大法人|連兩天賣超',
+  label: '合計賣超',
+  value: '404.6',
+  unit: '億',
+  valueC: 'down',
+  items: [{ text: '指數守在高檔' }, { text: '有其他資金在接' }],
+};
+
+export const EXAMPLE_RANK: RankSpec = {
+  template: 'rank',
+  kicker: '9月營收 年增率',
+  title: '被動元件|全面成長',
+  items: [
+    { text: '光頡', value: '+67.4%' },
+    { text: '禾伸堂', value: '+27.1%' },
+    { text: '立隆電', value: '+39.5%' },
+  ],
+  stamp: '全部雙位數',
+};
+
+export const EXAMPLE_SECTOR: SectorSpec = {
+  template: 'sector',
+  kicker: '新資金方向',
+  title: '|塑化',
+  items: [
+    { text: '南亞', value: '+7.17%' },
+    { text: '台塑', value: '漲停' },
+    { text: '台塑化', value: '+5.4%' },
+  ],
+  tags: ['資金輪動？', '新主力題材？'],
 };

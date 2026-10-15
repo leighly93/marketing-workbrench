@@ -21,7 +21,10 @@ import { MotionClip } from './MotionClip/MotionClipComposition';
 import {
   EXAMPLE_CONTRAST,
   EXAMPLE_LIST,
+  EXAMPLE_NUMBER,
   EXAMPLE_QUOTE,
+  EXAMPLE_RANK,
+  EXAMPLE_SECTOR,
 } from './MotionClip/motion-clip-examples';
 
 /**
@@ -70,7 +73,8 @@ export const RemotionRoot: React.FC = () => {
         height={VIDEO_HEIGHT}
       />
       {/* ── 動態小影片（MG）：獨立 render 成 mp4，再由 MotionOverlay 貼回各版型 ──
-          五種型別（contrast／list／quote，2026-10-08 加 event 事件預告／level 關卡線）、深藍＋黃、漲紅跌綠、零圖示素材。
+          八種型別（contrast／list／quote，2026-10-08 加 event 事件預告／level 關卡線，
+          2026-10-15 加 number 大數字／rank 排行長條／sector 族群漲幅）、深藍＋黃、漲紅跌綠、零圖示素材。
           ⚠️ 尺寸＝**該版型整個可見畫面**，不是只有內容區 —— 背景有漸層與掃光，
              只鋪內容區的話光掃到邊界就斷掉。內容由 safeTop／safeBottom 限制在安全區內。
                直式 1080×1920（內容 y310–1440，避開招牌 bar 與字幕）
@@ -150,6 +154,23 @@ export const RemotionRoot: React.FC = () => {
         height={1080}
         defaultProps={{ spec: EXAMPLE_QUOTE }}
       />
+      {/* 2026-10-15 數字型三種：直式尺寸，看長相用 */}
+      {([
+        ['MotionClipDemoNumber', EXAMPLE_NUMBER],
+        ['MotionClipDemoRank', EXAMPLE_RANK],
+        ['MotionClipDemoSector', EXAMPLE_SECTOR],
+      ] as const).map(([id, spec]) => (
+        <Composition
+          key={id}
+          id={id}
+          component={MotionClip as React.FC<Record<string, unknown>>}
+          durationInFrames={VIDEO_FPS * 8}
+          fps={VIDEO_FPS}
+          width={1080}
+          height={1920}
+          defaultProps={{ spec, safeTop: 310, safeBottom: 1440 }}
+        />
+      ))}
     </>
   );
 };
