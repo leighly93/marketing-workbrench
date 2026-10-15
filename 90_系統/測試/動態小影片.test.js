@@ -621,10 +621,12 @@ test('關卡線：價位與至少一次碰線必填，最多三次；沒說 supp
   assert.equal(validate({ template: 'level', items: [{ text: 'x' }] }), null);
 });
 
-test('prompt：五種卡片都要教到，明日／下週焦點是同一種卡片只換字', () => {
+test('prompt：八種卡片都要教到，明日／下週焦點是同一種卡片只換字', () => {
   const { buildPrompt } = require(path.join(app, 'scripts/motion-engine.js'));
   const p = buildPrompt('隨便一段旁白');
-  assert.match(p, /五選一/);
+  assert.match(p, /八選一/);
+  assert.doesNotMatch(p, /五選一/, '舊的「五選一」留著會讓 Claude 不知道要聽哪一個');
+  for (const t of ['number', 'rank', 'sector']) assert.match(p, new RegExp(`"template":"${t}"`));
   assert.match(p, /"template":"event"/);
   assert.match(p, /"template":"level"/);
   assert.match(p, /下週焦點/);
@@ -657,6 +659,58 @@ test('關卡線與事件預告：每一項照樣對齊旁白，log 印出卡片�
   assert.match(out, /1\. 昨　→ 第 0 秒進場/);
   assert.match(out, /2\. 今　→ 第 2\.2 秒進場/, '「今天盤中高點」從第 11 字開始 ＝ 2.2 秒');
   assert.match(out, /卡片（level）：今日盤勢｜五萬｜過不去｜昨｜今/);
+});
+
+// ── 數字型三種：大數字、排行長條、族群漲幅（2026-10-15 使用者定案）──────────────
+test('大數字：value 必須是數字，補充最多兩項，不認得的顏色丟掉', () => {
+  const { validate } = require(path.join(app, 'scripts/motion-engine.js'));
+  const v = validate({ template: 'number', value: ' 404.6 ', unit: '億', valueC: '亂寫', at: ' 合計賣了 ',
+    items: [{ text: 'a' }, { text: 'b' }, { text: 'c' }] });
+  assert.equal(v.value, '404.6');
+  assert.equal(v.at, '合計賣了');
+  assert.equal(v.valueC, undefined);
+  assert.equal(v.items.length, 2);
+  assert.equal(validate({ template: 'number', value: '漲停' }), null, '不是數字就跳不起來，該用 quote');
+  assert.equal(validate({ template: 'number' }), null);
+});
+
+test('排行長條／族群漲幅：每項要有名稱與數值，最多五項；族群的提問最多兩個', () => {
+  const { validate } = require(path.join(app, 'scripts/motion-engine.js'));
+  const r = validate({ template: 'rank', stamp: '全部雙位數', stampC: 'hl',
+    items: [{ text: '光頡', value: '+67.4%', at: '光頡', c: 'up' }, { text: '沒數值' }, { text: '禾伸堂', value: '+27.1%', c: '亂寫' }] });
+  assert.deepEqual(r.items.map((x) => x.text), ['光頡', '禾伸堂'], '沒數值的那項畫不出長條，丟掉');
+  assert.equal(r.items[0].at, '光頡', 'at 要留著，產線才對得上旁白');
+  assert.equal(r.items[1].c, undefined);
+  assert.equal(validate({ template: 'rank', items: Array.from({ length: 7 }, (_, i) => ({ text: `${i}`, value: '1%' })) }).items.length, 5);
+  assert.equal(validate({ template: 'rank', items: [{ text: '光頡' }] }), null);
+  const sec = validate({ template: 'sector', title: '|塑化', tags: ['a', '', 'b', 'c'],
+    items: [{ text: '台塑', value: '漲停' }] });
+  assert.deepEqual(sec.tags, ['a', 'b']);
+  assert.equal(sec.items[0].value, '漲停', '漲停沒有數字也算數值');
+});
+
+test('對照原文：大數字、長條數值、總結章與提問都要納入數字檢查', () => {
+  const { checkAgainstSource } = require(path.join(app, 'scripts/motion-engine.js'));
+  const 原文 = '三大法人連兩天賣超，合計賣了 404.6 億';
+  assert.deepEqual(checkAgainstSource({ template: 'number', label: '合計賣超', value: '404.6', unit: '億' }, 原文), []);
+  assert.equal(checkAgainstSource({ template: 'number', value: '405', unit: '億' }, 原文).length, 1, '四捨五入照樣擋');
+  assert.equal(checkAgainstSource({ template: 'rank', items: [{ text: '光頡', value: '+67.5%' }] },
+    '光頡年增 67.4%').length, 1, '長條的數值也要對');
+  assert.deepEqual(checkAgainstSource({ template: 'sector', items: [{ text: '台塑', value: '漲停' }] }, '台塑漲停'), []);
+  assert.equal(checkAgainstSource({ template: 'rank', items: [{ text: 'a', value: '1%' }], stamp: '全部 2 位數' },
+    '漲了 1%').length, 1, '總結章的數字也要對');
+});
+
+test('大數字：唸到那個數字才開始跳，log 印出秒數', () => {
+  const 字 = '三大法人連兩天賣超合計賣了四百億';
+  const dir = 隔離環境(字);
+  fs.writeFileSync(path.join(dir, 'public/motion.json'), JSON.stringify([{
+    startCharIdx: 0, endCharIdx: 字.length - 1,
+    spec: { template: 'number', label: '合計賣超', value: '400', unit: '億', at: '合計賣了' },
+  }]));
+  const out = 跑(dir, '--dry-run');
+  assert.match(out, /數字　→ 第 1\.8 秒開始跳/, '「合計賣了」從第 9 字開始 ＝ 1.8 秒');
+  assert.match(out, /卡片（number）：合計賣超｜400億/);
 });
 
 /** 一支假的 claude 指令：依序吐出 answers，並把每次收到的 prompt 記下來。 */

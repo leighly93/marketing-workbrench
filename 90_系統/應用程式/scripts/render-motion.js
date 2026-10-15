@@ -185,9 +185,17 @@ function resolveRange(entry, { times, text }, idx) {
  */
 function resolveItemTimes(spec, range, { times, text }) {
   const items = spec.items || [];
-  if (items.length === 0) return spec;
   const segText = text.slice(range.startCharIdx, range.endCharIdx + 1);
   const dur = range.endSec - range.startSec;
+  // 大數字（number）自己也有一個 at：唸到那個數字時才開始跳（2026-10-15）。
+  // 比對不到就不填 atSec，元件退回節奏拍 —— 跟項目的等距退路一樣不會壞掉。
+  if (spec.at && typeof spec.atSec !== 'number') {
+    const rel = segText.indexOf(spec.at);
+    if (rel >= 0) {
+      spec = { ...spec, atSec: Number((times[range.startCharIdx + rel].start - range.startSec).toFixed(3)) };
+    } else log(`   ⚠️ 「${spec.at}」在這段比對不到，數字改用節奏拍進場`);
+  }
+  if (items.length === 0) return spec;
   let cursor = 0;
   let missed = 0;
   const resolved = items.map((it, i) => {
@@ -295,6 +303,7 @@ function main() {
     log(`   原文：${phrase.slice(0, 40)}${phrase.length > 40 ? '…' : ''}`);
     // 卡片上實際會出現的字。以前只印條列的項目，金句／對照卡做錯時從 log 看不出寫了什麼（2026-10-08）
     log(`   卡片（${spec.template}）：${motionEngine.cardTexts(spec).join('｜')}`);
+    if (typeof spec.atSec === 'number') log(`   數字　→ 第 ${spec.atSec} 秒開始跳`);
     (spec.items || []).forEach((it, i) =>
       log(`   ${i + 1}. ${it.text}　→ 第 ${it.atSec} 秒進場${it._fallback ? '（等距，比對不到）' : ''}`));
 
