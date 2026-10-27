@@ -288,7 +288,11 @@ const Shell: React.FC<{
 
         {/* 2026-09-17 使用者：卡片內容要撐滿，不要擠在上半部。
             space-evenly ＝ 不管幾項都均分整個主體區，項目少的時候不會縮成一團。 */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-evenly' }}>
+        {/* ⚠️ marginTop 是標題與主體之間的**保底距離**（2026-10-15 使用者回報）。
+            space-evenly 只分配剩下的空間 —— 橫式四項條列把主體塞滿之後一點都不剩，
+            第一項就貼在標題底下。使用者：「寧願 1234 靠近一點，也不要標題跟第一點靠太近」。 */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-evenly',
+          marginTop: title || kicker ? 44 : 0 }}>
           {children}
         </div>
 
@@ -421,14 +425,18 @@ const Contrast: React.FC<{ spec: ContrastSpec; beats: number[] }> = ({ spec, bea
 const Bullets: React.FC<{ spec: ListSpec; beats: number[] }> = ({ spec, beats }) => {
   const { fps } = useVideoConfig();
   // 文字可用寬 = 設計寬 1080 − 左右 pad − 卡片 padding(28×2) − 外框(3×2) − 編號徽章(96) − gap(28)
+  // 四項以上時，高度才是瓶頸（橫式安全區只有 918px）：字級封頂、項目間距收緊，
+  // 把空間讓給標題下方的保底距離。上限 104 是看寬度定的，四項疊起來高度放不下。
+  const many = spec.items.length >= 4;
   const itemFont = fitFontSize(
-    1080 - MC.pad * 2 - 56 - 6 - 96 - 28, spec.items.slice(0, 5).map((i) => i.text), 66, ITEM_FONT_MAX);
+    1080 - MC.pad * 2 - 56 - 6 - 96 - 28, spec.items.slice(0, 5).map((i) => i.text), 66,
+    many ? 88 : ITEM_FONT_MAX);
   return (
     // ⚠️ 包一層：整組變成外層 space-evenly 眼中的**單一** flex item，於是它會被置中，
     //    項目之間的距離由這裡的 gap 決定。不包的話每一項都是 flex item，
     //    space-evenly 會把它們拉開到整個主體區，兩項的時候中間空一大塊、下面又空一塊
     //    （2026-09-21 使用者：「上下不要分這麼開」）。
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 30 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: many ? 18 : 30 }}>
       {spec.items.slice(0, 5).map((it, i) => {
         // atSec 是產線用旁白時間軸算出來的：唸到這一項時它才滑進來。
         // 沒有就退回 beats 的等距節奏（manual 後端貼參數時通常沒有）。
