@@ -1750,14 +1750,23 @@ function prepareShots() {
   }
 }
 
+/** 大盤小報要不要出直式（2026-10-22 使用者要求先關掉、只出橫式；程式與 composition 都保留）。 */
+const DAPAN_RENDER_PORTRAIT = false;
+
 /** 只做 render。--render-only 會直接跳到這裡，沿用現有的 public/ 與 *.generated.json。 */
 function renderTemplate() {
   if (TEMPLATE === "dapan") {
     // 同一份 heygen/字幕/腳本出兩支：直式先出，橫式後出（2026-08-10 使用者拍板）
-    run("npm run render:dapan");
-    log("✅ 直式完成！90_系統/暫存/產線輸出/output-dapan.mp4");
+    // 2026-10-22 使用者：先只出橫式，直式「不用刪掉先關掉」—— 要恢復把 DAPAN_RENDER_PORTRAIT 改回 true，
+    // 動態小影片那邊也要一起改（scripts/render-motion.js 的 TEMPLATE_MOTION.dapan.p.off）。
+    if (DAPAN_RENDER_PORTRAIT) {
+      run("npm run render:dapan");
+      log("✅ 直式完成！90_系統/暫存/產線輸出/output-dapan.mp4");
+    } else {
+      log("⏭  大盤小報直式已關閉（DAPAN_RENDER_PORTRAIT = false），只出橫式");
+    }
     run("npm run render:dapan-landscape");
-    log("✅ 完成！直式 90_系統/暫存/產線輸出/output-dapan.mp4、橫式 90_系統/暫存/產線輸出/output-dapan-landscape.mp4");
+    log("✅ 完成！橫式 90_系統/暫存/產線輸出/output-dapan-landscape.mp4");
   } else if (TEMPLATE === "midday") {
     // 盤中焦點只出直式（2026-08-31 使用者定案「只出直式」），沒有橫式那一支
     run("npm run render:midday");

@@ -99,7 +99,9 @@ const ORIENTATIONS = {
  * safeBottom 全部一樣：直式版型共用 Subtitles.tsx，字幕一律從 y1440 起。
  */
 const TEMPLATE_MOTION = {
-  dapan: { p: {}, l: {} },
+  // 2026-10-22 使用者要求大盤小報先只出橫式：直式動態用 off 關掉（不刪設定），
+  // 跟 run.js 的 DAPAN_RENDER_PORTRAIT 一起改回來即可恢復。
+  dapan: { p: { off: true }, l: {} },
   midday: { p: {} },
   usstock: { p: { safeTop: 325 } },
 };
@@ -114,7 +116,9 @@ function orientationsFor(template) {
     if (template) log(`ℹ️ 版型 ${template} 還沒登記動態設定，只出直式（要改在 TEMPLATE_MOTION 加一筆）`);
     return [ORIENTATIONS.p];
   }
-  return Object.entries(conf).map(([key, over]) => ({ ...ORIENTATIONS[key], ...over }));
+  return Object.entries(conf)
+    .map(([key, over]) => ({ ...ORIENTATIONS[key], ...over }))
+    .filter((o) => !o.off);
 }
 
 const log = (m) => console.log(m);

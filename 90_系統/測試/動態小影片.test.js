@@ -219,8 +219,9 @@ test('命名規則：public 用 ASCII、素材用看得懂的中文名', () => {
                                       { text: '融資洗掉沒', at: '融資被洗掉' }] },
   }]));
   // 指定 dapan：只有它有橫式，不指定的話只會出直式（見 orientationsFor）
+  // 2026-10-22 起大盤小報直式關閉（TEMPLATE_MOTION.dapan.p.off），只出橫式
   const out = 跑(dir, '--dry-run', '--template=dapan');
-  assert.match(out, /public\/motion-1-p\.mp4/, '直式 public 檔名');
+  assert.doesNotMatch(out, /public\/motion-1-p\.mp4/, '大盤小報直式已關閉');
   assert.match(out, /public\/motion-1-l\.mp4/, '橫式 public 檔名');
 });
 
@@ -235,7 +236,6 @@ test('三段（2026-10-08 起的上限）：各自編號、各自算時間，檔
   const out = 跑(dir, '--dry-run', '--template=dapan');
   for (const n of [1, 2, 3]) {
     assert.match(out, new RegExp(`動態 ${n}：`), `第 ${n} 段要有自己的編號`);
-    assert.match(out, new RegExp(`public/motion-${n}-p\\.mp4`), `第 ${n} 段直式檔名`);
     assert.match(out, new RegExp(`public/motion-${n}-l\\.mp4`), `第 ${n} 段橫式檔名`);
   }
   // 第二段從第 10 字開始 ＝ 2.0 秒；「二十億」在段內第 4 字（從 0 算）＝ 相對 0.8 秒
@@ -849,7 +849,9 @@ const 版型檔案 = {
 };
 
 test('只有大盤小報出橫式，其他版型只出直式', () => {
-  assert.deepEqual(orientationsFor('dapan').map((o) => o.key), ['p', 'l']);
+  // 2026-10-22 大盤小報直式先關掉（設定保留、off: true），只出橫式
+  assert.deepEqual(orientationsFor('dapan').map((o) => o.key), ['l']);
+  assert.equal(TEMPLATE_MOTION.dapan.p.off, true, '直式設定要保留，只是關掉');
   assert.deepEqual(orientationsFor('midday').map((o) => o.key), ['p']);
   assert.deepEqual(orientationsFor('usstock').map((o) => o.key), ['p']);
 });
@@ -872,7 +874,9 @@ test('動態的安全區要跟該版型 composition 自己的 safeTop 一致', (
     const code = fs.readFileSync(path.join(app, 檔), 'utf-8');
     const m = code.match(/safeTop=\{(\d+)\}/);
     assert.ok(m, `${檔} 找不到 safeTop`);
-    assert.equal(orientationsFor(代號)[0].safeTop, Number(m[1]),
+    // 直接看直式設定（大盤小報直式關掉時 orientationsFor 拿不到它，但設定仍要對）
+    const 直式 = { ...ORIENTATIONS.p, ...TEMPLATE_MOTION[代號].p };
+    assert.equal(直式.safeTop, Number(m[1]),
       `${代號}：動態的 safeTop 跟 composition 的不一致`);
   }
 });
