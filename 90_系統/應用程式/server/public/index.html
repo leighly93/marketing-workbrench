@@ -241,11 +241,9 @@
        同事看到那兩行終端機指令只會愣住 —— 他們既沒有那台 Mac，也不知道那在幹嘛
        （2026-08-26 使用者要求）。按鈕不擋，只講清楚，避免有人被莫名其妙鎖住。 -->
   <span id="staleOther">這頁還是可以正常看，資料都是對的。只是先別按「開始出片」，出來的會是舊設定 —— 等伺服器重開之後再出片就好。</span>
-  <!-- 2026-09-11 服務從 LaunchAgent 搬到 LaunchDaemon（screen 一關 gui 網域就不重啟），
-       所以這裡的網域前綴改成 system/ 且要 sudo；打舊的 gui/ 會回 "Could not find service"。
-       終端機 alias 是 studio（已同步改過）。 -->
-  <span id="staleAdmin" hidden>重開才會生效：<code>sudo launchctl kickstart -k system/com.cmoney.marketing-video-studio</code>
-  　或終端機打 <code>studio</code></span>
+  <!-- 2026-11-02：服務 10/2 已搬回 LaunchAgent（gui/ 網域），原本寫的 sudo … system/… 會回
+       "Could not find service"。改成筆電 ~/.zsh_studio 的捷徑，網域變動時只要改那一處。 -->
+  <span id="staleAdmin" hidden>重開才會生效：在筆電終端機打 <code>重開工作台</code>（或 <code>studio-restart</code>）</span>
 </div>
 
 <div class="ed" id="ed">
