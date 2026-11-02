@@ -156,6 +156,24 @@ test('字數會變的發音規則：每顆 word 記下稿件字數，加總等�
     '前提：兩個萬海各少 2 字 —— 照顯示字數數的舊做法在這裡一定會錯開');
 });
 
+// 2026-11-02：10/30 大盤 20261030-172513-1eym，whisper 斷句切在 on｜e 中間，
+// 逐行反向還原兩行都找不到完整的 one海，成品字幕出現「…4倍多on」「e海漲4.3%」。
+test('斷句切在替換字中間：照樣換回萬海，而且整個詞放在同一行', () => {
+  const body = '長榮漲4%成交量是前一天的4倍多萬海漲4.3%陽明也收紅';
+  for (const [a, b] of [['長榮漲4%成交量是前一天的4倍多on', 'e海漲4.3%陽明也收紅'],
+                        ['長榮漲4%成交量是前一天的4倍多one', '海漲4.3%陽明也收紅']]) {
+    const { code, out, text, subs } = runCorrect(body,
+      [evenSegment(0, a, 0, 0.15), evenSegment(1, b, 3, 0.15)], '萬海→one海');
+    assert.equal(code, 0, out);
+    assert.equal(text, body, `${a}｜${b}：字幕要換回萬海`);
+    const lines = subs.segments.map((s) => s.text);
+    assert.ok(lines.some((l) => l.includes('萬海')), `萬海不能被拆到兩行：${JSON.stringify(lines)}`);
+    assert.ok(!lines.some((l) => /[a-z]/i.test(l)), `不能留下替換字：${JSON.stringify(lines)}`);
+    assert.equal(字數(subs).reduce((n, w) => n + w.scriptLen, 0), subs._scriptCharTimes.length,
+      '換完 scriptLen 加總照樣等於時間軸長度');
+  }
+});
+
 test('沒有字數會變的規則時，scriptLen 就等於顯示的字數（舊行為不變）', () => {
   const body = '指數反彈之後資金開始重新選股';
   const { code, out, subs } = runCorrect(body, [evenSegment(0, '指數反談之後資金開始重新選股', 0, 0.3)], '反彈→反談');

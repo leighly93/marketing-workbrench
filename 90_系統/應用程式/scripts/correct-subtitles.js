@@ -374,7 +374,13 @@ subs._scriptText = cleanScriptText;
 //   ① 保留 firstWord 中匹配前的字（before-match）
 //   ② 保留 lastWord 中匹配後的字（after-match）
 //   ③ 把替換字串依字數平均分配到涉及的多個 word（保留 timing — 避免整段字幕擠到第一個 word 的小時段）
-function applyCrossWordReplace(words, from, to) {
+//
+// groupOf（2026-11-02）：words 是整支字幕所有行攤平的，groupOf[wi] 是那顆 word 在第幾行。
+// 以前逐行各自比對，whisper 斷句切在詞中間（one｜海、on｜e海）兩行都找不到完整的 to，
+// 字幕就留著替換字 —— 10/30 大盤 20261030-172513-1eym 出現「…4倍多on」「e海漲4.3%」。
+// 跨行命中時整個替換字只放進命中字數最多的那一行（同數取後面那行），不把一個詞拆到兩行；
+// 另一行承載命中的 word 變空字串（scriptLen 照舊，渲染端會跳過）。
+function applyCrossWordReplace(words, from, to, groupOf) {
   if (!from) return;
   let combined = '';
   const charMap = [];
@@ -417,11 +423,25 @@ function applyCrossWordReplace(words, from, to) {
       const recipientCount = recipientEnd - recipientStart + 1;
       if (recipientCount >= 1) {
         const toLen = to.length;
+        // 真正拿到替換字的 word：預設全部 recipient；跨行時只留命中最多的那一行
+        let active = [];
+        for (let wi = recipientStart; wi <= recipientEnd; wi++) active.push(wi);
+        if (groupOf && groupOf[recipientStart] !== groupOf[recipientEnd]) {
+          const hits = new Map();
+          for (let k = idx; k < end; k++) {
+            const g = groupOf[charMap[k].wordIdx];
+            hits.set(g, (hits.get(g) || 0) + 1);
+          }
+          let best = null;
+          for (const [g, n] of hits) if (best === null || n >= hits.get(best)) best = g;
+          const inBest = active.filter((wi) => groupOf[wi] === best);
+          if (inBest.length) active = inBest;
+        }
         for (let i = 0; i < recipientCount; i++) {
           const wi = recipientStart + i;
-          const sliceStart = Math.floor((i * toLen) / recipientCount);
-          const sliceEnd = Math.floor(((i + 1) * toLen) / recipientCount);
-          const piece = to.slice(sliceStart, sliceEnd);
+          const ai = active.indexOf(wi);
+          const piece = ai < 0 ? ''
+            : to.slice(Math.floor((ai * toLen) / active.length), Math.floor(((ai + 1) * toLen) / active.length));
           // recipient 範圍內如果剛好是 firstWord 或 lastWord，要保留它原本要保留的部分
           let pre = '';
           let post = '';
@@ -471,26 +491,31 @@ for (const seg of subs.segments) {
 // 若照單全收，一條內文根本沒出現的規則也會把字幕裡剛好等於它 to 的字改掉 ——
 // 詞庫有一條寫反的「強談→強彈」，稿件沒有「強談」、TTS 沒換任何字，
 // 字幕卻被它把正確的「強彈」改成「強談」。
+// 2026-11-02：整支字幕攤平一起比對，不逐行（見 applyCrossWordReplace 的 groupOf 說明）。
+const allWords = [];
+const wordLine = [];
+subs.segments.forEach((seg, si) => {
+  for (const w of seg.words || []) { allWords.push(w); wordLine.push(si); }
+});
+const refreshSegText = () => {
+  for (const seg of subs.segments) {
+    if (seg.words) seg.text = seg.words.map((w) => w.word.replace(/^\s+/, '')).join('');
+  }
+};
 const voiceRules = getBodyWithVoiceMap(scriptRaw).usedRules
   .sort((a, b) => (b.to || '').length - (a.to || '').length);
-for (const seg of subs.segments) {
-  if (!seg.words) continue;
-  for (const rule of voiceRules) {
-    applyCrossWordReplace(seg.words, rule.to, rule.from);
-  }
-  seg.text = seg.words.map((w) => w.word.replace(/^\s+/, '')).join('');
+for (const rule of voiceRules) {
+  applyCrossWordReplace(allWords, rule.to, rule.from, wordLine);
 }
+refreshSegText();
 
 // ─── 11. 套 subtitles-replacements（fallback；反向規則沒處理到的才會用）
 if (fs.existsSync(REPLACEMENTS_PATH)) {
   const replacements = JSON.parse(fs.readFileSync(REPLACEMENTS_PATH, 'utf-8'));
-  for (const seg of subs.segments) {
-    if (!seg.words) continue;
-    for (const rule of replacements) {
-      applyCrossWordReplace(seg.words, rule.from, rule.to);
-    }
-    seg.text = seg.words.map((w) => w.word.replace(/^\s+/, '')).join('');
+  for (const rule of replacements) {
+    applyCrossWordReplace(allWords, rule.from, rule.to, wordLine);
   }
+  refreshSegText();
   console.log(`🔄 套用 ${replacements.length} 條自訂替換規則（fallback）`);
 }
 
