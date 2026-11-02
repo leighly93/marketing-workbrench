@@ -242,8 +242,9 @@
        （2026-08-26 使用者要求）。按鈕不擋，只講清楚，避免有人被莫名其妙鎖住。 -->
   <span id="staleOther">這頁還是可以正常看，資料都是對的。只是先別按「開始出片」，出來的會是舊設定 —— 等伺服器重開之後再出片就好。</span>
   <!-- 2026-11-02：服務 10/2 已搬回 LaunchAgent（gui/ 網域），原本寫的 sudo … system/… 會回
-       "Could not find service"。改成筆電 ~/.zsh_studio 的捷徑，網域變動時只要改那一處。 -->
-  <span id="staleAdmin" hidden>重開才會生效：在筆電終端機打 <code>重開工作台</code>（或 <code>studio-restart</code>）</span>
+       "Could not find service"。管理者畫面＝在 Mac mini 本機開網頁的人（多半是同事），所以寫 Mac mini 上的指令：
+       `重開工作台` 定義在 Mac mini 的 ~/.zshrc（有片在出會拒絕），筆電 ~/.zsh_studio 有同名的 ssh 版。 -->
+  <span id="staleAdmin" hidden>重開才會生效：在 Mac mini 打開「終端機」，輸入 <code>重開工作台</code>（或 <code>studio-restart</code>）按 Enter</span>
 </div>
 
 <div class="ed" id="ed">
