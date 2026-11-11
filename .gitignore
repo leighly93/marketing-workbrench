@@ -41,6 +41,7 @@ build/
 # 執行素材僅收沒有其他來源的字型；網頁 server/public 必須收錄
 /90_系統/應用程式/public/*
 !/90_系統/應用程式/public/NotoSansTC-VF.ttf
+!/90_系統/應用程式/public/NotoSerifTC-Black.woff2
 /90_系統/應用程式/src/subtitles.json
 /90_系統/應用程式/src/subtitles.original.json
 /90_系統/應用程式/src/video-meta.json

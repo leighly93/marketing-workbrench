@@ -289,6 +289,13 @@ function splitIntoPhrases(
 const PHRASES = splitIntoPhrases(data.segments, data._scriptBreaks ?? []);
 
 /**
+ * 給其他字幕樣式（例：大盤小報明體字幕 DapanXiaobao/SerifSubtitles.tsx）共用同一套斷句與重點詞。
+ * 只讀不改 —— 斷句邏輯仍只在本檔一處。
+ */
+export const SUBTITLE_PHRASES: readonly Phrase[] = PHRASES;
+export { splitByEmphasis as splitSubtitleByEmphasis, keepTokensTogether };
+
+/**
  * 有重點詞的那些句子 → 講者要推近的時間區間（秒，相對講者影片的開頭）。
  *
  * 2026-09-17 使用者定案：**跟著整句、硬切**。不跟著「詞」是因為一個詞常常只有 0.4 秒，

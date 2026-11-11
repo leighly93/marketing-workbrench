@@ -23,6 +23,7 @@ import { ShotFocusImage } from '../ShotFocus';
 import { MotionOverlay } from '../MotionClip/MotionOverlay';
 import { MOTION_RUNS } from '../MotionClip/motion-timeline';
 import videoMeta from '../video-meta.json';
+import { SerifSubtitles } from './SerifSubtitles';
 
 /**
  * 大盤小報「橫式版型」composition（16:9，1920×1080）。
@@ -90,7 +91,20 @@ function fadeProgress(
   );
 }
 
-export const DapanLandscapeComposition: React.FC = () => {
+/**
+ * subtitleStyle（2026-11-11 使用者定案）：橫式預設 'serif' ＝ 明體字幕（見 SerifSubtitles.tsx）；
+ * 'classic' ＝ 原本的黑體黑底字幕，保留給比對用（`--props '{"subtitleStyle":"classic"}'`）。
+ * previewKeywords 只給沒有重點詞標記的預覽用。
+ */
+export type DapanLandscapeProps = {
+  subtitleStyle?: 'classic' | 'serif';
+  previewKeywords?: string[];
+};
+
+export const DapanLandscapeComposition: React.FC<DapanLandscapeProps> = ({
+  subtitleStyle = 'serif',
+  previewKeywords,
+}) => {
   const totalFrames = secToFrame(DAPAN_LANDSCAPE_DURATION_SEC);
 
   return (
@@ -183,20 +197,31 @@ export const DapanLandscapeComposition: React.FC = () => {
         region={{ x: 0, y: 0, w: PANEL_LEFT_X, h: LANDSCAPE_HEIGHT }}
       />
 
-      {/* 字幕：靠左、置於左側講者區底部，且放在最上層（面板/日期/標題之後）→ 永遠不被蓋到。
-          alignItems: 'flex-start' = 靠左；right = 面板寬 → 字幕只落在左側可見區、不會頂到右側面板；
-          maxWidth 收窄讓長句在碰到面板前就自動換行。 */}
-      <Subtitles
-        containerStyle={{
-          justifyContent: 'flex-end',
-          alignItems: 'flex-start',
-          paddingTop: 0,
-          paddingBottom: 70,
-          paddingLeft: 60,
-          right: 1920 - PANEL_LEFT_X,
-        }}
-        textStyle={{ fontSize: 52, maxWidth: PANEL_LEFT_X - 180, textAlign: 'left' }}
-      />
+      {/* 字幕：最上層（面板/日期/標題之後）→ 永遠不被蓋到，只落在左側講者區（0 ~ PANEL_LEFT_X）。
+          預設明體字幕：置中、每句墊半透明黑底，字底離畫面底部 72px（框頂約 y900，
+          上面截圖段的 safeBottom 880 仍然不會壓到）。
+          classic 是舊的黑體字幕：靠左、maxWidth 收窄讓長句在碰到面板前換行。 */}
+      {subtitleStyle === 'serif' ? (
+        <SerifSubtitles
+          regionLeft={0}
+          regionRight={PANEL_LEFT_X}
+          bottom={72}
+          alwaysPill
+          previewKeywords={previewKeywords}
+        />
+      ) : (
+        <Subtitles
+          containerStyle={{
+            justifyContent: 'flex-end',
+            alignItems: 'flex-start',
+            paddingTop: 0,
+            paddingBottom: 70,
+            paddingLeft: 60,
+            right: 1920 - PANEL_LEFT_X,
+          }}
+          textStyle={{ fontSize: 52, maxWidth: PANEL_LEFT_X - 180, textAlign: 'left' }}
+        />
+      )}
 
       {/* BGM：跨整支影片墊底，頭尾淡入淡出（與直式同一支 dapan-bgm.wav） */}
       {/* loop：BGM 比影片短時自動從頭接著播，鋪滿整支（2026-08-21 焦點股踩到：
