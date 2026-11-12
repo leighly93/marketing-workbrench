@@ -228,7 +228,7 @@ test('伺服器：Claude 沒排成功就整支失敗，不停在待確認；下�
 
 test('卡片 prompt：個股只被點名時裁上方股價區、框漲跌幅，不裁大戶散戶等下方區塊', () => {
   const p = picker.buildCardPrompt({ steps: [{ id: 'U1', text: '就連大哥台積電' }], listing: '', width: 1, height: 1 });
-  assert.match(p, /個股頁.*一律裁\*\*上方股價區\*\*/);
+  assert.match(p, /個股頁.*卡片＝\*\*股價區\*\*/);
   assert.match(p, /大戶散戶/);
   assert.match(p, /個股被點名.*框它的漲跌幅/);
 });

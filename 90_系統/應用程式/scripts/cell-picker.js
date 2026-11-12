@@ -185,7 +185,8 @@ function unscaleBox(b, scale, width, height) {
  * OCR 根本沒讀到的那一行補不到 —— 那要靠 Claude 回 box（見 buildPrompt）。
  */
 const PCT_RE = /^\(?[+\-−]?\d[\d.,]*%\)?$/;
-const CHG_RE = /^[▲▼△▽+\-−A人]?\d[\d.,]*$/;
+// ▼ 常被 OCR 讀成 Y／V（「Y-270」「v-55」），後面一定跟著正負號才算
+const CHG_RE = /^(?:[▲▼△▽+\-−A人]|[YVvy][+\-−])?\d[\d.,]*$/;
 const ARROW_RE = /^[▲▼△▽A人]$/;
 
 function expandChange(ids, cands) {
@@ -254,21 +255,24 @@ function buildCardPrompt({ steps, page, listing, width, height, note = '' }) {
     '卡片（crop: [x, y, w, h]）：',
     '- 只裁這段講到的那一塊 UI（完整的小卡、表頭加相關的幾列、股價區），要包含每一句要框的地方，留一點邊、不要切到字；不要整張截圖（除非整張就是那一塊）。',
     '- 講大盤指數（加權指數、櫃買指數的點數與漲跌）時，**上方的走勢圖（K 線／分時圖）也要一起包進去**，畫面比較好看。',
-    // 2026-11-12 使用者：「台積電顯示的畫面很怪，應該要顯示股價吧，怎麼圈在大戶散戶那」
-    '- **個股頁**：旁白只是講到這檔股票（點名、漲跌、「撐不住」「重挫」「漲停」這類走勢）→ 一律裁**上方股價區**',
-    '  （股名代號＋股價＋漲跌幅＋總量那幾列），框漲跌幅；下方的走勢圖、大戶散戶、主力、法人、籌碼等區塊不要。',
-    '  只有旁白**明講那個區塊的內容**（例「大戶賣超 2250 張」「外資連 3 天買超」）才裁那個區塊、框那個數字。',
+    // 2026-11-12 使用者：「台積電顯示的畫面很怪，應該要顯示股價吧，怎麼圈在大戶散戶那」；
+    // 同日再定案範圍：「之後遇到要框選股價的，都以大立光截圖那樣框選，不要出現其他多餘區域」（緯創的股名被切掉、欣興沒框）。
+    '- **個股頁**：旁白只是講到這檔股票（點名、漲跌、「撐不住」「重挫」「漲停」這類走勢）→ 卡片＝**股價區**，回 "stock": true。',
+    '  範圍固定：上緣從「返回鍵／股名代號」那一列開始（**股名代號一定要露出來**，例「大立光 3008」與下面那行產業），',
+    '  下緣到「屬性」那一列（股價、漲跌、總量、屬性標籤）為止。不要狀態列（時間、電量），不要「上市・…」標籤列、',
+    '  「可當沖」那列、分頁列、下方走勢圖、大戶散戶、主力、法人、籌碼等區塊。',
+    '  只有旁白**明講某個區塊的內容**（例「大戶賣超 2250 張」「外資連 3 天買超」）才裁那個區塊、框那個數字，這時 "stock": false。',
     '',
     '每一句的金框（steps，每個 U 一筆，照順序）：',
     '- 個股漲跌只框漲跌幅那個數字（例「▲335 (9.88%)」），不框股名、不框整列。',
     '- 大盤指數在總覽頁框整張指數小卡；在大盤自己的報價頁只框漲跌那一行。單一數字只框數字。',
     '- 這一句講的是下一檔／下一個項目，框就移到那一項（例：「台達電漲停」框台達電的漲跌幅）。',
-    '- 個股被點名（例「就連大哥台積電」「聯發科都撐不住」）算有講到它：框它的漲跌幅。',
+    '- 個股被點名（例「就連大哥台積電」「聯發科都撐不住」「欣興等 PCB 族群更是重災區」）算有講到它：框它的漲跌幅（點數＋百分比）。',
     '- 圖上沒有對應的東西（開場、評論、圖上沒有的項目）→ none: true。',
     '- 優先從編號挑（words／rows）；OCR 沒讀到的部分才用 box: [x, y, w, h] 補，兩者會合併。',
     '',
     ...(note ? [`剪輯師對這支片的指示（跟這張圖有關才照做）：${note}`, ''] : []),
-    '只輸出 JSON：{"crop":[0,120,1206,300],"steps":[{"unit":"U12","words":["W7"],"rows":[],"box":null,"none":false}],"why":"一句話"}',
+    '只輸出 JSON：{"crop":[0,120,1206,300],"stock":false,"steps":[{"unit":"U12","words":["W7"],"rows":[],"box":null,"none":false}],"why":"一句話"}',
   ].filter((x) => x !== '').join('\n');
 }
 
@@ -285,7 +289,63 @@ function parseCardReply(text, cands, stepIds) {
     const one = parseReply(JSON.stringify({ ...st, crop: undefined }), cands);
     if (one) steps.set(String(st.unit), one);
   }
-  return { crop, steps, why: typeof o.why === 'string' ? o.why.trim().slice(0, 200) : '' };
+  return { crop, stock: o.stock === true, steps, why: typeof o.why === 'string' ? o.why.trim().slice(0, 200) : '' };
+}
+
+/**
+ * 股價卡的裁切（2026-11-12 使用者給的大立光範例）：左右整張寬（返回鍵、下單鈕都在），
+ * 上緣＝股名代號那列（「大立光 3008」，不含狀態列），下緣＝「屬性」那列為止（不含「上市・…」標籤列）。
+ * Claude 給的上下緣常常多一列少一列，所以用 OCR 對齊：
+ *   ① crop 範圍內第一個「總」（總量）＝股價那列
+ *   ② 它上面最近、靠中間、含 4 位數字的詞＝股名代號 → 上緣在它上方 0.9 個字高（再高會露出狀態列）
+ *   ③ 它下面第一個貼左邊（x < 寬 5%）的詞＝「上市・…」標籤列 → 下緣停在那列上方
+ * 對不到就退回 Claude 的上下緣（左右照樣整張寬）。
+ */
+function stockCrop(crop, width, words = []) {
+  if (!crop) return null;
+  const mid = (w) => w.y + w.h / 2;
+  const vol = words
+    .filter((w) => /總/.test(w.t) && mid(w) >= crop.y - 40 && mid(w) <= crop.y + crop.h + 40)
+    .sort((a, b) => a.y - b.y)[0];
+  let top = crop.y;
+  let bottom = crop.y + crop.h;
+  if (vol) {
+    const code = words
+      .filter((w) => /\d{4}/.test(w.t) && w.y + w.h <= vol.y && w.y >= vol.y - 8 * vol.h
+        && w.x + w.w / 2 > width * 0.25 && w.x + w.w / 2 < width * 0.75)
+      .sort((a, b) => a.y - b.y)[0];
+    if (code) top = Math.max(0, Math.round(code.y - 0.9 * code.h));
+    const tag = words
+      .filter((w) => w.x < width * 0.05 && w.y > vol.y + vol.h)
+      .sort((a, b) => a.y - b.y)[0];
+    if (tag && tag.y - vol.y < 5 * vol.h) bottom = Math.round(tag.y - 0.4 * vol.h);
+    else bottom = Math.min(bottom, Math.round(vol.y + 3.2 * vol.h));
+  }
+  return { x: 0, y: top, w: width, h: Math.max(1, bottom - top) };
+}
+
+/**
+ * 股價卡上的漲跌框（點數＋百分比）。個股被點名一定要框（使用者：「欣興也是，都框選吧」），
+ * Claude 回 none、框到股名或連股價一起框時都用這個。
+ *   ① crop 範圍內最上面那個有括號的百分比「(4.32%)」→ expandChange 補上面的點數與箭頭
+ *   ② OCR 常漏讀百分比，只讀到點數（「A9.0」「v-15」「Y-65」）→ 從點數往下延伸，把正下方那行百分比包進來
+ *      （股價區版面固定：百分比在點數正下方，寬約 1.35 倍（至少 5.2 個字高寬，「9.0」這種短點數才包得住「(5.00%)」）、兩行合起來約 3 個字高）
+ * 回 { cell, text }（原圖像素，已外擴 pad），找不到回 null。
+ */
+const SIGNED_CHG_RE = /^(?:[▲▼△▽A人]|[YVvy]?[+\-−])\d[\d.,]*$/;
+function changeCellIn(cands, crop, pad, width, height) {
+  const inside = (w) => !crop || (w.y + w.h / 2 >= crop.y && w.y + w.h / 2 <= crop.y + crop.h);
+  const all = [...cands.words.entries()].filter(([, w]) => inside(w));
+  const pct = all.filter(([, w]) => PCT_RE.test(w.t.trim()) && /\(/.test(w.t)).sort((a, b) => a[1].y - b[1].y)[0];
+  if (pct) {
+    const boxes = expandChange([pct[0]], cands).map((id) => cands.words.get(id));
+    return { cell: unionBox(boxes, pad, width, height), text: boxes.map((b) => b.t.trim()).join(' ') };
+  }
+  const chg = all.filter(([, w]) => SIGNED_CHG_RE.test(w.t.trim())).sort((a, b) => a[1].y - b[1].y)[0];
+  if (!chg) return null;
+  const w = chg[1];
+  const grown = { x: w.x, y: w.y, w: Math.round(Math.max(w.w * 1.35, w.h * 5.2)), h: Math.round(w.h * 2.95) };
+  return { cell: unionBox([grown], pad, width, height), text: w.t.trim() };
 }
 
 /** 挑中的詞框聯集，外擴 pad px，夾在圖內。 */
@@ -333,5 +393,5 @@ function iou(a, b) {
 
 module.exports = {
   lastJsonObject,
-  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, buildCardPrompt, parseCardReply, expandChange, fitCrop, unscaleBox, unionBox, numbersIn, numberCheck, iou,
+  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, buildCardPrompt, parseCardReply, expandChange, fitCrop, stockCrop, changeCellIn, unscaleBox, unionBox, numbersIn, numberCheck, iou,
 };

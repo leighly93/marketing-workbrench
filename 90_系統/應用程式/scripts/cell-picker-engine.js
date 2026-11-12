@@ -86,7 +86,8 @@ function pick({ imagePath, words, width, height, phrase, page, withCrop = false 
 /**
  * 卡片版挑框（2026-11-12）：一段一張卡片，金框跟著每一句移動。
  *   steps [{ id: 'U12', text, startCharIdx, endCharIdx }]
- *   → { status: 'picked', crop, steps: [{ id, cell|null, source, text, why }] } | { status: 'failed', error }
+ *   → { status: 'picked', crop, stock, steps: [{ id, cell|null, source, text, why }] } | { status: 'failed', error }
+ *   stock＝股價卡（裁切左右整張寬、沒框的句子自動框漲跌幅，source='auto-change'）
  * crop 一定包住所有句子的金框（cell-picker.js 的 fitCrop）。
  */
 function pickCard({ imagePath, words, width, height, steps, page, note = '' }) {
@@ -100,9 +101,21 @@ function pickCard({ imagePath, words, width, height, steps, page, note = '' }) {
   if (!r.ok) return { status: 'failed', error: r.error };
   const reply = picker.parseCardReply(r.text, cands, steps.map((x) => x.id));
   if (!reply) return { status: 'failed', error: `回覆不是預期的 JSON：${r.text.slice(0, 200)}` };
+  // 股價卡（2026-11-12 使用者定案）：上下照 Claude（股名列～屬性列），左右整張寬；個股被點名一定要框漲跌幅
+  const stockRegion = reply.stock && reply.crop ? picker.stockCrop(picker.unscaleBox(reply.crop, scale, width, height), width, words || []) : null;
+  const autoChange = () => (stockRegion ? picker.changeCellIn(cands, stockRegion, PAD, width, height) : null);
   const out = steps.map((st) => {
     const one = reply.steps.get(st.id);
-    if (!one || one.none) return { id: st.id, cell: null, source: null, text: '', why: one ? one.why : '' };
+    if (!one || one.none) {
+      const auto = autoChange();
+      if (auto) return { id: st.id, cell: auto.cell, source: 'auto-change', text: auto.text, why: '股價卡：個股被點名就框漲跌幅' };
+      return { id: st.id, cell: null, source: null, text: '', why: one ? one.why : '' };
+    }
+    // 股價卡一律框漲跌幅（Claude 有時框股名、或連股價一起框）；只有這句在講量（總量、量增）才照 Claude 的
+    if (stockRegion && !/量/.test(st.text)) {
+      const auto = autoChange();
+      if (auto) return { id: st.id, cell: auto.cell, source: 'auto-change', text: auto.text, why: one.why };
+    }
     const extra = one.box ? picker.unscaleBox(one.box, scale, width, height) : null;
     if (!one.ids.length) return { id: st.id, cell: extra, source: extra ? 'claude-box' : null, text: '', why: one.why };
     const ids = picker.expandChange(one.ids, cands);
@@ -119,8 +132,8 @@ function pickCard({ imagePath, words, width, height, steps, page, note = '' }) {
   // 卡片要包住每一句的框
   const cells = out.map((x) => x.cell).filter(Boolean);
   const all = cells.length ? picker.unionBox(cells, 0, width, height) : null;
-  const crop = picker.fitCrop(reply.crop ? picker.unscaleBox(reply.crop, scale, width, height) : null, all, width, height);
-  return { status: 'picked', crop, steps: out, why: reply.why };
+  const crop = picker.fitCrop(stockRegion || (reply.crop ? picker.unscaleBox(reply.crop, scale, width, height) : null), all, width, height);
+  return { status: 'picked', crop, stock: !!stockRegion, steps: out, why: reply.why };
 }
 
 /**

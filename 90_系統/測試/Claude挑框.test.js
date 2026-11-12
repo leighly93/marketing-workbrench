@@ -213,3 +213,45 @@ test('伺服器：最後要比對的段落同一段只出現一次，人工改�
   assert.equal(segs[0].phrase, '今天台股漲了');
   assert.equal(segs[1].src, 'shot2.png');
 });
+
+test('股價卡：左右整張寬、上下對齊股名列到屬性列；漲跌一定框（OCR 漏讀百分比也包得住）', () => {
+  // 大立光的實際 OCR（900×1600）：狀態列、股名列、股價列（總量）、屬性列、「上市」標籤列
+  const words = [
+    { t: '4:19', x: 16, y: 13, w: 54, h: 20 },
+    { t: '3008', x: 484, y: 64, w: 62, h: 24 },
+    { t: 'Y-270', x: 257, y: 171, w: 83, h: 23 },
+    { t: '總', x: 415, y: 165, w: 58, h: 29 },
+    { t: '(4.32%)', x: 259, y: 206, w: 112, h: 33 },
+    { t: '上', x: 17, y: 271, w: 46, h: 23 },
+    { t: '(1.00%)', x: 259, y: 900, w: 112, h: 33 },
+  ];
+  // Claude 給的上下緣多了狀態列與標籤列 → 對齊成股名列～屬性列
+  const crop = picker.stockCrop({ x: 40, y: 0, w: 600, h: 330 }, 900, words);
+  assert.equal(crop.x, 0);
+  assert.equal(crop.w, 900);
+  assert.ok(crop.y > 33 && crop.y < 64, `上緣要在狀態列下、股名上，實際 ${crop.y}`);
+  assert.ok(crop.y + crop.h > 239 && crop.y + crop.h < 271, `下緣要在屬性列下、標籤列上，實際 ${crop.y + crop.h}`);
+  // 對不到（沒有 OCR）→ 退回 Claude 的上下緣，左右照樣整張寬
+  assert.deepEqual(picker.stockCrop({ x: 40, y: 30, w: 600, h: 230 }, 900), { x: 0, y: 30, w: 900, h: 230 });
+
+  const cands = picker.candidates(words);
+  const a = picker.changeCellIn(cands, crop, 12, 900, 1600);
+  assert.match(a.text, /4\.32%/);
+  assert.match(a.text, /Y-270/);
+  // 只讀到點數「A9.0」→ 往下延伸包住百分比那行
+  const only = picker.changeCellIn(picker.candidates([{ t: 'A9.0', x: 257, y: 171, w: 60, h: 23 }]), crop, 12, 900, 1600);
+  assert.ok(only.cell.h >= 23 * 2.9 && only.cell.w >= 23 * 5, JSON.stringify(only.cell));
+  // 範圍外的百分比不算
+  assert.equal(picker.changeCellIn(cands, { x: 0, y: 300, w: 900, h: 100 }, 12, 900, 1600), null);
+});
+
+test('卡片回覆帶 stock 旗標；prompt 寫明股價區範圍（股名列到屬性列、股名要露出來）', () => {
+  const cands = picker.candidates([{ t: '(4.32%)', x: 259, y: 206, w: 112, h: 33 }]);
+  const r = picker.parseCardReply('{"crop":[0,30,900,230],"stock":true,"steps":[{"unit":"U1","none":true}]}', cands, ['U1']);
+  assert.equal(r.stock, true);
+  assert.equal(picker.parseCardReply('{"crop":[0,30,900,230],"steps":[]}', cands, ['U1']).stock, false);
+  const p = picker.buildCardPrompt({ steps: [{ id: 'U1', text: '欣興更是重災區' }], listing: '', width: 1, height: 1 });
+  assert.match(p, /股名代號一定要露出來/);
+  assert.match(p, /下緣到「屬性」那一列/);
+  assert.match(p, /"stock":false/);
+});
