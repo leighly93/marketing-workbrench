@@ -24,6 +24,16 @@ OCR 共用入口為 [ocr-engine.js](../應用程式/scripts/ocr-engine.js)，供
 
 對照組現在只有 `auto-shot.js` 一種格式，段落一律帶 `src`。（2026-09-22 之前還有 `auto-focus.js`（三大法人）那種只有 `section` 與 `cellText`、圖固定是版面截圖的格式，隨該版型一起移除。）對照組整份 0 段代表沒有比較基準（多半是頁型未辨識），與「AI 判斷不需要配圖」是不同結論，紀錄以 `autoKind` 區分。
 
+## Claude 挑框旁觀模式（2026-11-11）
+
+使用者選了「讓 Claude 自動框」，先旁觀、確認準確率再決定要不要放進配圖計畫頁。現在的行為：
+
+- 按「確認，開始出片」（或勾「直接出片」）後，伺服器在 `recordCorrections()` 之後 spawn [claude-cells.js](../應用程式/scripts/claude-cells.js)，**不等它**。每一段最後要出的配圖都問一次 Claude，跟人工最後畫的框、規則庫建議（`cell-suggest.json`）各算重疊率。
+- 結果：工作 `_製作資料/claude-cells.json`，並一段一行附加到 `90_系統/資料/claude-cells.jsonl`（`claude.status` 是 picked／none／failed／off，`iouClaude`、`iouSystem`、`claude.verify` 數字驗算）。工作 log 會多一行摘要，例如「你有畫框的 3 段裡，Claude 框到同一塊 2 段、規則庫 0 段」。
+- 重疊率 ≥ 0.5 算「框到同一塊」。人工沒畫框的段落，看 Claude 有沒有忍住回 `none`。
+- 讀的是工作快照 `state/`，不是 ROOT（下一支可能已經佔用工作區）。分析檔尺寸跟標注對不上（舊分析）就不問，直接記 failed。
+- **不進影片、不進配圖計畫、不寫記憶庫。** 要升級成計畫頁的建議，另外評估 `claude-cells.jsonl` 再決定。
+
 ## 事後補上傳的截圖與同名分析
 
 `app-images.generated.json` 是**工作區共用**的產線檔，不是每支工作各一份；分析在 `doPrepare` 一開頭跟 HeyGen 平行跑完，工作送出之後才補上傳的截圖從來沒被它看過。補上傳一律照 `shot<N>` 依序命名（`nextShotName()` 只看這支工作的素材夾），所以新圖很容易跟**上一支工作**的同名圖撞名 —— 檔案裡查得到那個檔名，尺寸、頁型與逐字框卻是別張圖的。

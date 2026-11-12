@@ -88,13 +88,22 @@ whisper 分 30 秒 window 解碼，會在某些切點把一句話的結束時間
 - 驗證**只拒絕不修正**：template 不在三種之內、list 少於兩項、contrast 沒有否定項，一律回 `null`。回 `null` 等於「這段不做動態」，呼叫端必須能接受 —— 與其送半對的參數進 render，不如不做。
 - 失敗一律降級成「這支沒有動態」，不擋出片。失敗兩次才放棄（`ENOENT` 不重試）。
 
+### Claude 挑框（旁觀模式，2026-11-11）
+
+入口：[cell-picker-engine.js](../應用程式/scripts/cell-picker-engine.js)，附圖片的 `claude -p` 呼叫集中在 [claude-cli.js](../應用程式/scripts/claude-cli.js)（stream-json 送 image block；純文字的動態卡片仍走 `motion-engine.js` 自己那份）。
+
+- `CELL_PICKER` 切換：`claude-cli`（預設，訂閱、同一個 `CLAUDE_CODE_OAUTH_TOKEN`）／`off`（不呼叫，伺服器也不啟動比對）。
+- 輸入：截圖（長邊縮到 1568）＋ OCR 詞框清單（W 編號、按列分 R 編號）＋旁白。輸出：Claude 只回編號，框＝詞框聯集外擴 12px；**不讓 Claude 報座標**。另外記一欄數字驗算（框裡的數字有沒有出現在旁白）。
+- 限制：OCR 沒讀到的圖表、色塊框不到；模型是訂閱帳號的預設模型，跟著 Claude Code 版本走。每段一次呼叫，約 15～40 秒。
+- 失敗（沒裝、沒登入、逾時、回覆格式不對）只寫 log，不影響出片。細節與比對資料見 [OCR與配圖設定](OCR與配圖設定.md)。
+
 ### 哪些版型有動態
 
 `render-motion.js` 的 `TEMPLATE_MOTION` 決定「這個版型出幾支、安全區在哪」，`run.js` 與 `doRender` 都會把 `--template=` 傳進去。
 
 | 版型 | 出幾支 | 安全區 |
 | --- | --- | --- |
-| 大盤小報 `dapan` | 直式＋橫式 | 直 y310–1440／橫 y0–918 |
+| 大盤小報 `dapan` | 只有橫式（直式 2026-10-22 起關閉，設定保留） | 直 y310–1440／橫 y0–918 |
 | 盤中焦點 `midday` | 只有直式 | y310–1440 |
 | 美股焦點 `usstock` | 只有直式 | y325–1440（招牌膠囊比較高） |
 | 其他 | 只有直式（並留一行提示） | 預設 y310–1440 |

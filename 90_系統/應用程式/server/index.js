@@ -1485,6 +1485,79 @@ function suggestCellsFor(job, items) {
   return map;
 }
 
+/**
+ * 這支最後實際要出的配圖段落（計畫頁的列套上人工改動，加上人工新增的段落）。
+ * 給 Claude 挑框旁觀模式比對用：cell／region 就是人工最後畫的框。
+ */
+function finalSegmentsOf(job, edits) {
+  const view = job.planView || {};
+  const rows = view.rows || [];
+  const chars = view.chars || [];
+  const textOf = (a, b) => (a == null || b == null || !chars.length ? ''
+    : chars.slice(Math.min(a, b), Math.max(a, b) + 1).map((c) => c.c).join(''));
+  const pick = (e, b, k) => (e && Object.prototype.hasOwnProperty.call(e, k) ? e[k] : b[k]);
+  const out = [];
+  const touched = new Set();
+  for (const e of Array.isArray(edits) ? edits : []) {
+    if (!e) continue;
+    if (e._added) {
+      if (e.deleted || !e.src || e.startCharIdx == null || e.endCharIdx == null) continue;
+      out.push({ src: e.src, startCharIdx: e.startCharIdx, endCharIdx: e.endCharIdx,
+        phrase: textOf(e.startCharIdx, e.endCharIdx), cell: e.cell || null, region: e.region || null,
+        imgW: e.imgW, imgH: e.imgH });
+      continue;
+    }
+    const b = rows[e.i];
+    if (!b) continue;
+    touched.add(e.i);
+    if (e.deleted) continue;
+    const a = pick(e, b, 'startCharIdx');
+    const z = pick(e, b, 'endCharIdx');
+    out.push({ src: e.src || b.src, startCharIdx: a, endCharIdx: z,
+      phrase: textOf(a, z) || b.phrase || '', cell: pick(e, b, 'cell') || null, region: pick(e, b, 'region') || null,
+      imgW: e.imgW || b.imageWidth, imgH: e.imgH || b.imageHeight });
+  }
+  rows.forEach((b, i) => {
+    if (touched.has(i) || !b || !b.src) return;
+    out.push({ src: b.src, startCharIdx: b.startCharIdx, endCharIdx: b.endCharIdx,
+      phrase: textOf(b.startCharIdx, b.endCharIdx) || b.phrase || '', cell: b.cell || null,
+      region: b.region || null, imgW: b.imageWidth, imgH: b.imageHeight });
+  });
+  return out.filter((r) => r.src && r.startCharIdx != null && r.endCharIdx != null);
+}
+
+/**
+ * Claude 挑框「旁觀模式」（2026-11-11）：確認出片之後在背景問 Claude 每一段會框哪裡，
+ * 跟人工最後的框比對、寫進 90_系統/資料/claude-cells.jsonl。**不等它、不進影片。**
+ * 要在 recordCorrections 之後呼叫 —— 規則庫的建議（cell-suggest.json）是那裡算出來的，一起拿來比。
+ * CELL_PICKER=off 就不啟動。任何錯誤都只寫 log，不影響出片。
+ */
+function startClaudeCells(job, edits) {
+  try {
+    if (String(process.env.CELL_PICKER || '').toLowerCase() === 'off') return;
+    const items = finalSegmentsOf(job, edits);
+    if (!items.length) return;
+    const inF = jobPath(job.id, 'claude-cells-in.json');
+    const outF = jobPath(job.id, 'claude-cells.json');
+    fs.writeFileSync(inF, JSON.stringify(items, null, 2));
+    const child = spawn('node', [path.join('scripts', 'claude-cells.js'),
+      `--in=${inF}`, `--state=${jobPath(job.id, 'state')}`,
+      `--suggest=${jobPath(job.id, 'cell-suggest.json')}`, `--out=${outF}`, `--job=${job.id}`],
+    { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    child.on('error', (e) => appendLog(job, `\n⚠️ Claude 框選對照沒有啟動（不影響出片）：${e.message}\n`));
+    child.on('close', (code) => {
+      const last = out.trim().split('\n').filter(Boolean).pop() || `結束碼 ${code}`;
+      appendLog(job, `\n🤖 ${last}（只記錄、不進影片）\n`);
+    });
+    appendLog(job, `\n🤖 Claude 框選對照：背景比對 ${items.length} 段（只記錄、不進影片）\n`);
+  } catch (e) {
+    appendLog(job, `\n⚠️ Claude 框選對照沒有啟動（不影響出片）：${e.message}\n`);
+  }
+}
+
 function recordCorrections(job, before, edits) {
   const diffs = [];
   const beforeRows = (before && before.rows) || []; // 缺 planView 也不要讓 approve 整個掛掉
@@ -2053,6 +2126,7 @@ async function doPrepare(job) {
     // edits 傳空陣列：這條路沒人在計畫頁改過東西，能記能學的全部在 annotations.json 裡，
     // recordCorrections 的「人工標記 vs 對照組」與 learnFromEdits 都會自己去讀。
     recordCorrections(job, job.planView, []);
+    startClaudeCells(job, []);
     learnFromEdits(job, []);
   } else {
     job.status = 'review';
@@ -3253,6 +3327,7 @@ const server = http.createServer(async (req, res) => {
       job.approvedBy = (body.by || '').trim() || job.owner;
       job.approvedAt = nowISO();
       recordCorrections(job, job.planView, edits);
+      startClaudeCells(job, edits);
       learnFromEdits(job, edits);
       job.pendingEdits = edits;
       // 字幕重點詞跟 edits 是兩份資料（它不屬於任何一段配圖，可能落在完全沒配圖的地方），
