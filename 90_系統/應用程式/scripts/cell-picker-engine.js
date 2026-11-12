@@ -151,7 +151,11 @@ function planAssignments({ units, images, note = '' }) {
   if (!images.length) return { status: 'failed', error: '沒有截圖' };
   if (!units.length) return { status: 'failed', error: '稿件沒有子句' };
   const planner = require('./shot-planner');
-  const listed = images.map((im, k) => ({ file: im.file, label: `圖${k + 1}（${im.file}）`, ocr: planner.ocrSummary(im.words) }));
+  const { pageName } = require('./app-pages');
+  const listed = images.map((im, k) => {
+    const zh = pageName(im.page);
+    return { file: im.file, label: `圖${k + 1}（${im.file}${zh ? `，${zh}` : ''}）`, ocr: planner.ocrSummary(im.words) };
+  });
   const prompt = planner.buildPrompt({ units, images: listed, note });
   const r = runClaude({
     prompt,
@@ -162,6 +166,11 @@ function planAssignments({ units, images, note = '' }) {
   if (!r.ok) return { status: 'failed', error: r.error };
   const segments = planner.parseReply(r.text, { units, files: images.map((im) => im.file) });
   if (!segments) return { status: 'failed', error: `回覆不是預期的 JSON：${r.text.slice(0, 200)}` };
+  // Claude 有排段落、卻一段都對不上（圖名或子句編號錯）≠「判斷沒有句子適合配圖」，要當失敗講清楚
+  const raw = (require('./cell-picker').lastJsonObject(r.text) || {}).segments || [];
+  if (!segments.length && raw.length) {
+    return { status: 'failed', error: `Claude 排了 ${raw.length} 段，但圖名或子句編號都對不上：${JSON.stringify(raw[0]).slice(0, 160)}` };
+  }
   return { status: 'planned', segments, motions: planner.parseMotions(r.text, { units, segments }) };
 }
 

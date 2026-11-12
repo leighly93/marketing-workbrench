@@ -99,7 +99,12 @@ const PAGE_SIGNATURES_V2 = [
   { page: 'portfolio-main-force',   label: '庫存主力籌碼', all: ['庫存股', '買賣超', '佔比'] },   // 「成交量佔比」OCR 讀成「或交量佔比」，改抓同一列的「買賣超」+「佔比」
   { page: 'portfolio-news',         label: '庫存事件新聞', all: ['今日頭條'] },
   // ── 大盤（底部導覽）──
+  // 大盤頁往下捲到「加權指數貢獻排行」（正／負貢獻兩欄）：上面還露著三磚，所以要排在 market 前面（2026-11-12 7eov shot4）。
+  // 欄名「正貢獻點數」OCR 常讀爛（「下點負責獻周數」），只靠標題；跟指數詳情頁的 contrib-rank 版面不同，另給 key。
+  { page: 'market-contrib', label: '大盤加權貢獻排行', all: ['加權指數貢獻排行'] },
   { page: 'market',         label: '大盤',           all: ['加權指數', '櫃買指數', '台指期貨'] },
+  // 第三磚有時是「台指電子盤」不是「台指期貨」（「盤」還會被讀成「般」）→ 只比「台指電子」（2026-11-12 7eov shot1）
+  { page: 'market',         label: '大盤',           all: ['加權指數', '櫃買指數', '台指電子'], none: ['成交量'] },
   { page: 'industry-live',  label: '大盤產業即時',   all: ['產業排行'] },
   { page: 'us-markets',     label: '大盤美股行情',   all: ['那斯達克'], none: ['證交所'] },
   // ── 指數詳情頁（點進加權／櫃買）──
@@ -374,7 +379,7 @@ for (const f of files) {
   const fullText = lines.map((l) => l.text).join(' ');
   const sig = detectPage(fullText);
   const NON_STOCK_PAGES = ['focus-list', 'market', 'industry-list', 'focus-rank']
-    .concat(PAGE_RULES === 'v2' ? ['index-kline', 'contrib-rank', 'us-kline', 'watchlist', 'industry-live', 'us-markets',
+    .concat(PAGE_RULES === 'v2' ? ['index-kline', 'contrib-rank', 'market-contrib', 'us-kline', 'watchlist', 'industry-live', 'us-markets',
       'portfolio-institutions', 'portfolio-main-force', 'portfolio-news', 'infographic-institution'] : []);
   const nameCands = sig && NON_STOCK_PAGES.includes(sig.page) ? [] : readStockName(p, size);
   const name = nameCands[0] || null;              // 主要股名＝最高倍率讀到的

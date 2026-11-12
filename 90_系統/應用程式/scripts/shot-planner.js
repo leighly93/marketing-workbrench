@@ -41,6 +41,8 @@ function buildPrompt({ units, images, note = '' }) {
     '每張截圖上 OCR 讀到的字（幫你對照，以圖為準）：',
     images.map((im) => `${im.label}：${im.ocr || '（沒讀到字）'}`).join('\n'),
     '',
+    '"image" 請照抄上面括號裡的檔名（含副檔名）。',
+    '',
     '請決定每張截圖要在旁白講到哪幾句時出現：',
     '1. 只有旁白**正在講圖上的內容**（圖上的數字、個股、指數、表格項目）才配圖；開場、結論、抽象評論、圖上沒有的東西不要配。',
     '2. 一段配 1～4 個連續子句。同一張圖**連續**講好幾項（例：「聯發科大漲、台達電漲停、日月光也強彈」）要合成**一段**，',
@@ -56,7 +58,8 @@ function buildPrompt({ units, images, note = '' }) {
       `剪輯師對這支片的指示（優先照做；但動態仍是開頭、結尾各一段，段落不能重疊，格式照下面）：${note}`,
       '',
     ] : []),
-    '只輸出 JSON：{"segments":[{"image":"shot1.jpg","from":"U3","to":"U4","title":"加權指數","why":"一句話"}],'
+    // 範例的檔名用這支實際的第一張圖：寫死 shot1.jpg 時，素材是 .png 的那支 Claude 照抄 .jpg，整批對不上（2026-11-12 7eov）
+    `只輸出 JSON：{"segments":[{"image":${JSON.stringify((images[0] && images[0].file) || 'shot1.png')},"from":"U3","to":"U4","title":"加權指數","why":"一句話"}],`
       + '"motions":[{"from":"U0","to":"U2","why":"開頭"},{"from":"U40","to":"U43","why":"結尾總結"}]}',
   ].join('\n');
 }
@@ -74,10 +77,10 @@ function parseReply(text, { units, files }) {
   if (!o || !Array.isArray(o.segments)) return null;
   const byId = new Map(units.map((u) => [`U${u.i}`, u]));
   const order = new Map(units.map((u, k) => [`U${u.i}`, k]));
-  const fileSet = new Set(files);
   const segs = [];
   for (const s of o.segments) {
-    if (!s || !fileSet.has(String(s.image))) continue;
+    const image = s ? resolveImage(s.image, files) : null;
+    if (!image) continue;
     const from = String(s.from); const to = String(s.to || s.from);
     if (!byId.has(from) || !byId.has(to)) continue;
     let a = order.get(from); let b = order.get(to);
@@ -87,7 +90,7 @@ function parseReply(text, { units, files }) {
     if (ua.startCharIdx == null || ub.endCharIdx == null) continue;
     const title = typeof s.title === 'string' ? s.title.trim().replace(/[「」"]/g, '').slice(0, 10) : '';
     segs.push({
-      src: String(s.image),
+      src: image,
       startCharIdx: ua.startCharIdx,
       endCharIdx: ub.endCharIdx,
       title,
@@ -102,6 +105,23 @@ function parseReply(text, { units, files }) {
     out.push(s);
   }
   return mergeSameImage(out, units);
+}
+
+/**
+ * Claude 回的圖名 → 實際檔名。先比完整檔名；對不上就比去掉副檔名（shot1.jpg ↔ shot1.png，大小寫不計）；
+ * 再不行就認「圖2」這種編號（files 的順序就是附圖順序）。都對不上回 null。
+ * 2026-11-12 7eov：Claude 照抄 prompt 範例回 shot1.jpg，實際是 shot1.png，整支被判成「沒有句子適合配圖」。
+ */
+function resolveImage(name, files) {
+  const raw = String(name || '').trim();
+  if (!raw) return null;
+  if (files.includes(raw)) return raw;
+  const stem = (f) => String(f).replace(/\.[A-Za-z0-9]+$/, '').toLowerCase();
+  const byStem = files.filter((f) => stem(f) === stem(raw));
+  if (byStem.length === 1) return byStem[0];
+  const m = raw.match(/^圖\s*(\d+)/);
+  if (m && files[Number(m[1]) - 1]) return files[Number(m[1]) - 1];
+  return null;
 }
 
 /**
@@ -191,4 +211,4 @@ function extendToSentenceEnd(shots, units, motions = []) {
   return sorted;
 }
 
-module.exports = { SYSTEM_PROMPT, ocrSummary, buildPrompt, parseReply, parseMotions, motionWindows, mergeSameImage, extendToSentenceEnd };
+module.exports = { SYSTEM_PROMPT, ocrSummary, buildPrompt, parseReply, resolveImage, parseMotions, motionWindows, mergeSameImage, extendToSentenceEnd };
