@@ -1196,3 +1196,23 @@ test('出片收尾不再另存動態素材（2026-11-12 使用者：「之後影
   assert.deepEqual(calls, [], '收尾不能再呼叫 collectMotionAssets()');
   assert.match(server, /job\.motionClips = \[\];/, '新工作的 motionClips 要是空的，成品頁才不會列出動態素材');
 });
+
+test('主角先出來：大數字與關卡線最晚 0.6 秒出現，項目照旁白但不早於數字（2026-11-12 -7%、46,163 太晚）', () => {
+  const { heroFirst } = require(path.join(app, 'scripts/render-motion.js'));
+  // 動態 1 的實際值：數字唸到 2.88 秒、「10/6 高點起跌」1.21 秒、「該逃還是該撿」3.7 秒
+  const num = heroFirst({ template: 'number', value: '7', atSec: 2.88,
+    items: [{ text: '10/6 高點起跌', atSec: 1.21 }, { text: '該逃還是該撿', atSec: 3.7 }] });
+  assert.equal(num.atSec, 0.6);
+  assert.deepEqual(num.items.map((i) => i.atSec), [1.21, 3.7]);
+  const early = heroFirst({ template: 'number', value: '7', atSec: 0.3, items: [{ text: 'x', atSec: 0.4 }] });
+  assert.equal(early.atSec, 0.3, '本來就早的不往後拖');
+  assert.equal(early.items[0].atSec, 0.9, '項目不比數字早');
+  // 動態 2：「今低 46,163」唸到 4.98 秒 → 走勢圖 0.6 秒就畫
+  const lv = heroFirst({ template: 'level', level: '46,163', items: [{ text: '今低 46,163', atSec: 4.98 }] });
+  assert.equal(lv.items[0].atSec, 0.6);
+  const two = heroFirst({ template: 'level', items: [{ text: 'a', atSec: 3 }, { text: 'b', atSec: 0.8 }] });
+  assert.deepEqual(two.items.map((i) => i.atSec), [0.6, 1.2]);
+  // 其他種類不動
+  const list = { template: 'list', items: [{ text: 'a', atSec: 4 }] };
+  assert.deepEqual(heroFirst(list), list);
+});

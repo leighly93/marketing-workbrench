@@ -220,7 +220,41 @@ function resolveItemTimes(spec, range, { times, text }) {
     return { ...it, atSec: Number((abs - range.startSec).toFixed(3)) };
   });
   if (missed) log(`   ⚠️ 有 ${missed} 項在腳本裡比對不到，那幾項改用等距分配`);
-  return { ...spec, items: resolved };
+  return heroFirst({ ...spec, items: resolved });
+}
+
+/**
+ * 主角先出來（2026-11-12 使用者：「-7% 太晚出現了，最後的守住 46,163 折線圖也太晚出現會很奇怪」）。
+ * 動態的範圍由 Claude 排之後常常比卡片的重點寬（「今天成交量不到 8 千億…明天…今天的低點 46,163」），
+ * 主角照旁白對時就要等好幾秒，畫面只有標題。所以：
+ *   - 大數字（number）：數字最晚 HERO_SEC 秒就跳；條列項目照旁白，但不會比數字早出現。
+ *   - 關卡線（level）：第一次碰線（走勢圖）最晚 HERO_SEC 秒就畫；之後的碰線照旁白、至少間隔 0.6 秒。
+ * 其他種類（條列、對比、事件…）本來就是標題先出、項目照旁白進場，不動。
+ */
+const HERO_SEC = 0.6;
+function heroFirst(spec) {
+  const items = spec.items || [];
+  if (spec.template === 'number') {
+    const numAt = Math.min(typeof spec.atSec === 'number' ? spec.atSec : HERO_SEC, HERO_SEC);
+    return {
+      ...spec,
+      atSec: numAt,
+      items: items.map((it) => (typeof it.atSec === 'number' ? { ...it, atSec: Number(Math.max(it.atSec, numAt + 0.6).toFixed(3)) } : it)),
+    };
+  }
+  if (spec.template === 'level' && items.length) {
+    let prev = -Infinity;
+    return {
+      ...spec,
+      items: items.map((it, i) => {
+        if (typeof it.atSec !== 'number') return it;
+        const at = i === 0 ? Math.min(it.atSec, HERO_SEC) : Math.max(it.atSec, prev + 0.6);
+        prev = at;
+        return { ...it, atSec: Number(at.toFixed(3)) };
+      }),
+    };
+  }
+  return spec;
 }
 
 /** 檔名用的關鍵字：取原文前 10 字，剝掉標點與空白。 */
@@ -354,4 +388,4 @@ if (require.main === module) {
 }
 
 // 純計算的部分獨立出來給測試用（不碰檔案系統、不呼叫 remotion）
-module.exports = { orientationsFor, TEMPLATE_MOTION, resolveRange, resolveItemTimes, keywordOf, ORIENTATIONS };
+module.exports = { orientationsFor, TEMPLATE_MOTION, resolveRange, resolveItemTimes, heroFirst, keywordOf, ORIENTATIONS };
