@@ -1642,6 +1642,9 @@ async function main() {
       })()
     : null;
 
+  // Claude 拆標題（2026-11-12，只有大盤小報）：建立工作只填一行標題，這裡切成白、黃兩行。不需要任何前置，一開始就跑。
+  const claudeTitle = TEMPLATE === "dapan" ? runBackground("node scripts/claude-title.js", "Claude 拆標題") : null;
+
   if (SKIP_GENERATE) {
     // ── 跳過生成：直接用現有 public/heygen.mp4，不呼叫 HeyGen/MiniMax ──
     if (!existsSync(heygenPath)) {
@@ -1687,6 +1690,10 @@ async function main() {
   // 6. 跑 Remotion 後製（transcribe / correct-subtitles 兩版型共用；parse-script / 配圖 / render 各自版本）
   log("開始 Remotion 後製");
   transcribeWithRetry();
+  if (claudeTitle) {
+    const r = await claudeTitle;
+    log((r.ok ? "🤖 " : "⚠️ Claude 拆標題沒跑完（照標點切）：") + (r.stdout.trim() || r.stderr.trim().slice(-400)));
+  }
   if (claudePlan) {
     const r = await claudePlan;
     log((r.ok ? "🤖 " : "⚠️ Claude 排配圖沒跑完（照舊用人工標注）：") + (r.stdout.trim() || r.stderr.trim().slice(-400)));

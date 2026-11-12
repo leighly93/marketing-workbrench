@@ -171,7 +171,10 @@ const TEMPLATES = {
   dapan: {
     // 2026-09-14 使用者：跟盤中焦點一起從 9 改成 10（見 midday 那段說明）。
     // 橫式的標題在右側面板，可用寬 706px ÷ 字級 68 ≈ 10.4 字 —— 兩邊都是「剛好塞得下、很靠邊」。
-    title: { lines: 2, per: 10, wrap: true, where: '右側面板全程顯示' },
+    // 2026-11-12 使用者：「建立工作那標題改一行就好，之後給 Claude 自己辨識」——
+    // 只填一行，出片時 scripts/claude-title.js 切成白、黃兩行（失敗就照標點切，title-layout.ts）。
+    // per 20：兩行各約 10 字的總和，超過只是提示，排不下時渲染端整組縮字級。
+    title: { lines: 1, per: 20, wrap: true, where: '右側面板全程顯示；打一行就好，Claude 會自動拆成白、黃兩行' },
     label: '大盤小報',
     // 這支的 timeline 有把 arrow 傳給渲染端 → 前台才給畫箭頭（2026-09-16）。
     // ⚠️ 沒接的模板不要加這個旗標：畫得出來、成品卻沒有，就是靜默失效。
@@ -439,6 +442,7 @@ function clearWorkspaceInputs() {
   // 會把它帶進製作快照，被 planByClaude() 誤判成「這支是 Claude 排的」。
   rmrf(path.join(pub, 'claude-annotations.json'));
   rmrf(path.join(pub, 'claude-motion.json'));
+  rmrf(path.join(pub, 'claude-title.txt'));
   // 重新出片的 OCR 沿用檔同理（2026-09-18）。run.js 那邊本來就會逐張比對 md5、對不上不沿用，
   // 所以留著也不會誤用；但殘留檔本身就是坑（同一類的「撞名截圖用到上一支的尺寸」踩過），
   // 這支工作沒帶沿用檔就不該在 public 看到別人的。

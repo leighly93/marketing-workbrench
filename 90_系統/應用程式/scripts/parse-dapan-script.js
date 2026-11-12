@@ -124,7 +124,17 @@ meta.headerDate = headerDate;
 // parts[1] 會抓到空段。parts[length-2] 對「標準 3 段」與「多一段空白」兩種情況都能抓對標題，
 // 比較不容易因為使用者手滑多打一個 === 就整個抓錯。
 const scriptParts = scriptRaw.split('===');
-const titleText = scriptParts.length >= 3 ? scriptParts[scriptParts.length - 2].trim() : '';
+let titleText = scriptParts.length >= 3 ? scriptParts[scriptParts.length - 2].trim() : '';
+// 2026-11-12 起建立工作的標題只填一行，由 Claude 拆成白、黃兩行（scripts/claude-title.js 寫 public/claude-title.txt）。
+// 只在稿件標題本來就一行、而且拆出來的字跟原標題一字不差時才用（舊工作的兩行標題照原樣）。
+try {
+  const split = fs.readFileSync(path.join(ROOT, 'public', 'claude-title.txt'), 'utf-8').trim();
+  const squash = (x) => x.replace(/\s+/g, '');
+  if (split && !titleText.includes('\n') && squash(split) === squash(titleText)) {
+    titleText = split;
+    console.log('🤖 標題用 Claude 拆的兩行');
+  }
+} catch (_) {}
 if (titleText) {
   meta.titleText = titleText;
   console.log(`✅ 標題已寫入 video-meta.json.titleText：${titleText.replace(/\n/g, ' / ')}`);
