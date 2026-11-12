@@ -171,13 +171,17 @@ const TEMPLATES = {
   dapan: {
     // 2026-09-14 使用者：跟盤中焦點一起從 9 改成 10（見 midday 那段說明）。
     // 橫式的標題在右側面板，可用寬 706px ÷ 字級 68 ≈ 10.4 字 —— 兩邊都是「剛好塞得下、很靠邊」。
-    title: { lines: 2, per: 10, wrap: true, where: '直式：開場第一秒　／　橫式：右側面板全程顯示' },
+    title: { lines: 2, per: 10, wrap: true, where: '右側面板全程顯示' },
     label: '大盤小報',
     // 這支的 timeline 有把 arrow 傳給渲染端 → 前台才給畫箭頭（2026-09-16）。
     // ⚠️ 沒接的模板不要加這個旗標：畫得出來、成品卻沒有，就是靜默失效。
     arrow: true,
     hint: '',
-    outputs: ['out/output-dapan.mp4', 'out/output-dapan-landscape.mp4'],
+    // 2026-10-22 起只出橫式（run.js 的 DAPAN_RENDER_PORTRAIT）。2026-11-12 使用者：「先拿掉直式」——
+    // 輸出清單也拿掉直式，不然每支都會去找、log 多一行「略過上一支留下的舊檔」，看起來像還在出直式。
+    // 要恢復直式：把 'out/output-dapan.mp4' 加回來，連同 run.js 與 render-motion.js 那兩個開關。
+    // outputLabels 保留直式：舊工作的直式成品檔名（直式.mp4）靠它。
+    outputs: ['out/output-dapan-landscape.mp4'],
     outputLabels: { 'output-dapan.mp4': '直式', 'output-dapan-landscape.mp4': '橫式' },
     plan: 'src/DapanXiaobao/dapan-shots.generated.json',
     planKind: 'shots',
