@@ -30,7 +30,9 @@ test('同一高度的詞框排成同一列，列內由左到右', () => {
   assert.deepEqual(rows.map((r) => r.map((w) => w.t)), [['塑化', '族群'], ['南亞', '7.17%'], ['台塑', '漲停']]);
   const c = picker.candidates(WORDS);
   assert.deepEqual(c.rows.get('R2'), ['W3', 'W4']);
-  assert.match(c.listing, /R2（y≈\d+）：W3「南亞」 W4「7.17%」/);
+  assert.match(c.listing, /R2（y≈441）：W3「南亞」x86 W4「7\.17%」x600/);
+  // 縮圖比例：清單座標跟著換算，跟 Claude 看到的圖對得上
+  assert.match(picker.candidates(WORDS, 0.5).listing, /R2（y≈221）：W3「南亞」x43 W4「7\.17%」x300/);
 });
 
 test('只認存在的編號；整列與單字合併；none 照實回報', () => {
@@ -39,6 +41,28 @@ test('只認存在的編號；整列與單字合併；none 照實回報', () => 
   assert.deepEqual(picker.parseReply('前言 {"rows":["R9"],"words":["W99"]}', c), { none: true, ids: [], why: '回覆的編號都不存在' });
   assert.equal(picker.parseReply('{"none":true,"why":"圖上沒有"}', c).none, true);
   assert.equal(picker.parseReply('不是 JSON', c), null);
+});
+
+test('回覆裡有好幾份 JSON（先答再改口）取最後一份', () => {
+  const c = picker.candidates(WORDS);
+  const text = '{"words":[],"box":null,"none":false}\n\nWait — 規則 1 說只框漲跌幅：{"words":["W4"],"why":"漲跌幅"}';
+  assert.deepEqual(picker.parseReply(text, c), { none: false, ids: ['W4'], why: '漲跌幅' });
+});
+
+test('OCR 沒讀到時可以自己給 box（縮圖座標），換回原圖像素', () => {
+  const c = picker.candidates(WORDS);
+  const r = picker.parseReply('{"words":[],"box":[50,100,200,40],"why":"OCR 沒讀到"}', c);
+  assert.deepEqual(r.box, { x: 50, y: 100, w: 200, h: 40 });
+  assert.deepEqual(picker.unscaleBox(r.box, 0.5, 1170, 2532), { x: 100, y: 200, w: 400, h: 80 });
+  assert.deepEqual(picker.unscaleBox({ x: 500, y: 0, w: 400, h: 10 }, 0.5, 1170, 2532), { x: 1000, y: 0, w: 170, h: 20 });
+  assert.equal(picker.parseReply('{"words":[],"box":[1,2,0,5]}', c).none, true);
+});
+
+test('送給 Claude 的圖縮到長邊 1568、總像素 115 萬以內（超過它會自己再縮，座標就對不上）', () => {
+  const { fitSize } = require(path.join(APP, 'scripts/claude-cli'));
+  assert.deepEqual(fitSize(1206, 1221), { width: 1064, height: 1078, scale: 1064 / 1206 });
+  assert.deepEqual(fitSize(1170, 2532), { width: 724, height: 1568, scale: 724 / 1170 });
+  assert.deepEqual(fitSize(800, 600), { width: 800, height: 600, scale: 1 });
 });
 
 test('框是詞框聯集外擴，夾在圖內', () => {
@@ -112,6 +136,7 @@ test('端到端：Claude 回編號 → 框、驗算與重疊率；圖片真的�
   const { stdout, results } = runCells(ws, { CLAUDE_BIN: ws.fake, CELL_PICKER: 'claude-cli' });
   const [a, b] = results;
   assert.equal(a.claude.status, 'picked');
+  assert.equal(a.claude.source, 'ocr');
   assert.deepEqual(a.claude.cell, { x: 74, y: 392, w: 738, h: 98 });
   assert.equal(a.claude.verify, 'pass');
   assert.ok(a.iouClaude > 0.9, `Claude 框跟人工框應該幾乎重疊：${a.iouClaude}`);
@@ -120,7 +145,7 @@ test('端到端：Claude 回編號 → 框、驗算與重疊率；圖片真的�
   assert.equal(b.jobId, 'test-job');
   const sent = fs.readFileSync(path.join(ws.dir, 'stdin.log'), 'utf8');
   assert.match(sent, /"type":"image"/);
-  assert.match(sent, /W4「7\.17%」/);
+  assert.match(sent, /W4「7\.17%」x/);
   assert.match(stdout, /你有畫框的 1 段裡，Claude 框到同一塊 1 段、規則庫 0 段/);
   assert.match(stdout, /你沒畫框的 1 段裡，Claude 也沒框 1 段/);
 });

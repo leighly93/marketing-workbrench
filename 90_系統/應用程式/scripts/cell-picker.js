@@ -7,6 +7,14 @@
  *   OCR 負責「字在哪」：每個詞框編號 W1、W2…，同一高度的排成一列 R1、R2…
  *   Claude 只負責「這句旁白在講哪幾個」：回傳編號，**不自己報座標**
  *   框＝挑中的詞框聯集再外擴一點；最後用數字比對驗算一次（VLM 會在錯的圖上畫出漂亮的框而不舉手）。
+ *
+ * 2026-11-12 實測後修正（暴漲近2,000點那支：Claude 都認得旁白在講哪一項，但 3 段框都沒對上）：
+ *   ① 它常挑整列 —— 使用者個股漲跌只框漲跌幅；大盤在總覽頁框整張指數小卡、在報價頁只框漲跌那行
+ *      （看過 266 個人工框歸納的）
+ *      → prompt 寫明這套習慣，清單附上每個詞框的位置，讓它分得出同一列的左右。
+ *   ② 人工框裡常常一個 OCR 字都沒有（「聯電漲超過5%」「京元電亮燈漲停」）→ 允許它在 OCR 漏讀時
+ *      自己給 box 座標，結果標成 source:'claude-box'，評估時跟 OCR 編號挑出來的分開看。
+ *   座標一律用「送給 Claude 的縮圖尺寸」溝通（清單也換算成同一個尺寸），回來再換回原圖像素。
  */
 
 /** 依高度把詞框排成列。中心高度差超過該列字高的 0.6 倍就換一列。 */
@@ -30,12 +38,16 @@ function rowsOf(words) {
   return rows.map((r) => r.words.sort((a, b) => a.x - b.x));
 }
 
-/** 編號：回傳 { words: Map(W編號→詞框), rows: Map(R編號→[W編號]), listing: 給 Claude 看的文字 } */
-function candidates(words) {
+/**
+ * 編號：回傳 { words: Map(W編號→詞框), rows: Map(R編號→[W編號]), listing: 給 Claude 看的文字 }
+ * `scale` 是送給 Claude 的縮圖比例：清單上的座標換算成縮圖尺寸，跟它看到的圖對得上。
+ */
+function candidates(words, scale = 1) {
   const rows = rowsOf(words);
   const byWord = new Map();
   const byRow = new Map();
   const lines = [];
+  const k = (n) => Math.round(n * scale);
   let n = 0;
   rows.forEach((row, ri) => {
     const rid = `R${ri + 1}`;
@@ -44,10 +56,10 @@ function candidates(words) {
       const id = `W${++n}`;
       byWord.set(id, w);
       ids.push(id);
-      return `${id}「${w.t.trim()}」`;
+      return `${id}「${w.t.trim()}」x${k(w.x)}`;
     });
     byRow.set(rid, ids);
-    lines.push(`${rid}（y≈${Math.round(row[0].cy)}）：${parts.join(' ')}`);
+    lines.push(`${rid}（y≈${k(row[0].cy)}）：${parts.join(' ')}`);
   });
   return { words: byWord, rows: byRow, listing: lines.join('\n') };
 }
@@ -61,29 +73,66 @@ function buildPrompt({ phrase, page, listing, width, height }) {
     '',
     `旁白：「${phrase}」`,
     page && page !== 'unknown' ? `系統判斷的頁面類型：${page}` : '',
-    `截圖原尺寸：${width}×${height}`,
+    `圖片尺寸：${width}×${height}（下面的座標與你回的 box 都用這個尺寸，左上角是原點）`,
     '',
-    'OCR 讀到的文字（W 是詞框編號，同一列的字排在同一行，R 是列編號）：',
-    listing,
+    'OCR 讀到的文字（W 是詞框編號、x 是左緣位置；同一列的字排在同一行，R 是列編號）：',
+    listing || '（OCR 沒讀到任何字）',
     '',
-    '規則：',
-    '1. 只能從上面的編號挑，不要自己報座標。可以挑整列（rows）或個別詞框（words），兩者會合併成一個框。',
-    '2. 挑旁白**這一句**真正在講的數字或項目（例：講「南亞漲 7.17%」就挑南亞那一列），不要框整頁、不要框頁面標題。',
-    '3. 旁白講的東西圖上找不到、或這句只是在講整張圖的大意，就回 none: true，不要硬框。',
-    '4. OCR 偶爾讀錯字（例：6.3 讀成 @.3），看圖確認位置就好。',
+    '這位剪輯師的框法（照這個習慣挑）：',
+    '1. 個股漲跌（例「國巨跌1.85%」「聯發科大漲9.88%」）→ **只框漲跌幅那個數字**（例「(-1.85%)」「▲335 (9.88%)」），不框股名、不框整列。',
+    '2. 大盤指數（例「加權指數收在41,661點、漲1,960點」）要先看是哪種畫面：',
+    '   - 總覽頁：好幾張小卡片並排，加權指數只是其中一張小卡 → 框**整張加權指數小卡**（標題到漲跌幅那一行）。',
+    '   - 大盤自己的報價頁：指數是頁面上方的大字 → 跟個股一樣，**只框漲跌點數／漲跌幅那一行**。',
+    '3. 營收年增率、買賣超金額這類單一數字 → 只框那個數字（可以連同緊鄰的單位）。',
+    '4. 旁白只是點名、圖上沒有對應的單一數字或區塊，或在講整張圖的大意 → 回 none: true，不要硬框。',
     '',
-    '輸出格式：{"rows":["R3"],"words":["W12"],"why":"一句話說明挑的是什麼","none":false}',
+    '怎麼回：',
+    '- 優先從編號挑：words 放詞框編號，rows 放整列（只有整列都是要框的東西才用）。',
+    '- 要框的字 OCR 沒讀到（清單裡找不到），才用 box: [x, y, w, h] 自己給座標，words／rows 留空。',
+    '- OCR 偶爾讀錯字（例：6.3 讀成 @.3），看圖確認位置就好。',
+    '',
+    '只輸出 JSON：{"words":["W12"],"rows":[],"box":null,"why":"一句話說明框的是什麼","none":false}',
   ].filter((s) => s !== '').join('\n');
 }
 
-/** 解析 Claude 的回覆；格式不對回 null。只留下真的存在的編號。 */
-function parseReply(text, cands) {
+/**
+ * 從回覆裡取**最後一個**解析得了的 JSON 物件。
+ * 2026-11-12 實測：它會先回一份 JSON、接著寫「Wait — …」再改一份，整段當 JSON 解析就失敗。
+ */
+function lastJsonObject(text) {
   if (typeof text !== 'string') return null;
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  let o;
-  try { o = JSON.parse(m[0]); } catch (_) { return null; }
-  if (!o || typeof o !== 'object') return null;
+  let found = null;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '{') continue;
+    let depth = 0; let inStr = false; let esc = false;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j];
+      if (inStr) {
+        if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === '{') depth++;
+      else if (ch === '}' && --depth === 0) {
+        try {
+          const o = JSON.parse(text.slice(i, j + 1));
+          if (o && typeof o === 'object' && !Array.isArray(o)) found = o;
+        } catch (_) { /* 不是完整 JSON，往後找 */ }
+        i = j;
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * 解析 Claude 的回覆；格式不對回 null。只留下真的存在的編號。
+ * 沒挑到編號但給了 box（縮圖座標）→ 回 { box }，由呼叫端換回原圖像素。
+ */
+function parseReply(text, cands) {
+  const o = lastJsonObject(text);
+  if (!o) return null;
   const why = typeof o.why === 'string' ? o.why.trim().slice(0, 200) : '';
   if (o.none === true) return { none: true, ids: [], why };
   const ids = new Set();
@@ -93,8 +142,21 @@ function parseReply(text, cands) {
   for (const w of Array.isArray(o.words) ? o.words : []) {
     if (cands.words.has(String(w))) ids.add(String(w));
   }
-  if (!ids.size) return { none: true, ids: [], why: why || '回覆的編號都不存在' };
-  return { none: false, ids: [...ids], why };
+  if (ids.size) return { none: false, ids: [...ids], why };
+  const b = Array.isArray(o.box) ? o.box.map(Number) : null;
+  if (b && b.length === 4 && b.every(Number.isFinite) && b[2] > 0 && b[3] > 0) {
+    return { none: false, ids: [], box: { x: b[0], y: b[1], w: b[2], h: b[3] }, why };
+  }
+  return { none: true, ids: [], why: why || '回覆的編號都不存在' };
+}
+
+/** 縮圖座標換回原圖像素，夾在圖內 */
+function unscaleBox(b, scale, width, height) {
+  const x = Math.max(0, Math.round(b.x / scale));
+  const y = Math.max(0, Math.round(b.y / scale));
+  const w = Math.min(width - x, Math.round(b.w / scale));
+  const h = Math.min(height - y, Math.round(b.h / scale));
+  return w > 0 && h > 0 ? { x, y, w, h } : null;
 }
 
 /** 挑中的詞框聯集，外擴 pad px，夾在圖內。 */
@@ -141,5 +203,5 @@ function iou(a, b) {
 }
 
 module.exports = {
-  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, unionBox, numbersIn, numberCheck, iou,
+  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, unscaleBox, unionBox, numbersIn, numberCheck, iou,
 };

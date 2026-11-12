@@ -15,19 +15,21 @@
  * ── 輸入輸出 ──────────────────────────────────────────────────
  *   pick({ imagePath, words, width, height, phrase, page })
  *     words  OCR 詞框 [{t,x,y,w,h}]（原圖像素、左上原點；app-images.generated.json 的 words）
- *   → { status: 'picked', cell, ids, text, why, verify }   挑到了（cell 是原圖像素座標）
+ *   → { status: 'picked', source, cell, ids, text, why, verify }   挑到了（cell 是原圖像素座標）
+ *        source='ocr'        從 OCR 詞框編號挑的（框＝詞框聯集）
+ *        source='claude-box' OCR 沒讀到要框的字，Claude 自己給的座標（評估時分開看）
  *   → { status: 'none', why }                             Claude 說這句在圖上找不到／不該框
  *   → { status: 'failed', error }                         沒裝、沒登入、逾時、回覆格式不對
  *   → { status: 'off' }                                   開關關著
  *   一律不丟例外。
  *
  * ── 能力限制 ──────────────────────────────────────────────────
- *   只能從 OCR 讀到的字裡挑：OCR 沒讀到的圖表、色塊框不到。
+ *   優先從 OCR 讀到的字裡挑；OCR 漏讀時才讓 Claude 自己給座標（source='claude-box'，精度較差）。
  *   模型＝訂閱帳號的預設模型（claude -p 不指定 --model），版本跟著 Claude Code 更新。
  *   每段一次呼叫，約 15～40 秒、16K 上下的 input token（多半是 CLI 本身的固定開銷）。
  */
 
-const { runClaude } = require('./claude-cli');
+const { runClaude, fitSize } = require('./claude-cli');
 const picker = require('./cell-picker');
 
 const ENGINE = (process.env.CELL_PICKER || 'claude-cli').toLowerCase();
@@ -41,18 +43,26 @@ function enabled() {
 function pick({ imagePath, words, width, height, phrase, page }) {
   if (!enabled()) return { status: 'off' };
   if (ENGINE !== 'claude-cli') return { status: 'failed', error: `不認得的 CELL_PICKER：${ENGINE}` };
-  const cands = picker.candidates(words);
-  if (!cands.words.size) return { status: 'failed', error: '這張圖沒有 OCR 詞框可以挑' };
-  const prompt = picker.buildPrompt({ phrase, page, listing: cands.listing, width, height });
-  const r = runClaude({ prompt, system: picker.SYSTEM_PROMPT, images: [imagePath] });
+  // 送給 Claude 的是縮到上限內的圖（claude-cli.js 的 fitSize）；清單座標與它回的 box 都用縮圖尺寸
+  const fit = fitSize(width, height);
+  const scale = fit.scale;
+  const cands = picker.candidates(words, scale);
+  const prompt = picker.buildPrompt({ phrase, page, listing: cands.listing, width: fit.width, height: fit.height });
+  const r = runClaude({ prompt, system: picker.SYSTEM_PROMPT, images: [{ path: imagePath, width, height }] });
   if (!r.ok) return { status: 'failed', error: r.error };
   const reply = picker.parseReply(r.text, cands);
   if (!reply) return { status: 'failed', error: `回覆不是預期的 JSON：${r.text.slice(0, 200)}` };
   if (reply.none) return { status: 'none', why: reply.why };
+  if (reply.box) {
+    const cell = picker.unscaleBox(reply.box, scale, width, height);
+    if (!cell) return { status: 'failed', error: `box 座標不合理：${JSON.stringify(reply.box)}` };
+    return { status: 'picked', source: 'claude-box', cell, ids: [], text: '', why: reply.why, verify: 'none' };
+  }
   const boxes = reply.ids.map((id) => cands.words.get(id));
   const text = boxes.map((b) => b.t.trim()).join(' ');
   return {
     status: 'picked',
+    source: 'ocr',
     cell: picker.unionBox(boxes, PAD, width, height),
     ids: reply.ids,
     text,

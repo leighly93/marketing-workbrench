@@ -11,7 +11,7 @@
  * 只給「引擎層」用（cell-picker-engine.js…）。AGENTS.md：業務邏輯不得新增供應者 CLI 呼叫。
  *
  * 介面：
- *   runClaude({ prompt, system, images?: [檔案路徑], timeoutMs? })
+ *   runClaude({ prompt, system, images?: [檔案路徑 | { path, width, height }], timeoutMs? })
  *     → { ok: true, text } | { ok: false, error }
  *   一律不丟例外：沒裝 CLI、沒登入、用量上限、逾時都回 ok:false，呼叫端自己降級。
  *
@@ -24,28 +24,46 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-/** 圖片長邊上限。Claude 讀圖本來就會縮到約這個大小，先縮好省流量也省 token。 */
+/**
+ * 圖片大小上限：長邊 1568、總像素約 115 萬。超過的話 Claude 那邊會**自己再縮一次**，
+ * 它看到的座標就跟我們算的對不上（2026-11-12 實測：1206×1221 的大盤截圖被縮，回來的框整個偏掉）。
+ * 所以一律由這裡先縮到上限內，呼叫端用 fitSize() 算出同一個尺寸跟它溝通座標。
+ */
 const MAX_EDGE = 1568;
+const MAX_PIXELS = 1150000;
+
+/** 縮到上限內的尺寸（偶數，跟 ffmpeg 一致）與縮放比例 */
+function fitSize(width, height) {
+  const s = Math.min(1, MAX_EDGE / Math.max(width, height), Math.sqrt(MAX_PIXELS / (width * height)));
+  if (s >= 1) return { width, height, scale: 1 };
+  const w = Math.max(2, Math.floor((width * s) / 2) * 2);
+  const h = Math.max(2, Math.floor((height * s) / 2) * 2);
+  return { width: w, height: h, scale: w / width };
+}
 
 function claudeBin() {
   return process.env.CLAUDE_BIN || 'claude';
 }
 
-/** 讀成 base64；太大就先用 ffmpeg 縮（產線本來就依賴 ffmpeg），縮失敗退回原檔。 */
-function imageBlock(file) {
-  let data = null;
-  const tmp = path.join(os.tmpdir(), `claude-img-${process.pid}-${Date.now()}.png`);
-  try {
-    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', file,
-      '-vf', `scale='if(gt(iw,ih),min(${MAX_EDGE},iw),-2)':'if(gt(iw,ih),-2,min(${MAX_EDGE},ih))'`, tmp],
-    { stdio: 'ignore', timeout: 30000 });
-    data = fs.readFileSync(tmp);
-  } catch (_) {
-    data = null;
-  } finally {
-    try { fs.unlinkSync(tmp); } catch (_) {}
+/**
+ * 讀成 base64。`img` 可以是檔案路徑，或 { path, width, height }：給了原圖尺寸就縮到 fitSize() 的大小
+ * （產線本來就依賴 ffmpeg），縮失敗或沒給尺寸就送原檔。
+ */
+function imageBlock(img) {
+  const file = typeof img === 'string' ? img : img.path;
+  const fit = typeof img === 'object' && img.width && img.height ? fitSize(img.width, img.height) : null;
+  if (fit && fit.scale < 1) {
+    const tmp = path.join(os.tmpdir(), `claude-img-${process.pid}-${Date.now()}.png`);
+    try {
+      execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', file, '-vf', `scale=${fit.width}:${fit.height}`, tmp],
+        { stdio: 'ignore', timeout: 30000 });
+      return { type: 'image', source: { type: 'base64', media_type: 'image/png', data: fs.readFileSync(tmp).toString('base64') } };
+    } catch (_) {
+      /* 縮失敗就送原檔 */
+    } finally {
+      try { fs.unlinkSync(tmp); } catch (_) {}
+    }
   }
-  if (data) return { type: 'image', source: { type: 'base64', media_type: 'image/png', data: data.toString('base64') } };
   const raw = fs.readFileSync(file);
   const jpeg = raw[0] === 0xff && raw[1] === 0xd8;
   return {
@@ -122,4 +140,4 @@ function runClaude({ prompt, system, images = [], timeoutMs = 120000 }) {
   return { ok: false, error: last || '未知錯誤' };
 }
 
-module.exports = { runClaude, parseStream };
+module.exports = { runClaude, parseStream, fitSize };
