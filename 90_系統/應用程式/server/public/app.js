@@ -839,6 +839,12 @@ async function loadJob() {
   // 還在準備 → 配圖計畫算不出來，但按鈕先畫出來（反灰）讓人知道要等什麼、等完按哪裡
   // （2026-09-18 使用者要求）。沒有這張卡的話，這段時間畫面上只有標注與執行記錄，
   // 看不出「等一下會停在哪一關」。
+  // 重新出片時寫給 Claude 的指示（只影響這一支）：留在工作頁上，之後看得到這支是照什麼排的
+  if (job.claudeNote) {
+    parts.push(el('div', { class: 'card' },
+      el('h2', {}, '給 Claude 的指示'),
+      el('div', { class: 'note', style: 'white-space:pre-wrap' }, job.claudeNote)));
+  }
   if (['queued', 'preparing', 'detached'].includes(job.status)) parts.push(planPendingCard(job));
 
   // HeyGen 生成／準備中的時候就可以先標注 —— 不用乾等
@@ -853,7 +859,9 @@ async function loadJob() {
       el('h2', {}, '排隊等出片'),
       el('div', { class: 'note', html:
         (job.approvedBy === '（自動出片）'
-          ? '你設定了「標好了，直接出片」，所以準備一跑完就自動排進出片佇列。<br>' : '')
+          ? '你設定了「標好了，直接出片」，所以準備一跑完就自動排進出片佇列。<br>'
+          : job.approvedBy === '（Claude 排好，自動出片）'
+            ? 'Claude 已經排好截圖與動態，所以準備一跑完就自動排進出片佇列。<br>' : '')
         + '還沒開始出片，現在退回去還可以改配圖／標注。<b>開始出片之後就退不回來了</b>。<br>'
         + '下面的<b>字幕重點詞還可以直接改</b>，不用退回 —— 真的開始出片才會定案。' }),
       el('div', { style: 'margin-top:14px' },
@@ -867,7 +875,8 @@ async function loadJob() {
     // 還沒真的 render，重點詞仍然進得了這支成品（伺服器的 EMPHASIS_EDITABLE 同一條界線）。
     // 藍底線看已確認的計畫；「直接出片」那條路沒有計畫頁，就退回看手動標注。
     card.append(emphasisBox(job, () => (job.planView && job.planView.rows) || ANNOTS));
-    card.append(motionBox(job, () => (job.planView && job.planView.rows) || ANNOTS));
+    // Claude 自動排的版型動態也是 Claude 決定的，這裡不給改（改了也不會用）
+    if (!claudePlans(job)) card.append(motionBox(job, () => (job.planView && job.planView.rows) || ANNOTS));
     if (emphLoadedFor !== job.id) {
       emphLoadedFor = job.id;
       CHARS = []; EMPH = [];
@@ -978,9 +987,23 @@ function cancelBtn(job) {
  */
 function redoCard(job) {
   const busyMsg = el('span', { style: 'margin-left:12px;font-size:12.5px;color:var(--dim)' });
+  const auto = claudePlans(job);
+  // 給 Claude 的指示（2026-11-12 使用者定案：只影響重出的這一支）
+  const noteBox = auto ? el('textarea', {
+    rows: 3, maxlength: 600,
+    placeholder: '例：開頭的動態改講外資賣超／結尾動態用排行卡列三檔營收／台積電那段不要放截圖',
+    style: 'width:100%;margin-top:10px;font-size:14px;padding:8px;border-radius:8px;box-sizing:border-box',
+  }) : null;
   return el('div', { class: 'card' },
     el('h2', {}, '重新出片'),
-    el('div', { class: 'note', html:
+    auto ? el('div', { class: 'note', html:
+      '用同一份稿件、截圖與講者影片再跑一次，<b>不會重新呼叫 HeyGen 或 MiniMax，不扣點數</b>。<br>'
+      + 'Claude 會<b>重新排</b>截圖與動態，排好就直接出片（約 5 分鐘）。<br>'
+      + '想改什麼就寫在下面<b>給 Claude 的指示</b>，<b>只影響這一次重出的這一支</b>；'
+      + '留空就照預設規則再排一次（每次排的結果不一定一樣）。<br>'
+      + '<b>稿件不能改</b> —— 要改稿請重新建立一支工作。' }) : null,
+    noteBox,
+    auto ? null : el('div', { class: 'note', html:
       '用<b>完全一樣</b>的稿件、截圖、標注（顯示範圍／黃框／箭頭）與講者影片再跑一次。<br>'
       + '<b>不會重新呼叫 HeyGen 或 MiniMax，不扣點數。</b><br><br>'
       + '按下去<b>直接開始準備</b>（分析截圖、轉字幕、排配圖計畫），跑完會<b>停在「配圖計畫」</b>'
@@ -993,7 +1016,11 @@ function redoCard(job) {
         btn.disabled = true;
         busyMsg.textContent = '複製中…';
         try {
-          const r = await api(`/api/jobs/${job.id}/redo`, { method: 'POST' });
+          const r = await api(`/api/jobs/${job.id}/redo`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note: noteBox ? noteBox.value.trim() : '' }),
+          });
           openJob = r.job.id;
           jobSig = null;
           go('job');
@@ -1045,7 +1072,27 @@ function redoConfirmCard(job) {
  * ⚠️ 按鈕的文字與 class 要跟 planCard 那顆**一模一樣** —— 這張卡片的作用就是
  *    「等一下真正的按鈕會長在這裡」，長得不一樣就失去意義了。
  */
+/**
+ * 這支的配圖與動態是不是 Claude 自動排（2026-11-12 起大盤小報都是）：
+ * 不用標注、不用設動態、排好就直接出片；排失敗整支標成失敗，按重新出片再試。
+ */
+function claudePlans(job) {
+  return job.template === 'dapan';
+}
+
 function planPendingCard(job) {
+  if (claudePlans(job)) {
+    const queued = job.status === 'queued';
+    return el('div', { class: 'card' },
+      el('h2', {}, '配圖與動態　—　Claude 自動排'),
+      el('div', { class: 'note', html:
+        (queued ? '⏳ <b>排隊中</b> —— 前面還有工作在跑，輪到它就會開始。<br>'
+                : '⏳ <b>正在準備</b>…<br>')
+        + '<b>不用標注截圖、也不用設動態</b>：Claude 會看稿件和截圖，決定哪張圖配哪幾句、'
+        + '卡片裁哪一塊、金框框哪裡，以及開頭、結尾各一段動態。<br>'
+        + '排好就<b>直接出片</b>，不用按確認。Claude 沒排成功的話，這支會標成失敗並寫出原因，'
+        + '按「重新出片」再試就好（不會重新呼叫 HeyGen）。' }));
+  }
   const queued = job.status === 'queued';
   // 用現成講者影片（重新出片都是）就沒有 HeyGen 那 3～5 分鐘，只剩分析截圖與轉字幕。
   const steps = job.skipGenerate
@@ -1223,18 +1270,24 @@ function drawAnnotWall(job) {
 }
 
 function annotCard(job) {
+  // Claude 自動排的版型：標注、動態、「標好了直接出片」都用不到，只留字幕重點詞（那仍是人標的）。
+  // 手動標注的區塊照樣建出來、只是藏起來 —— drawAnnots() 等函式會找這些元素，拿掉會壞。
+  const auto = claudePlans(job);
+  const hide = auto ? { style: 'display:none' } : {};
   const c = el('div', { class: 'card' },
-    el('h2', {}, '手動標記　—　請手動標記要顯示的範圍'),
-    el('div', { class: 'note', html:
-      'HeyGen 生成要好幾分鐘，這段時間可以先把圖標好：<b>哪張圖配在哪一句、框哪裡</b>。<br>'
+    el('h2', {}, auto ? '字幕重點詞　—　截圖與動態交給 Claude' : '手動標記　—　請手動標記要顯示的範圍'),
+    el('div', { class: 'note', html: auto
+      ? '這支的<b>截圖配置與動態都由 Claude 自動排</b>，不用標注。<br>'
+        + '要強調的字幕重點詞還是可以在下面標（不標也可以）。'
+      : 'HeyGen 生成要好幾分鐘，這段時間可以先把圖標好：<b>哪張圖配在哪一句、框哪裡</b>。<br>'
       + '每張要用的圖都請手動圈出要顯示的範圍；沒圈的截圖不會出現在影片裡。<br>'
       + '<b>標「哪一句」而不是「第幾秒」</b> —— 秒數要等語音轉完字幕才存在，系統會自己換算。<br>'
       + '圖不夠？<b>下面可以再上傳</b>；編輯器裡也有縮圖列可以直接換成別張圖。' }),
-    el('div', { id: 'annotList' }),
+    el('div', { id: 'annotList', ...hide }),
     // 截圖總覽（2026-09-17 使用者要求，跟配圖計畫頁對齊）：看得出哪張用了幾次、
     // 系統認成什麼頁型，點一下就用那張加一段。以前這塊只長在計畫頁上。
-    el('div', { id: 'annotWall', style: 'margin-top:18px' }),
-    el('div', { style: 'margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap' },
+    el('div', { id: 'annotWall', style: auto ? 'display:none' : 'margin-top:18px' }),
+    el('div', { style: auto ? 'display:none' : 'margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap' },
       el('button', { class: 'ghost', onclick: () => addAnnot(job) }, '＋ 加一個標注'),
       // ⚠️ 上傳完只重畫縮圖牆與標注列，不要走 loadJob() —— 跟計畫頁同一個理由：
       //    整頁重畫會把人正在拉的框、加到一半的標注洗掉。
@@ -1249,8 +1302,8 @@ function annotCard(job) {
     //    擺在它下面等於沒機會被看到（跟計畫頁那顆確認鍵同一個坑）。
     emphasisBox(job, () => ANNOTS),
     // 動態小影片：跟重點詞一樣排在「標好了，直接出片」上面，不然按鈕一按就看不到了。
-    motionBox(job, () => ANNOTS),
-    autoGoRow(job));
+    auto ? el('div', { style: 'display:none' }, motionBox(job, () => ANNOTS)) : motionBox(job, () => ANNOTS),
+    auto ? el('span') : autoGoRow(job));
 
   if (annotJobId !== job.id) {
     annotJobId = job.id;

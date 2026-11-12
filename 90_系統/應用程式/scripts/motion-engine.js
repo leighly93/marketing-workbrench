@@ -14,7 +14,8 @@
  *   MOTION_ENGINE=api        → 保留，尚未實作（真要做時約 US$1.5／月 200 支）
  *
  * ── 介面（三個後端一致）────────────────────────────────────────
- *   plan({ text, manualSpec }) → spec | null
+ *   plan({ text, manualSpec, note? }) → spec | null
+ *     note        重新出片時寫給 Claude 的指示（只影響那一支，public/claude-note.txt）
  *     text        那一段旁白的原文（cleaned script，跟 charIdx 同一套座標）
  *     manualSpec  前台貼的 spec；manual 後端只回傳它，其餘後端在生成失敗時拿它當退路
  *   回傳 null＝這一段不做動態。**呼叫端一律要能接受 null**（見 run.js 的降級）。
@@ -35,7 +36,7 @@ const MODELS = { 'claude-cli': 'claude -p（訂閱）' };
 const SYSTEM_PROMPT =
   '你是財經短影音的動態卡片參數產生器。只輸出 JSON，不要說明文字，不要 markdown 圍欄。';
 
-function buildPrompt(text) {
+function buildPrompt(text, note = '') {
   return [
     '把這段財經旁白做成一張動態卡片的參數。',
     '',
@@ -107,6 +108,9 @@ function buildPrompt(text) {
     '{"template":"number","kicker":"籌碼面","title":"三大法人|連兩天賣超","label":"合計賣超","value":"404.6","unit":"億","valueC":"down","at":"合計賣了","items":[{"text":"指數守在高檔","at":"指數還是守在高檔"}]}',
     '{"template":"rank","kicker":"9月營收 年增率","title":"被動元件|全面成長","items":[{"text":"光頡","value":"+67.4%","c":"up","at":"光頡"},{"text":"禾伸堂","value":"+27.1%","c":"up","at":"禾伸堂"}],"stamp":"全部雙位數"}',
     '{"template":"sector","kicker":"新資金方向","title":"|塑化","items":[{"text":"南亞","value":"+7.17%","at":"南亞"},{"text":"台塑","value":"漲停","at":"台塑漲停"}],"tags":["資金輪動？","新主力題材？"]}',
+    // 重新出片時寫的「給 Claude 的指示」（2026-11-12，只影響那一支）：跟這段有關才照做，
+    // 但數字一律照原文、格式照上面 —— 指示不能讓卡片出現原文沒有的數字。
+    ...(note ? ['', `剪輯師對這支片的指示（跟這段有關才照做；數字仍一律照原文、格式照上面）：${note}`] : []),
   ].join('\n');
 }
 
@@ -348,13 +352,13 @@ const ENGINES = {
 
   'claude-cli': {
     label: 'claude -p（訂閱，不需要 API key）',
-    plan({ text, manualSpec }) {
+    plan({ text, manualSpec, note }) {
       if (!text || !text.trim()) return validate(manualSpec);
       // 內容檢查沒過就帶著問題重產一次（2026-10-08）。第二次還是不過就**不做這段**：
       // 財經影片上一個錯的數字比少一段動態嚴重得多。
       let feedback = '';
       for (let round = 1; round <= 2; round++) {
-        const out = callClaude(buildPrompt(text) + feedback);
+        const out = callClaude(buildPrompt(text, note) + feedback);
         if (out === null) return validate(manualSpec);
         let result;
         try {

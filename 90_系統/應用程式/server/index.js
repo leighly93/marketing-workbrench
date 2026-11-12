@@ -431,6 +431,10 @@ function clearWorkspaceInputs() {
   }
   // 標注檔要指名清掉。不能用 *.json 一律清 —— deeplinks.json 是投廣品牌素材。
   rmrf(path.join(pub, 'annotations.json'));
+  // Claude 排配圖的結果（2026-11-12）：不清的話下一支（尤其別的版型，run.js 不會跑排配圖去刪它）
+  // 會把它帶進製作快照，被 planByClaude() 誤判成「這支是 Claude 排的」。
+  rmrf(path.join(pub, 'claude-annotations.json'));
+  rmrf(path.join(pub, 'claude-motion.json'));
   // 重新出片的 OCR 沿用檔同理（2026-09-18）。run.js 那邊本來就會逐張比對 md5、對不上不沿用，
   // 所以留著也不會誤用；但殘留檔本身就是坑（同一類的「撞名截圖用到上一支的尺寸」踩過），
   // 這支工作沒帶沿用檔就不該在 public 看到別人的。
@@ -862,6 +866,17 @@ function planByClaude(job) {
   try { return fs.existsSync(jobPath(job.id, 'state', 'public', 'claude-annotations.json')); } catch (_) { return false; }
 }
 
+/** 從執行記錄撈 Claude 排配圖最後回報的原因（run.js 印的那行），撈不到就給一句通用的 */
+function claudePlanReason(job) {
+  try {
+    const lines = fs.readFileSync(jobPath(job.id, 'log.txt'), 'utf-8').split('\n')
+      .filter((l) => l.includes('Claude 排配圖'));
+    const last = lines[lines.length - 1];
+    if (last) return last.replace(/^.*?Claude 排配圖[：:]?\s*/, '').replace(/[（(]?照舊用人工標注[）)]?/, '').trim().slice(0, 200);
+  } catch (_) {}
+  return '原因見執行記錄';
+}
+
 /**
  * 出片要用哪一份動態設定：Claude 排的計畫有動態（state/public/claude-motion.json）就用它，
  * 否則用前台設的（input/motion.json）。2026-11-12 使用者：動態也交給 Claude 決定，開頭結尾各一段。
@@ -874,6 +889,9 @@ function motionEntriesFor(job) {
   }
   return readJobMotion(job);
 }
+
+/** 重新出片時寫給 Claude 的指示（只影響那一支），放在工作 input/，跟著素材進 public/ */
+const CLAUDE_NOTE_FILE = 'claude-note.txt';
 
 function appendMissingAnnots(job, edits) {
   // 使用者定案「先不管人工的設定」：計畫是 Claude 排的，就不把標注頁的段落補回去
@@ -2147,8 +2165,16 @@ async function doPrepare(job) {
   job.preparedAt = nowISO();
 
   // 大盤小報由 Claude 排好配圖（2026-11-12 使用者：「似乎不用配圖計畫頁了」）→ 也直接出片。
-  // Claude 失敗、退回吃標注頁的段落時沒有 claude-annotations.json，照舊停在「待確認」讓人看。
-  const claudeReady = job.template === 'dapan' && planByClaude(job);
+  // Claude 沒排成功 → 使用者定案「直接到最後顯示失敗，不用停在那」：整支標成失敗、寫出原因，
+  // 要再試就按重新出片（不扣 HeyGen 點數）。只有 CELL_PICKER=off（刻意關掉）才照舊停在待確認。
+  // 沒有任何截圖的大盤小報不需要排配圖，直接出片。
+  const claudeOn = String(process.env.CELL_PICKER || '').toLowerCase() !== 'off';
+  const hasShots = (job.files || []).some((n) => /\.(png|jpe?g)$/i.test(n));
+  if (job.template === 'dapan' && claudeOn && hasShots && !planByClaude(job)) {
+    throw new Error(`Claude 排配圖沒有成功，這支沒有出片（${claudePlanReason(job)}）。`
+      + '按「重新出片」可以再試一次，不會重新呼叫 HeyGen。');
+  }
+  const claudeReady = job.template === 'dapan' && claudeOn && (planByClaude(job) || !hasShots);
   if (job.autoApprove || claudeReady) {
     // 一段式：不停下來，直接接著 render
     job.status = 'approved';
@@ -3059,6 +3085,10 @@ const server = http.createServer(async (req, res) => {
     if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'redo' && req.method === 'POST') {
       const src = getJob(seg[2]);
       if (!src) return send(res, 404, { error: '找不到工作' });
+      // 給 Claude 的指示（2026-11-12 使用者定案：只影響這一支）。舊前台不帶 body ＝ 沒有指示。
+      let redoBody = {};
+      try { redoBody = JSON.parse((await readBody(req)).toString() || '{}'); } catch (_) {}
+      const claudeNote = typeof redoBody.note === 'string' ? redoBody.note.trim().slice(0, 600) : '';
       // 正在跑的不給重跑：它的製作快照這一刻正在被寫，複製過去的可能是半份。
       // detached 也算 —— 那是「伺服器重開過，但 run.js 還活著在背景跑」。
       if (['preparing', 'rendering', 'detached'].includes(src.status))
@@ -3127,6 +3157,10 @@ const server = http.createServer(async (req, res) => {
           fs.copyFileSync(from, jobPath(job.id, 'input', name));
         }
       }
+      // 指示只屬於下指示的那一支：來源工作的不帶過來，這次有寫才放新的（run.js 從 public/ 讀）
+      rmrf(jobPath(job.id, 'input', CLAUDE_NOTE_FILE));
+      if (claudeNote) fs.writeFileSync(jobPath(job.id, 'input', CLAUDE_NOTE_FILE), claudeNote + '\n');
+      job.claudeNote = claudeNote || null;
       // 素材裡沒有 heygen.mp4（原本是 HeyGen 現生的）→ 從製作快照補一份進去。
       if (!fs.existsSync(jobPath(job.id, 'input', 'heygen.mp4'))) {
         fs.copyFileSync(heygenFrom, jobPath(job.id, 'input', 'heygen.mp4'));

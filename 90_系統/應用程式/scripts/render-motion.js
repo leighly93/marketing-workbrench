@@ -78,6 +78,10 @@ const DRY = args.includes('--dry-run');
  * 但人可能在配圖計畫頁又改過，所以出片前要再確認一次 —— 沒改就別白跑十幾秒。
  */
 const IF_CHANGED = args.includes('--if-changed');
+// 重新出片時寫給 Claude 的指示（2026-11-12，只影響那一支）。伺服器放在工作 input/，跟素材一起進 public/。
+const CLAUDE_NOTE = (() => {
+  try { return fs.readFileSync(path.resolve(ROOT, argOf('note', 'public/claude-note.txt')), 'utf-8').trim(); } catch (_) { return ''; }
+})();
 
 /** 兩種畫布與它們的預設安全區。 */
 const ORIENTATIONS = {
@@ -290,7 +294,7 @@ function main() {
 
     // spec 一律問 engine：manual 後端直接回參數檔裡的 spec，claude-cli 後端讀原文產生。
     // 回 null＝這段不做動態（engine 已經把原因印出來了），跳過、繼續下一段。
-    const planned = motionEngine.plan({ text: phrase, manualSpec: entry.spec });
+    const planned = motionEngine.plan({ text: phrase, manualSpec: entry.spec, note: CLAUDE_NOTE });
     if (!planned) {
       // engine 名稱一定要印出來 —— 光說「產不出來」的話，
       // 「engine 選錯」跟「claude 這次回得不合格」看起來一模一樣。

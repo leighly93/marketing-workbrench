@@ -239,7 +239,7 @@ function fitCrop(crop, cell, width, height, pad = 24) {
  * 一次問完整段：crop ＋ 每一句（U 編號）各自框哪裡。
  * @param steps [{ id: 'U12', text: '聯發科大漲9.88%' }]
  */
-function buildCardPrompt({ steps, page, listing, width, height }) {
+function buildCardPrompt({ steps, page, listing, width, height, note = '' }) {
   return [
     '這是一張 APP 截圖。影片會把講到的那一塊 UI 裁出來做成一張卡片，旁白一句一句講，金框跟著每一句移到它講的地方。',
     '',
@@ -262,6 +262,7 @@ function buildCardPrompt({ steps, page, listing, width, height }) {
     '- 這一句只是點名、或圖上沒有對應的東西 → none: true。',
     '- 優先從編號挑（words／rows）；OCR 沒讀到的部分才用 box: [x, y, w, h] 補，兩者會合併。',
     '',
+    ...(note ? [`剪輯師對這支片的指示（跟這張圖有關才照做）：${note}`, ''] : []),
     '只輸出 JSON：{"crop":[0,120,1206,300],"steps":[{"unit":"U12","words":["W7"],"rows":[],"box":null,"none":false}],"why":"一句話"}',
   ].filter((x) => x !== '').join('\n');
 }

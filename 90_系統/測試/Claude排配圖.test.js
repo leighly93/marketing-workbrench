@@ -172,10 +172,29 @@ test('run.js：大盤小報有 Claude 計畫就讓 auto-shot 吃它；auto-shot 
   assert.match(auto, /title: a\.title\.trim\(\)/);
 });
 
-test('伺服器：大盤小報 Claude 排好就直接出片，沒排成功才停在待確認', () => {
+test('伺服器：大盤小報 Claude 排好就直接出片（沒截圖也直接出片）', () => {
   const src = fs.readFileSync(path.join(APP, 'server/index.js'), 'utf8');
-  assert.match(src, /const claudeReady = job\.template === 'dapan' && planByClaude\(job\);/);
+  assert.match(src, /const claudeReady = job\.template === 'dapan' && claudeOn && \(planByClaude\(job\) \|\| !hasShots\);/);
   assert.match(src, /if \(job\.autoApprove \|\| claudeReady\) \{/);
   // 判斷依據是製作快照裡有沒有 Claude 的計畫檔（run.js 排成功才會留下）
   assert.match(src, /jobPath\(job\.id, 'state', 'public', 'claude-annotations\.json'\)/);
+});
+
+test('給 Claude 的指示會進排配圖、卡片與動態卡片三份 prompt；沒寫就不出現', () => {
+  const note = '開頭的動態改講外資賣超';
+  assert.match(planner.buildPrompt({ units: UNITS, images: [], note }), /剪輯師對這支片的指示.*開頭的動態改講外資賣超/);
+  assert.doesNotMatch(planner.buildPrompt({ units: UNITS, images: [] }), /剪輯師對這支片的指示/);
+  assert.match(picker.buildCardPrompt({ steps: [{ id: 'U1', text: 'x' }], listing: '', width: 1, height: 1, note }),
+    /剪輯師對這支片的指示/);
+  const motion = fs.readFileSync(path.join(APP, 'scripts/motion-engine.js'), 'utf8');
+  assert.match(motion, /callClaude\(buildPrompt\(text, note\) \+ feedback\)/);
+  const render = fs.readFileSync(path.join(APP, 'scripts/render-motion.js'), 'utf8');
+  assert.match(render, /note: CLAUDE_NOTE/);
+});
+
+test('伺服器：Claude 沒排成功就整支失敗，不停在待確認；下一支不會帶到上一支的計畫檔', () => {
+  const src = fs.readFileSync(path.join(APP, 'server/index.js'), 'utf8');
+  assert.match(src, /throw new Error\(`Claude 排配圖沒有成功，這支沒有出片/);
+  assert.match(src, /rmrf\(path\.join\(pub, 'claude-annotations\.json'\)\);/);
+  assert.match(src, /rmrf\(path\.join\(pub, 'claude-motion\.json'\)\);/);
 });

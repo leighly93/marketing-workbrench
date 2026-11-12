@@ -287,3 +287,20 @@ test('前台：draft 狀態要開標注頁，重新出片按鈕只給跑完或�
   assert.match(app, /j\.status === 'draft' && j\.redoOf\) return '等你確認'/);
   assert.doesNotMatch(app, /STATUS_TEXT\[j\.status\] \|\| j\.status;\n\s*if \(j\.queuePosition/);
 });
+
+// 2026-11-12：重新出片可以寫「給 Claude 的指示」，只影響重出的那一支。
+test('重新出片：給 Claude 的指示只放進新工作，不會從來源工作帶過來', async (t) => {
+  const root = fixture(t);
+  const src = doneJob(root);
+  // 來源工作自己也有一份舊指示 —— 新工作不能繼承
+  write(workFile(root, src, 'input', 'claude-note.txt'), '上一次的指示\n');
+  const request = loadServer(root, { childProcess: 假子程序, idleTimers: true });
+
+  const withNote = (await request('POST', `/api/jobs/${src}/redo`, { note: '  開頭的動態改講外資賣超  ' })).body.job;
+  assert.equal(withNote.claudeNote, '開頭的動態改講外資賣超');
+  assert.equal(fs.readFileSync(newWorkFile(root, withNote, 'input', 'claude-note.txt'), 'utf8'), '開頭的動態改講外資賣超\n');
+
+  const without = (await request('POST', `/api/jobs/${src}/redo`, {})).body.job;
+  assert.equal(without.claudeNote, null);
+  assert.equal(fs.existsSync(newWorkFile(root, without, 'input', 'claude-note.txt')), false);
+});

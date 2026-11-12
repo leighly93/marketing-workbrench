@@ -30,7 +30,7 @@ function motionWindows(units) {
   return { head: units.slice(0, Math.min(n, k)), tail: units.slice(Math.max(0, n - k)) };
 }
 
-function buildPrompt({ units, images }) {
+function buildPrompt({ units, images, note = '' }) {
   const win = motionWindows(units);
   const range = (list) => (list.length ? `U${list[0].i}～U${list[list.length - 1].i}` : '（無）');
   return [
@@ -52,6 +52,10 @@ function buildPrompt({ units, images }) {
     `5. **剛好 2 段：開頭一段、結尾總結一段**，整支不要第 3 段。開頭那段只能在 ${range(win.head)} 裡挑，結尾那段只能在 ${range(win.tail)} 裡挑。`,
     '6. 每段 2～6 個連續子句，挑適合整理成重點的句子（關鍵數字、結論、明天要注意的事），**不能跟上面的截圖段重疊**。',
     '',
+    ...(note ? [
+      `剪輯師對這支片的指示（優先照做；但動態仍是開頭、結尾各一段，段落不能重疊，格式照下面）：${note}`,
+      '',
+    ] : []),
     '只輸出 JSON：{"segments":[{"image":"shot1.jpg","from":"U3","to":"U4","title":"加權指數","why":"一句話"}],'
       + '"motions":[{"from":"U0","to":"U2","why":"開頭"},{"from":"U40","to":"U43","why":"結尾總結"}]}',
   ].join('\n');

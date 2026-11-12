@@ -89,13 +89,13 @@ function pick({ imagePath, words, width, height, phrase, page, withCrop = false 
  *   → { status: 'picked', crop, steps: [{ id, cell|null, source, text, why }] } | { status: 'failed', error }
  * crop 一定包住所有句子的金框（cell-picker.js 的 fitCrop）。
  */
-function pickCard({ imagePath, words, width, height, steps, page }) {
+function pickCard({ imagePath, words, width, height, steps, page, note = '' }) {
   if (!enabled()) return { status: 'off' };
   if (ENGINE !== 'claude-cli') return { status: 'failed', error: `不認得的 CELL_PICKER：${ENGINE}` };
   const fit = fitSize(width, height);
   const scale = fit.scale;
   const cands = picker.candidates(words, scale);
-  const prompt = picker.buildCardPrompt({ steps, page, listing: cands.listing, width: fit.width, height: fit.height });
+  const prompt = picker.buildCardPrompt({ steps, page, listing: cands.listing, width: fit.width, height: fit.height, note });
   const r = runClaude({ prompt, system: picker.SYSTEM_PROMPT, images: [{ path: imagePath, width, height }] });
   if (!r.ok) return { status: 'failed', error: r.error };
   const reply = picker.parseCardReply(r.text, cands, steps.map((x) => x.id));
@@ -130,14 +130,14 @@ function pickCard({ imagePath, words, width, height, steps, page }) {
  *   motions＝動態小影片的位置（開頭一段、結尾一段，不跟截圖段重疊）
  * 跟 pick() 同一個開關（CELL_PICKER=off 就不呼叫）。
  */
-function planAssignments({ units, images }) {
+function planAssignments({ units, images, note = '' }) {
   if (!enabled()) return { status: 'off' };
   if (ENGINE !== 'claude-cli') return { status: 'failed', error: `不認得的 CELL_PICKER：${ENGINE}` };
   if (!images.length) return { status: 'failed', error: '沒有截圖' };
   if (!units.length) return { status: 'failed', error: '稿件沒有子句' };
   const planner = require('./shot-planner');
   const listed = images.map((im, k) => ({ file: im.file, label: `圖${k + 1}（${im.file}）`, ocr: planner.ocrSummary(im.words) }));
-  const prompt = planner.buildPrompt({ units, images: listed });
+  const prompt = planner.buildPrompt({ units, images: listed, note });
   const r = runClaude({
     prompt,
     system: planner.SYSTEM_PROMPT,

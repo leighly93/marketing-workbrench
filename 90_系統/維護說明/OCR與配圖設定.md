@@ -26,7 +26,8 @@ OCR 共用入口為 [ocr-engine.js](../應用程式/scripts/ocr-engine.js)，供
 
 ## Claude 排配圖（大盤小報，2026-11-12 起預設）
 
-使用者定案：「連圖片辨識都由 Claude 來，APP 截圖都像 skill 那樣呈現，先不管人工的設定了」。2026-11-12 再定案「似乎不用配圖計畫頁了」：**Claude 排成功就直接出片**（伺服器 doPrepare 的 `claudeReady`），排失敗、退回吃標注頁的段落時才停在「待確認」。
+使用者定案：「連圖片辨識都由 Claude 來，APP 截圖都像 skill 那樣呈現，先不管人工的設定了」。2026-11-12 再定案「似乎不用配圖計畫頁了」：**Claude 排成功就直接出片**（伺服器 doPrepare 的 `claudeReady`）；**排失敗整支標成失敗**並寫出原因（`claudePlanReason`），不停在待確認，要再試就按重新出片。只有 `CELL_PICKER=off`（刻意關掉）才照舊吃標注頁、停在待確認；沒有任何截圖的大盤小報直接出片。前台大盤小報不再顯示手動標注、動態設定與「標好了直接出片」，只留字幕重點詞。
+- **給 Claude 的指示**（重新出片卡片上的輸入框）：只影響重出的那一支。伺服器存在新工作的 `input/claude-note.txt`（來源工作的不帶過來）、`job.claudeNote` 顯示在工作頁；跟著素材進 `public/`，排配圖、卡片挑框、動態卡片三份 prompt 都會帶上（`--note=`）。指示不能讓卡片出現原文沒有的數字，動態仍是開頭、結尾各一段。
 
 - **時機**：`run.js` 在截圖 OCR 跑完後背景執行 [claude-shot-plan.js](../應用程式/scripts/claude-shot-plan.js)，跟 HeyGen 平行；轉完字幕、排配圖計畫前才等它。
 - **第一步**（`planAssignments`，[shot-planner.js](../應用程式/scripts/shot-planner.js)）：所有截圖＋子句清單（`auto-shot --sentences` 的 units）一次問 → 哪張圖配哪幾個子句（1～4 句、不重疊）、卡片小標題，**以及動態小影片放哪**。同一張圖連續講好幾項要合成一段（Claude 沒合的話程式自己併，`mergeSameImage`）。

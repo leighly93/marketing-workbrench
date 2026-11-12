@@ -15,6 +15,7 @@
  *
  * 用法：node scripts/claude-shot-plan.js [--script=public/script.txt] [--images=src/app-images.generated.json]
  *        [--public=public] [--out=public/claude-annotations.json] [--motion-out=public/claude-motion.json]
+ *        [--note=public/claude-note.txt]
  */
 
 const fs = require('node:fs');
@@ -38,6 +39,8 @@ const IMAGES = arg('images', 'src/app-images.generated.json');
 const PUBLIC = arg('public', 'public');
 const OUT = arg('out', 'public/claude-annotations.json');
 const MOTION_OUT = arg('motion-out', 'public/claude-motion.json');
+// 重新出片時寫給 Claude 的指示（2026-11-12，只影響那一支）
+const NOTE = (() => { try { return fs.readFileSync(arg('note', 'public/claude-note.txt'), 'utf-8').trim(); } catch (_) { return ''; } })();
 
 function done(msg, code = 0) {
   console.log(msg);
@@ -72,7 +75,8 @@ function main() {
   }
   if (!images.length) done('Claude 排配圖：沒有截圖，照舊用人工標注');
 
-  const plan = engine.planAssignments({ units, images });
+  if (NOTE) console.log(`（這支有給 Claude 的指示：${NOTE.slice(0, 80)}${NOTE.length > 80 ? '…' : ''}）`);
+  const plan = engine.planAssignments({ units, images, note: NOTE });
   if (plan.status !== 'planned') done(`Claude 排配圖：第一步失敗（${plan.error || plan.status}），照舊用人工標注`);
   if (!plan.segments.length) done('Claude 排配圖：Claude 判斷沒有句子適合配圖，照舊用人工標注');
 
@@ -83,7 +87,7 @@ function main() {
     const segUnits = units.filter((u) => u.startCharIdx >= seg.startCharIdx && u.endCharIdx <= seg.endCharIdx);
     const steps = segUnits.map((u) => ({ id: `U${u.i}`, text: u.text, startCharIdx: u.startCharIdx, endCharIdx: u.endCharIdx }));
     const r = steps.length
-      ? engine.pickCard({ imagePath: im.path, words: im.words, width: im.width, height: im.height, steps, page: im.page })
+      ? engine.pickCard({ imagePath: im.path, words: im.words, width: im.width, height: im.height, steps, page: im.page, note: NOTE })
       : { status: 'failed', error: '這段沒有完整的子句' };
     const region = r.status === 'picked' ? r.crop : { x: 0, y: 0, w: im.width, h: im.height };
     const base = { src: seg.src, title: seg.title, region, imgW: im.width, imgH: im.height };
