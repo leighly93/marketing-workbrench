@@ -27,7 +27,7 @@ import { MOTION_RUNS } from '../MotionClip/motion-timeline';
 import videoMeta from '../video-meta.json';
 import { SerifSubtitles } from './SerifSubtitles';
 import { AppCardShots } from './AppCardShots';
-import { splitTitle, fitTitleSize } from './title-layout';
+import { splitTitle, fitTitleSize, wrapTitleLines } from './title-layout';
 
 /**
  * 大盤小報「橫式版型」composition（16:9，1920×1080）。
@@ -311,17 +311,20 @@ const LandscapeDateBadge: React.FC = () => {
 
 // 標題卡：讀 video-meta.json.titleText，常駐在右側面板 header 下方的空白區。
 // 第一句白色、其餘黃色（沿用直式的配色與黑描邊海報字風格）。
-// 分句與字級見 title-layout.ts（2026-11-12）：每句固定一行，太長整組縮字級；只有一行就在標點拆兩句。
+// 分句與字級見 title-layout.ts（2026-11-12）：只有一行就在標點拆兩句；一句太長（會縮到 58px 以下）在畫面上折兩行、顏色不變；最長那行決定整組字級。
 const TITLE_COLORS = ['#ffffff', '#FFE600'];
-const TITLE_BASE_SIZE = 68; // 2026-08-10 使用者要求標題再大一點（58 → 68）
+const TITLE_BASE_SIZE = 74; // 2026-08-10 58 → 68；2026-11-12 使用者「標題字太小了！放大再放大但不要太超過」→ 74
+/** 一句塞一行會縮到這個字級以下 → 那句在畫面上折成兩行（wrapTitleLines） */
+const TITLE_MIN_SIZE = 58;
 const TITLE_LEFT = PANEL_LEFT_X + 12;
 const TITLE_RIGHT = 24;
 
 const LandscapeTitleCard: React.FC = () => {
   const title = (videoMeta as any).titleText ?? '';
   if (!title) return null;
-  const lines = splitTitle(title);
-  const fontSize = fitTitleSize(lines, LANDSCAPE_WIDTH - TITLE_LEFT - TITLE_RIGHT, TITLE_BASE_SIZE);
+  const maxW = LANDSCAPE_WIDTH - TITLE_LEFT - TITLE_RIGHT;
+  const rows = wrapTitleLines(splitTitle(title), maxW / (TITLE_MIN_SIZE * 1.08));
+  const fontSize = fitTitleSize(rows.map((r) => r.text), maxW, TITLE_BASE_SIZE);
   return (
     <AbsoluteFill style={{ pointerEvents: 'none' }}>
       <div
@@ -336,7 +339,7 @@ const LandscapeTitleCard: React.FC = () => {
           textAlign: 'center',
         }}
       >
-        {lines.map((line: string, i: number) => (
+        {rows.map((row, i: number) => (
           <div
             key={i}
             style={{
@@ -346,15 +349,15 @@ const LandscapeTitleCard: React.FC = () => {
               fontWeight: 800,
               fontStyle: 'italic',
               whiteSpace: 'nowrap',
-              color: i === 0 ? TITLE_COLORS[0] : TITLE_COLORS[1],
-              lineHeight: 1.4,
+              color: row.group === 0 ? TITLE_COLORS[0] : TITLE_COLORS[1],
+              lineHeight: 1.3,
               textAlign: 'center',
               WebkitTextStroke: '3px #000000',
               paintOrder: 'stroke fill',
               textShadow: '0 4px 12px rgba(0,0,0,0.5)',
             }}
           >
-            {line}
+            {row.text}
           </div>
         ))}
       </div>

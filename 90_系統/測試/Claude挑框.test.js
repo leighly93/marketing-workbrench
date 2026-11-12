@@ -231,6 +231,13 @@ test('股價卡：左右整張寬、上下對齊股名列到屬性列；漲跌�
   assert.equal(crop.w, 900);
   assert.ok(crop.y > 33 && crop.y < 64, `上緣要在狀態列下、股名上，實際 ${crop.y}`);
   assert.ok(crop.y + crop.h > 239 && crop.y + crop.h < 271, `下緣要在屬性列下、標籤列上，實際 ${crop.y + crop.h}`);
+  // 台積電（7eov 實際 OCR，1206 寬）：股名「台積電」在代號「2330」上一行（上緣約 y183），要整個露出來，狀態列（5:12，底 y117）不能露
+  const tsmc = [
+    { t: '5:12', x: 148, y: 79, w: 95, h: 38 }, { t: '籌碼', x: 553, y: 74, w: 78, h: 38 },
+    { t: '2330', x: 561, y: 253, w: 84, h: 27 }, { t: '總', x: 527, y: 325, w: 84, h: 40 },
+  ];
+  const ct = picker.stockCrop({ x: 0, y: 229, w: 1206, h: 241 }, 1206, tsmc);
+  assert.ok(ct.y > 117 && ct.y < 183, `上緣要在狀態列下、股名上，實際 ${ct.y}`);
   // 對不到（沒有 OCR）→ 退回 Claude 的上下緣，左右照樣整張寬
   assert.deepEqual(picker.stockCrop({ x: 40, y: 30, w: 600, h: 230 }, 900), { x: 0, y: 30, w: 900, h: 230 });
 

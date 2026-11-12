@@ -296,7 +296,7 @@ function parseCardReply(text, cands, stepIds) {
  * 股價卡的裁切（2026-11-12 使用者給的大立光範例）：左右整張寬（返回鍵、下單鈕都在），
  * 上緣＝股名代號那列（「大立光 3008」，不含狀態列），下緣＝「屬性」那列為止（不含「上市・…」標籤列）。
  * Claude 給的上下緣常常多一列少一列，所以用 OCR 對齊（APP 畫面固定，這些位置每張都一樣）：
- *   ① 股名代號：crop 範圍附近、靠中間、含 4 位數字的最上面那個詞 → 上緣在它上方 0.9 個字高（再高會露出狀態列）
+ *   ① 股名代號：crop 範圍附近、靠中間、含 4 位數字的最上面那個詞 → 上緣在它上方 3.2 個字高（股名在代號上一行），但壓在狀態列底下
  *   ② 標籤列：代號下方超過 5 個字高、貼左邊（x < 寬 5%）的第一個詞（「上市」）→ 下緣停在那列上方
  *   下緣再用「總量」那列往下 3.4 個字高壓住（標籤列 OCR 漏讀時會抓到下一列）；都對不到就退回 Claude 的上下緣。
  */
@@ -317,7 +317,15 @@ function stockCrop(crop, width, words = []) {
   const code = stockCodeWord(words, crop, width);
   const vol = words.filter((w) => /總/.test(w.t) && w.y >= crop.y - 60 && w.y <= crop.y + crop.h).sort((a, b) => a.y - b.y)[0];
   if (code) {
-    top = Math.max(0, Math.round(code.y - 0.9 * code.h));
+    // 2026-11-12 使用者（台積電卡片只露出「2330」）：籌碼K線的個股頁股名在代號**上面一行**（「台積電」／「2330」），
+    // 只往上留 0.9 個字高會把股名切掉 → 往上留 3.2 個字高（實測 1206 寬：代號 y253、h27，股名上緣約 y183）。
+    // 但不能露出狀態列：上緣壓在狀態列（時間「5:12」或代號上方遠處的字）底下半個字高。
+    // 大立光那種股名代號同一列的版面，狀態列就在正上方，一樣被它擋住。
+    const barrier = words
+      .filter((w) => w.y + w.h < code.y && (/^\d{1,2}:\d{2}$/.test(String(w.t).trim()) || w.y + w.h < code.y - 2.2 * code.h))
+      .reduce((m, w) => Math.max(m, w.y + w.h), -Infinity);
+    top = Math.max(0, Math.round(code.y - 3.2 * code.h));
+    if (Number.isFinite(barrier)) top = Math.max(top, Math.round(barrier + 0.5 * code.h));
     const tag = words
       .filter((w) => w.x < width * 0.05 && w.y > code.y + 5 * code.h && w.y < code.y + 14 * code.h)
       .sort((a, b) => a.y - b.y)[0];

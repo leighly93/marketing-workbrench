@@ -66,7 +66,7 @@ test('搬移前發現來源改動時整批停止，不先搬走其他檔案', (t
   assert.equal(fs.existsSync(path.join(root, '工作紀錄')), false);
 });
 
-test('新建工作直接建立中文目錄；成品名稱防覆蓋且重載仍能依 ID 定位', async (t) => {
+test('新建工作直接建立中文目錄；成品名稱＝日期＋標題、防覆蓋且重載仍能依 ID 定位', async (t) => {
   const root = fixture(t);
   const request = loadServer(root);
   const result = await request('POST', '/api/jobs', { template: 'dapan', title: '中文測試標題', body: '這是合成稿件。' });
@@ -77,11 +77,12 @@ test('新建工作直接建立中文目錄；成品名稱防覆蓋且重載仍�
   const dir = store.directory(job.id);
   assert.ok(path.basename(dir).includes('_中文測試標題_'));
   assert.ok(fs.readFileSync(path.join(dir, '稿件.txt'), 'utf8').includes('這是合成稿件。'));
-  const first = request.archivePath(job, 'output-dapan.mp4');
-  assert.equal(first, path.join(dir, '直式.mp4'));
+  // 成品檔名＝建立日期 YYMMDD＋標題（2026-11-12 使用者定案）；大盤只出一個成品，不加 _橫式
+  const ymd = job.id.slice(2, 8);
+  const first = request.archivePath(job, 'output-dapan-landscape.mp4');
+  assert.equal(first, path.join(dir, `${ymd}_中文測試標題.mp4`));
   write(first, '第一次產出');
-  assert.equal(request.archivePath(job, 'output-dapan.mp4'), path.join(dir, '直式(2).mp4'));
-  assert.equal(request.archivePath(job, 'output-dapan-landscape.mp4'), path.join(dir, '橫式.mp4'));
+  assert.equal(request.archivePath(job, 'output-dapan-landscape.mp4'), path.join(dir, `${ymd}_中文測試標題(2).mp4`));
   assert.equal((await loadServer(root)('GET', `/api/jobs/${job.id}`)).status, 200);
   assert.equal(fs.existsSync(path.join(root, 'jobs')), false);
 });
@@ -212,4 +213,14 @@ test('前台：取消鈕在頁首、一律顯示，只有已經結束的不畫',
 
   // 正在跑的要先講清楚代價，不能只問一句「確定取消？」
   assert.match(app, /點數不會退回/);
+});
+
+test('成品檔名：YYMMDD_標題，多個成品才加直式／橫式，沒有標題或認不得的輸出照舊', () => {
+  const { outputFileName } = require('../工作儲存');
+  const job = { id: '20261112-162236-7eov', title: '只差 80 點！台股收盤險守「修正線」，明天這個價位一定要看' };
+  assert.equal(outputFileName(job, 'output-dapan-landscape.mp4'), '261112_只差 80 點！台股收盤險守「修正線」，明天這個價位一定要看.mp4');
+  assert.equal(outputFileName(job, 'output-midday.mp4', true), '261112_只差 80 點！台股收盤險守「修正線」，明天這個價位一定要看_直式.mp4');
+  assert.equal(outputFileName({ id: job.id, title: '暴漲/近2,000點\n但這3個訊號' }, 'output-dapan-landscape.mp4'), '261112_暴漲_近2,000點但這3個訊號.mp4');
+  assert.equal(outputFileName({ id: job.id, title: '' }, 'output-dapan-landscape.mp4'), '橫式.mp4');
+  assert.equal(outputFileName(job, 'motion-1-p.mp4'), 'motion-1-p.mp4');
 });

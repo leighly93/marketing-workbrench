@@ -44,7 +44,7 @@ const { imageSize, pickImageSize } = require('../scripts/image-size');
 
 const ROOT = path.resolve(__dirname, '..');
 const WORKSPACE_ROOT = workspaceRoot(ROOT);
-const { createJobStore, outputName } = require('../../工作儲存');
+const { createJobStore, outputFileName } = require('../../工作儲存');
 const STORE = createJobStore(WORKSPACE_ROOT, fs);
 const JOBS_DIR = STORE.base;
 const WEB_DIR = path.join(__dirname, 'public');
@@ -570,14 +570,13 @@ async function finalizeOutput(from, to, onProgress) {
 }
 
 /**
- * 把成品另存到成品庫，檔名取成人看得懂的：
- *   成品/2026-08/0817-大盤小報-台股反彈-橫式.mp4
- * jobs/ 會被自動清掉，這裡不會 —— 這才是「以後還找得到」的那一份。
+ * 把成品存進這支工作的資料夾第一層，檔名「YYMMDD_標題.mp4」（outputFileName，2026-11-12 使用者定案）；
+ * 同一支有直式＋橫式兩個成品才加 _直式／_橫式。同名已存在（重新出片）就加 (2)、(3)。
  */
 function archivePath(job, outName) {
   const dir = STORE.directory(job.id, job);
   ensureDir(dir);
-  const name = outputName(outName);
+  const name = outputFileName(job, outName, ((TEMPLATES[job.template] || {}).outputs || []).length > 1);
   const ext = path.extname(name);
   const base = path.basename(name, ext);
   let dest = path.join(dir, name);

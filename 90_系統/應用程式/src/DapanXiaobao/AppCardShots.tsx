@@ -18,7 +18,7 @@ import type { DapanShot } from './dapan-timeline';
  * 規格照 cmoney-ad-subtitles skill 的 references/app-card-segments.md，換算到橫式左側講者區（1178×1080）：
  *   - 背景：講者畫面本身模糊、壓暗、偏暖，中間偏上一團暖橘光暈，十幾顆很淡很小的金色四芒星慢慢閃
  *   - 卡片：只放裁出來的那一塊 UI（region），圓角 26、細白邊、大片柔和陰影；不要標頭條（使用者選的）
- *   - 小標題：卡片上方，白色極粗黑體 60px，只加柔和陰影、不要底
+ *   - 小標題：卡片上方，白色極粗黑體 72px（2026-11-12 使用者：「標題字太小，放大再放大但不要太超過」，原 60px），只加柔和陰影、不要底
  *   - 重點：金色發光圓角框（cell），框外不壓暗，0.22 秒淡入
  *   - 進場：第一張從 0.9 倍彈到 1 倍並淡入，接一道斜向反光掃過；同一段換下一張用左右輪播（0.32 秒）
  *   - 同一張卡講好幾項時（2026-11-12 使用者定案）：卡片不換，金框跟著旁白**移到**下一項（0.25 秒滑過去）
@@ -30,9 +30,10 @@ const ZONE_W = 1178;
 const ZONE_H = 1080;
 /** 小標題中心高度、卡片可用的上下界（字幕黑底框頂約在 y900） */
 /** 標題貼在卡片正上方（2026-11-12 使用者：原本固定在畫面頂端，離卡片太遠） */
-const TITLE_LINE_H = 90;
+const TITLE_LINE_H = 100;
 const TITLE_GAP = 14;
-const CARD_TOP = 190;
+const TITLE_FONT = 72;
+const CARD_TOP = 200;
 const CARD_BOTTOM = 870;
 const CARD_MAX_W = 1000;
 const CARD_RADIUS = 26;
@@ -285,7 +286,7 @@ const CardTitle: React.FC<{ text: string; top: number; scale?: number; opacity?:
       textAlign: 'center',
       fontFamily: '"Noto Sans TC", sans-serif',
       fontWeight: 900,
-      fontSize: 60,
+      fontSize: TITLE_FONT,
       lineHeight: `${TITLE_LINE_H}px`,
       color: '#ffffff',
       textShadow: '0 5px 18px rgba(8,6,4,0.9), 0 0 4px rgba(8,6,4,0.6)',

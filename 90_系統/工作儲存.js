@@ -21,6 +21,23 @@ function outputName(name) {
   return path.basename(name);
 }
 
+const safeTitle = (t, max = 50) => Array.from(String(t || '').replace(/[\r\n]+/g, '').replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_').trim()).slice(0, max).join('');
+
+/**
+ * 成品檔名（2026-11-12 使用者：「之後出的影片檔名加上當天日期和標題文字」，例 261112_只差 80 點！台股收盤險守「修正線」，明天這個價位一定要看.mp4）。
+ * 日期取工作 ID 開頭（建立當天，YYMMDD），標題是建立工作時填的那一行。
+ * 同一支有好幾個成品（直式＋橫式）時後面加 _直式／_橫式 分開；認不得的輸出、沒有標題時退回 outputName()。
+ * 只影響新出的片：舊工作已經存好的「橫式.mp4」等檔名是歷史，不改。
+ */
+function outputFileName(job, name, multiple = false) {
+  const kind = outputName(name);
+  if (!/^(直式|橫式|投廣版)\.mp4$/.test(kind)) return kind;
+  const id = String((job && job.id) || '');
+  const title = safeTitle(job && job.title);
+  if (!/^\d{8}/.test(id) || !title) return kind;
+  return `${id.slice(2, 8)}_${title}${multiple ? `_${path.basename(kind, '.mp4')}` : ''}.mp4`;
+}
+
 function createJobStore(root, io = fs) {
   const base = path.join(root, '工作紀錄');
   const locations = new Map();
@@ -61,4 +78,4 @@ function createJobStore(root, io = fs) {
   return { base, scan, directory, path: locate };
 }
 
-module.exports = { createJobStore, folderName, outputName };
+module.exports = { createJobStore, folderName, outputName, outputFileName };
