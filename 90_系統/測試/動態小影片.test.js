@@ -1189,3 +1189,10 @@ test('還原快照：工作區沒有的 generated 檔，快照有就要還原', 
   assert.deepEqual(JSON.parse(fs.readFileSync(
     path.join(applicationPath(root), 'src', 'DapanXiaobao', 'only-in-snapshot.generated.json'), 'utf-8')), { ok: true });
 });
+
+test('出片收尾不再另存動態素材（2026-11-12 使用者：「之後影片完成『動態素材』也不用給了」）', () => {
+  const server = fs.readFileSync(path.join(app, 'server/index.js'), 'utf-8');
+  const calls = server.split('\n').filter((l) => /collectMotionAssets\(/.test(l) && !/^\s*(\/\/|function )/.test(l));
+  assert.deepEqual(calls, [], '收尾不能再呼叫 collectMotionAssets()');
+  assert.match(server, /job\.motionClips = \[\];/, '新工作的 motionClips 要是空的，成品頁才不會列出動態素材');
+});

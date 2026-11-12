@@ -2310,16 +2310,10 @@ async function doRender(job) {
   }
   if (!job.outputs.length) throw new Error('render 跑完了，但找不到輸出檔案。請看執行記錄。');
 
-  // 動態小影片落地（2026-09-21）。實作在 collectMotionAssets()。
-  // 存不進去不影響影片本身 —— 動態早就貼進成品了，這裡只是多留一份可下載的素材。
+  // 動態小影片另存一份（2026-09-21）已停用：2026-11-12 使用者「之後影片完成『動態素材』也不用給了」。
+  // 動態本來就貼進成品裡；collectMotionAssets() 留著，要恢復時在這裡叫它就好。
+  // 舊工作已經存好的「素材／動態」與 job.motionClips 是歷史，不動。
   job.motionClips = [];
-  try {
-    job.motionClips = collectMotionAssets(job);
-    if (job.motionClips.length)
-      appendLog(job, `\n🎬 動態素材 ${job.motionClips.length} 支已存進「素材／動態」，成品頁可以單獨下載\n`);
-  } catch (e) {
-    appendLog(job, `\n⚠️ 動態素材沒能存進工作（影片本身不受影響）：${e.message}\n`);
-  }
 
   job.status = 'done';
   job.archived = job.outputs.map((o) => o.archive).filter(Boolean);
