@@ -102,7 +102,9 @@ function pickCard({ imagePath, words, width, height, steps, page, note = '' }) {
   const reply = picker.parseCardReply(r.text, cands, steps.map((x) => x.id));
   if (!reply) return { status: 'failed', error: `回覆不是預期的 JSON：${r.text.slice(0, 200)}` };
   // 股價卡（2026-11-12 使用者定案）：上下照 Claude（股名列～屬性列），左右整張寬；個股被點名一定要框漲跌幅
-  const stockRegion = reply.stock && reply.crop ? picker.stockCrop(picker.unscaleBox(reply.crop, scale, width, height), width, words || []) : null;
+  const claudeCrop = reply.crop ? picker.unscaleBox(reply.crop, scale, width, height) : null;
+  const isStock = reply.stock || picker.looksLikeStockHeader(words || [], claudeCrop, width);
+  const stockRegion = isStock && claudeCrop ? picker.stockCrop(claudeCrop, width, words || []) : null;
   const autoChange = () => (stockRegion ? picker.changeCellIn(cands, stockRegion, PAD, width, height) : null);
   const out = steps.map((st) => {
     const one = reply.steps.get(st.id);

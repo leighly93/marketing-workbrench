@@ -50,6 +50,8 @@ const GOLD = 'rgb(255, 206, 80)';
 const STACK_SHORT_SEC = 1.5;
 const STACK_MIN_W = 560;
 const STACK_GAP = 18;
+/** 一疊最多幾張：4 張時每張只剩 600px 寬，字太小（2026-11-12 實測） */
+const STACK_MAX = 3;
 
 /** 金框的一個位置：從 startSec 起框 cell（沒有 cell＝這句不框） */
 type Step = { startSec: number; cell?: ShotBox };
@@ -138,7 +140,7 @@ export function groupStacks(cards: Card[]): Card[][] {
   for (const c of cards) {
     const cur = out[out.length - 1];
     const last = cur ? cur[cur.length - 1] : null;
-    if (last && last.endSec - last.startSec < STACK_SHORT_SEC && stackLayout([...cur, c])) cur.push(c);
+    if (last && cur.length < STACK_MAX && last.endSec - last.startSec < STACK_SHORT_SEC && stackLayout([...cur, c])) cur.push(c);
     else out.push([c]);
   }
   return out;

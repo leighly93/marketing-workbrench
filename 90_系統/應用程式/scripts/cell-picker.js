@@ -295,33 +295,46 @@ function parseCardReply(text, cands, stepIds) {
 /**
  * 股價卡的裁切（2026-11-12 使用者給的大立光範例）：左右整張寬（返回鍵、下單鈕都在），
  * 上緣＝股名代號那列（「大立光 3008」，不含狀態列），下緣＝「屬性」那列為止（不含「上市・…」標籤列）。
- * Claude 給的上下緣常常多一列少一列，所以用 OCR 對齊：
- *   ① crop 範圍內第一個「總」（總量）＝股價那列
- *   ② 它上面最近、靠中間、含 4 位數字的詞＝股名代號 → 上緣在它上方 0.9 個字高（再高會露出狀態列）
- *   ③ 它下面第一個貼左邊（x < 寬 5%）的詞＝「上市・…」標籤列 → 下緣停在那列上方
- * 對不到就退回 Claude 的上下緣（左右照樣整張寬）。
+ * Claude 給的上下緣常常多一列少一列，所以用 OCR 對齊（APP 畫面固定，這些位置每張都一樣）：
+ *   ① 股名代號：crop 範圍附近、靠中間、含 4 位數字的最上面那個詞 → 上緣在它上方 0.9 個字高（再高會露出狀態列）
+ *   ② 標籤列：代號下方超過 5 個字高、貼左邊（x < 寬 5%）的第一個詞（「上市」）→ 下緣停在那列上方
+ *   下緣再用「總量」那列往下 3.4 個字高壓住（標籤列 OCR 漏讀時會抓到下一列）；都對不到就退回 Claude 的上下緣。
  */
+function stockCodeWord(words, crop, width) {
+  // 股名代號一定在「總量」那列上面（聯發科那張 OCR 漏了股名列，總量「5608」差點被當成代號）
+  const vol = words.filter((w) => /總/.test(w.t) && w.y >= crop.y - 60 && w.y <= crop.y + crop.h).sort((a, b) => a.y - b.y)[0];
+  return words
+    .filter((w) => /\d{4}/.test(w.t) && w.y >= crop.y - 60 && w.y <= crop.y + crop.h
+      && (!vol || w.y + w.h <= vol.y + 2)
+      && w.x + w.w / 2 > width * 0.25 && w.x + w.w / 2 < width * 0.75)
+    .sort((a, b) => a.y - b.y)[0] || null;
+}
+
 function stockCrop(crop, width, words = []) {
   if (!crop) return null;
-  const mid = (w) => w.y + w.h / 2;
-  const vol = words
-    .filter((w) => /總/.test(w.t) && mid(w) >= crop.y - 40 && mid(w) <= crop.y + crop.h + 40)
-    .sort((a, b) => a.y - b.y)[0];
   let top = crop.y;
   let bottom = crop.y + crop.h;
-  if (vol) {
-    const code = words
-      .filter((w) => /\d{4}/.test(w.t) && w.y + w.h <= vol.y && w.y >= vol.y - 8 * vol.h
-        && w.x + w.w / 2 > width * 0.25 && w.x + w.w / 2 < width * 0.75)
-      .sort((a, b) => a.y - b.y)[0];
-    if (code) top = Math.max(0, Math.round(code.y - 0.9 * code.h));
+  const code = stockCodeWord(words, crop, width);
+  const vol = words.filter((w) => /總/.test(w.t) && w.y >= crop.y - 60 && w.y <= crop.y + crop.h).sort((a, b) => a.y - b.y)[0];
+  if (code) {
+    top = Math.max(0, Math.round(code.y - 0.9 * code.h));
     const tag = words
-      .filter((w) => w.x < width * 0.05 && w.y > vol.y + vol.h)
+      .filter((w) => w.x < width * 0.05 && w.y > code.y + 5 * code.h && w.y < code.y + 14 * code.h)
       .sort((a, b) => a.y - b.y)[0];
-    if (tag && tag.y - vol.y < 5 * vol.h) bottom = Math.round(tag.y - 0.4 * vol.h);
-    else bottom = Math.min(bottom, Math.round(vol.y + 3.2 * vol.h));
+    // 「上市」那列 OCR 也可能漏（和益），抓到的會是下一列「可當沖」→ 再用總量那列往下 3.4 個字高壓住
+    if (tag) bottom = Math.round(tag.y - 0.5 * code.h);
+    if (vol) bottom = Math.min(tag ? bottom : Infinity, Math.round(vol.y + 3.4 * vol.h));
+  } else if (vol) {
+    bottom = Math.min(bottom, Math.round(vol.y + 3.2 * vol.h));
   }
   return { x: 0, y: top, w: width, h: Math.max(1, bottom - top) };
+}
+
+/** Claude 的裁切有包到股名代號那列 → 就是股價卡（不只靠它回 stock: true；它偶爾會漏） */
+function looksLikeStockHeader(words, crop, width) {
+  if (!crop) return false;
+  const code = stockCodeWord(words, crop, width);
+  return !!code && code.y >= crop.y - 10 && code.y < width * 0.4;
 }
 
 /**
@@ -339,10 +352,22 @@ function changeCellIn(cands, crop, pad, width, height) {
   const pct = all.filter(([, w]) => PCT_RE.test(w.t.trim()) && /\(/.test(w.t)).sort((a, b) => a[1].y - b[1].y)[0];
   if (pct) {
     const boxes = expandChange([pct[0]], cands).map((id) => cands.words.get(id));
-    return { cell: unionBox(boxes, pad, width, height), text: boxes.map((b) => b.t.trim()).join(' ') };
+    // OCR 沒讀到上面那行點數（鴻海「▲2.0」）→ 往上長一行把它包進來
+    if (!boxes.some((b) => CHG_RE.test(b.t.trim()))) {
+      const p = pct[1];
+      boxes.push({ t: '', x: p.x, y: Math.round(p.y - 1.15 * p.h), w: p.w, h: p.h });
+    }
+    return { cell: unionBox(boxes, pad, width, height), text: boxes.map((b) => b.t.trim()).filter(Boolean).join(' ') };
   }
   const chg = all.filter(([, w]) => SIGNED_CHG_RE.test(w.t.trim())).sort((a, b) => a[1].y - b[1].y)[0];
-  if (!chg) return null;
+  if (!chg) {
+    // ③ 點數跟百分比都讀壞了（台郡「(9.969」）→ APP 版面固定，照股名代號那列推漲跌欄的位置
+    //   （從其他張量的：x 在寬 27%～43%，y 從代號下方 4 個字高起、高 3.8 個字高）
+    const code = crop ? stockCodeWord([...cands.words.values()], crop, width) : null;
+    if (!code) return null;
+    const cell = { x: Math.round(width * 0.272), y: Math.round(code.y + 3.96 * code.h), w: Math.round(width * 0.16), h: Math.round(3.83 * code.h) };
+    return { cell, text: '' };
+  }
   const w = chg[1];
   const grown = { x: w.x, y: w.y, w: Math.round(Math.max(w.w * 1.35, w.h * 5.2)), h: Math.round(w.h * 2.95) };
   return { cell: unionBox([grown], pad, width, height), text: w.t.trim() };
@@ -393,5 +418,5 @@ function iou(a, b) {
 
 module.exports = {
   lastJsonObject,
-  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, buildCardPrompt, parseCardReply, expandChange, fitCrop, stockCrop, changeCellIn, unscaleBox, unionBox, numbersIn, numberCheck, iou,
+  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, buildCardPrompt, parseCardReply, expandChange, fitCrop, stockCrop, looksLikeStockHeader, changeCellIn, unscaleBox, unionBox, numbersIn, numberCheck, iou,
 };

@@ -245,6 +245,30 @@ test('股價卡：左右整張寬、上下對齊股名列到屬性列；漲跌�
   assert.equal(picker.changeCellIn(cands, { x: 0, y: 300, w: 900, h: 100 }, 12, 900, 1600), null);
 });
 
+test('股價卡 OCR 讀不全也對得齊：代號要在總量上面、標籤列漏讀用總量壓住、漲跌讀壞照版面位置框', () => {
+  // 聯發科：股名列整列沒讀到，總量「5608」不能被當成代號
+  const noName = [{ t: '總', x: 415, y: 165, w: 58, h: 29 }, { t: '5608', x: 495, y: 165, w: 82, h: 23 }];
+  assert.equal(picker.looksLikeStockHeader(noName, { x: 0, y: 45, w: 900, h: 230 }, 900), false);
+  const c1 = picker.stockCrop({ x: 0, y: 45, w: 900, h: 300 }, 900, noName);
+  assert.equal(c1.y, 45);
+  assert.ok(c1.y + c1.h <= 165 + 3.4 * 29 + 1, '沒有代號時下緣用總量那列壓住');
+  // 和益：「上市」那列沒讀到，貼左邊的第一個詞是下一列「可當沖」
+  const heyi = [
+    { t: '1709', x: 457, y: 64, w: 71, h: 24 }, { t: '總', x: 415, y: 165, w: 58, h: 29 },
+    { t: '可', x: 33, y: 328, w: 22, h: 22 },
+  ];
+  const c2 = picker.stockCrop({ x: 0, y: 24, w: 900, h: 330 }, 900, heyi);
+  assert.ok(c2.y + c2.h < 270, `下緣不能到可當沖那列，實際 ${c2.y + c2.h}`);
+  assert.equal(picker.looksLikeStockHeader(heyi, { x: 0, y: 24, w: 900, h: 330 }, 900), true);
+  // 鴻海：只讀到「(0.84%)」，上面的「▲2.0」沒讀到 → 框往上長一行
+  const hh = picker.changeCellIn(picker.candidates([{ t: '(0.84%)', x: 259, y: 207, w: 103, h: 32 }]), c2, 12, 900, 1600);
+  assert.ok(hh.cell.y < 207 - 32, JSON.stringify(hh.cell));
+  // 台郡：點數跟百分比都讀壞 → 照代號那列推漲跌欄位置
+  const tj = picker.changeCellIn(picker.candidates([{ t: '6269', x: 457, y: 64, w: 71, h: 24 }, { t: '(9.969', x: 259, y: 186, w: 103, h: 78 }]),
+    { x: 0, y: 42, w: 900, h: 218 }, 12, 900, 1600);
+  assert.deepEqual(tj.cell, { x: 245, y: 159, w: 144, h: 92 });
+});
+
 test('卡片回覆帶 stock 旗標；prompt 寫明股價區範圍（股名列到屬性列、股名要露出來）', () => {
   const cands = picker.candidates([{ t: '(4.32%)', x: 259, y: 206, w: 112, h: 33 }]);
   const r = picker.parseCardReply('{"crop":[0,30,900,230],"stock":true,"steps":[{"unit":"U1","none":true}]}', cands, ['U1']);
