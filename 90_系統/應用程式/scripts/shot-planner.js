@@ -162,4 +162,33 @@ function parseMotions(text, { units, segments }) {
   return [head, tail].filter(Boolean);
 }
 
-module.exports = { SYSTEM_PROMPT, ocrSummary, buildPrompt, parseReply, parseMotions, motionWindows, mergeSameImage };
+/**
+ * 句子最後一張圖留到句子講完（2026-11-12 使用者：「有的圖出現一秒不到就沒了，如果是這段落連續出現圖片後的
+ * 最後一張圖，可以讓他多出現到後面句子講完嗎」）。
+ * 例：「台郡、和益、德淵，逆勢飆漲停！」Claude 只配到「德淵」兩個字（0.3 秒）→ 德淵那張延到「漲停」講完。
+ * 規則：一筆的下一筆（照字元位置）不在同一句（sid 不同）或沒有下一筆 → 結尾延到這句最後一個字；
+ * 不跨進下一筆、也不跨進動態卡片。同一句後面還有圖的不延（輪播中間那幾張照旁白換）。
+ *   shots   [{ startCharIdx, endCharIdx, ... }]（會複製，不改原物件）
+ *   units   auto-shot --sentences 的 units（要有 sid）
+ *   motions [{ startCharIdx, endCharIdx }]
+ */
+function extendToSentenceEnd(shots, units, motions = []) {
+  const sorted = [...shots].map((s) => ({ ...s })).sort((a, b) => a.startCharIdx - b.startCharIdx || a.endCharIdx - b.endCharIdx);
+  const unitAt = (idx) => units.find((u) => u.startCharIdx <= idx && idx <= u.endCharIdx);
+  const sentenceEnd = (sid) => Math.max(...units.filter((u) => u.sid === sid).map((u) => u.endCharIdx));
+  for (let k = 0; k < sorted.length; k++) {
+    const s = sorted[k];
+    const u = unitAt(s.endCharIdx);
+    if (!u || u.sid == null) continue;
+    const next = sorted[k + 1];
+    const nu = next ? unitAt(next.startCharIdx) : null;
+    if (nu && nu.sid === u.sid) continue;
+    let end = sentenceEnd(u.sid);
+    if (next) end = Math.min(end, next.startCharIdx - 1);
+    for (const m of motions) if (m.startCharIdx > s.endCharIdx) end = Math.min(end, m.startCharIdx - 1);
+    if (end > s.endCharIdx) s.endCharIdx = end;
+  }
+  return sorted;
+}
+
+module.exports = { SYSTEM_PROMPT, ocrSummary, buildPrompt, parseReply, parseMotions, motionWindows, mergeSameImage, extendToSentenceEnd };

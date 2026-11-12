@@ -27,6 +27,7 @@ import { MOTION_RUNS } from '../MotionClip/motion-timeline';
 import videoMeta from '../video-meta.json';
 import { SerifSubtitles } from './SerifSubtitles';
 import { AppCardShots } from './AppCardShots';
+import { splitTitle, fitTitleSize } from './title-layout';
 
 /**
  * 大盤小報「橫式版型」composition（16:9，1920×1080）。
@@ -309,20 +310,25 @@ const LandscapeDateBadge: React.FC = () => {
 };
 
 // 標題卡：讀 video-meta.json.titleText，常駐在右側面板 header 下方的空白區。
-// 第一句白色、其餘黃色（沿用直式的配色與黑描邊海報字風格）。第一版預設值。
+// 第一句白色、其餘黃色（沿用直式的配色與黑描邊海報字風格）。
+// 分句與字級見 title-layout.ts（2026-11-12）：每句固定一行，太長整組縮字級；只有一行就在標點拆兩句。
 const TITLE_COLORS = ['#ffffff', '#FFE600'];
+const TITLE_BASE_SIZE = 68; // 2026-08-10 使用者要求標題再大一點（58 → 68）
+const TITLE_LEFT = PANEL_LEFT_X + 12;
+const TITLE_RIGHT = 24;
 
 const LandscapeTitleCard: React.FC = () => {
   const title = (videoMeta as any).titleText ?? '';
   if (!title) return null;
-  const lines = title.split('\n').filter((l: string) => l.trim());
+  const lines = splitTitle(title);
+  const fontSize = fitTitleSize(lines, LANDSCAPE_WIDTH - TITLE_LEFT - TITLE_RIGHT, TITLE_BASE_SIZE);
   return (
     <AbsoluteFill style={{ pointerEvents: 'none' }}>
       <div
         style={{
           position: 'absolute',
-          left: PANEL_LEFT_X + 12,
-          right: 24,
+          left: TITLE_LEFT,
+          right: TITLE_RIGHT,
           top: 470,
           display: 'flex',
           flexDirection: 'column',
@@ -336,9 +342,10 @@ const LandscapeTitleCard: React.FC = () => {
             style={{
               fontFamily:
                 '"Noto Sans TC", system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif',
-              fontSize: 68, // 2026-08-10 使用者要求標題再大一點（58 → 68）
+              fontSize,
               fontWeight: 800,
               fontStyle: 'italic',
+              whiteSpace: 'nowrap',
               color: i === 0 ? TITLE_COLORS[0] : TITLE_COLORS[1],
               lineHeight: 1.4,
               textAlign: 'center',

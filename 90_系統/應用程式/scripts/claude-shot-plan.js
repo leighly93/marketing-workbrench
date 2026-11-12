@@ -113,6 +113,11 @@ function main() {
     }
   }
 
+  // 一句話裡最後一張圖留到那句講完（shot-planner.js 的 extendToSentenceEnd）
+  const finalShots = require('./shot-planner').extendToSentenceEnd(shots, units, plan.motions || []);
+  shots.length = 0;
+  shots.push(...finalShots);
+
   if (plan.motions && plan.motions.length) {
     fs.writeFileSync(MOTION_OUT, JSON.stringify(plan.motions.map((m) => ({ startCharIdx: m.startCharIdx, endCharIdx: m.endCharIdx })), null, 2) + '\n');
   }

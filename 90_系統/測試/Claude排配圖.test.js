@@ -56,6 +56,33 @@ test('同一張圖連續講好幾項拆成好幾段 → 併成一段（同一張
   assert.equal(apart.length, 2);
 });
 
+test('一句話裡最後一張圖留到那句講完；同一句後面還有圖的不延，不跨進下一張或動態', () => {
+  // 「台郡、和益、德淵，逆勢飆漲停！」「這種殺盤格局…」
+  const units = [
+    { i: 0, sid: 0, startCharIdx: 0, endCharIdx: 1 },   // 台郡
+    { i: 1, sid: 0, startCharIdx: 2, endCharIdx: 3 },   // 和益
+    { i: 2, sid: 0, startCharIdx: 4, endCharIdx: 5 },   // 德淵
+    { i: 3, sid: 0, startCharIdx: 6, endCharIdx: 10 },  // 逆勢飆漲停
+    { i: 4, sid: 1, startCharIdx: 11, endCharIdx: 20 },
+    { i: 5, sid: 1, startCharIdx: 21, endCharIdx: 30 },
+  ];
+  const shots = [
+    { src: 'a', startCharIdx: 0, endCharIdx: 1 },
+    { src: 'b', startCharIdx: 2, endCharIdx: 3 },
+    { src: 'c', startCharIdx: 4, endCharIdx: 5 },
+    { src: 'd', startCharIdx: 11, endCharIdx: 14 },
+  ];
+  const out = planner.extendToSentenceEnd(shots, units, [{ startCharIdx: 25, endCharIdx: 30 }]);
+  assert.deepEqual(out.map((s) => s.endCharIdx), [1, 3, 10, 24]);
+  assert.equal(shots[2].endCharIdx, 5, '不改原物件');
+  // 下一張在下一句、但這句還沒講完 → 延到句尾，不跨進下一張
+  const two = planner.extendToSentenceEnd(
+    [{ src: 'a', startCharIdx: 0, endCharIdx: 5 }, { src: 'b', startCharIdx: 8, endCharIdx: 10 }],
+    [{ sid: 0, startCharIdx: 0, endCharIdx: 5 }, { sid: 1, startCharIdx: 6, endCharIdx: 10 }],
+  );
+  assert.deepEqual(two.map((s) => s.endCharIdx), [5, 10]);
+});
+
 test('動態：開頭一段在前 25%、結尾一段在後 25%，不跟截圖段重疊，不會有第 3 段', () => {
   const U = Array.from({ length: 20 }, (_, i) => ({ i, text: `句${i}`, startCharIdx: i * 10, endCharIdx: i * 10 + 9 }));
   const reply = JSON.stringify({ motions: [

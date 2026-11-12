@@ -29,7 +29,9 @@ import type { DapanShot } from './dapan-timeline';
 const ZONE_W = 1178;
 const ZONE_H = 1080;
 /** 小標題中心高度、卡片可用的上下界（字幕黑底框頂約在 y900） */
-const TITLE_Y = 112;
+/** 標題貼在卡片正上方（2026-11-12 使用者：原本固定在畫面頂端，離卡片太遠） */
+const TITLE_LINE_H = 90;
+const TITLE_GAP = 14;
 const CARD_TOP = 190;
 const CARD_BOTTOM = 870;
 const CARD_MAX_W = 1000;
@@ -39,6 +41,15 @@ const JOIN_GAP_SEC = 0.4;
 const T_SWAP = Math.round(0.32 * VIDEO_FPS);
 const T_FADE = Math.round(0.25 * VIDEO_FPS);
 const GOLD = 'rgb(255, 206, 80)';
+/**
+ * 上下堆疊（2026-11-12 使用者：「秒數太短、圖片又小的話就上下堆疊這樣放」）：
+ * 同一段裡連續幾張卡，前一張講不到 STACK_SHORT_SEC 就換下一張、而且疊起來每張還能有 STACK_MIN_W 寬，
+ * 就疊在同一個畫面：一張一張由下往上加進來，金框只在最新那張，前面的稍微變暗但不消失。
+ * 例：「台郡、和益、德淵，逆勢飆漲停！」三張個股報價列各講 0.3 秒 → 三張疊起來。疊不下就照舊左右輪播。
+ */
+const STACK_SHORT_SEC = 1.5;
+const STACK_MIN_W = 560;
+const STACK_GAP = 18;
 
 /** 金框的一個位置：從 startSec 起框 cell（沒有 cell＝這句不框） */
 type Step = { startSec: number; cell?: ShotBox };
@@ -108,6 +119,42 @@ function layoutCard(card: Card) {
   if (!crop) return { crop: null, s: 1, w: CARD_MAX_W, h: maxH };
   const s = Math.min(CARD_MAX_W / crop.w, maxH / crop.h, 2.2);
   return { crop, s, w: Math.round(crop.w * s), h: Math.round(crop.h * s) };
+}
+
+/** 一組卡片疊起來的共同寬度（每張縮到同寬）；放不進 CARD_TOP～CARD_BOTTOM 或太窄回 null */
+export function stackLayout(cards: Card[]) {
+  const crops = cards.map((c) => (c.crop && c.imgW && c.imgH ? c.crop : c.imgW && c.imgH ? { x: 0, y: 0, w: c.imgW, h: c.imgH } : null));
+  if (crops.some((c) => !c)) return null;
+  const ratio = crops.reduce((a, c) => a + c!.h / c!.w, 0);
+  const avail = CARD_BOTTOM - CARD_TOP - STACK_GAP * (cards.length - 1);
+  const W = Math.floor(Math.min(CARD_MAX_W, avail / ratio, ...crops.map((c) => c!.w * 2.2)));
+  if (W < STACK_MIN_W) return null;
+  return crops.map((c) => ({ crop: c!, s: W / c!.w, w: W, h: Math.round(c!.h * (W / c!.w)) }));
+}
+
+/** 一段裡的卡片 → 畫面單位：單張（輪播）或一疊 */
+export function groupStacks(cards: Card[]): Card[][] {
+  const out: Card[][] = [];
+  for (const c of cards) {
+    const cur = out[out.length - 1];
+    const last = cur ? cur[cur.length - 1] : null;
+    if (last && last.endSec - last.startSec < STACK_SHORT_SEC && stackLayout([...cur, c])) cur.push(c);
+    else out.push([c]);
+  }
+  return out;
+}
+
+/** 一疊的小標題：都一樣就用它；有共同結尾／開頭（兩個字以上，例「漲停」）就用那段；都沒有回 null（改成跟著最新那張換） */
+export function stackTitle(titles: string[]): string | null {
+  const t = titles.filter(Boolean);
+  if (!t.length) return null;
+  if (t.every((x) => x === t[0])) return t[0];
+  let suf = t[0];
+  for (const x of t) while (suf && !x.endsWith(suf)) suf = suf.slice(1);
+  if (suf.length >= 2) return suf;
+  let pre = t[0];
+  for (const x of t) while (pre && !x.startsWith(pre)) pre = pre.slice(0, -1);
+  return pre.length >= 2 ? pre : null;
 }
 
 const backOut = (x: number) => {
@@ -226,6 +273,90 @@ const MovingGlow: React.FC<{ steps: Step[]; cardStartSec: number; crop: ShotBox;
   );
 };
 
+const CardTitle: React.FC<{ text: string; top: number; scale?: number; opacity?: number }> = ({ text, top, scale = 1, opacity = 1 }) => (
+  <div
+    style={{
+      position: 'absolute',
+      left: 0,
+      width: ZONE_W,
+      top,
+      textAlign: 'center',
+      fontFamily: '"Noto Sans TC", sans-serif',
+      fontWeight: 900,
+      fontSize: 60,
+      lineHeight: `${TITLE_LINE_H}px`,
+      color: '#ffffff',
+      textShadow: '0 5px 18px rgba(8,6,4,0.9), 0 0 4px rgba(8,6,4,0.6)',
+      transform: `scale(${scale})`,
+      opacity,
+    }}
+  >
+    {text}
+  </div>
+);
+
+type CardLayout = { crop: ShotBox | null; s: number; w: number; h: number };
+
+/** 卡片本體：圓角、細白邊、陰影、裁切後的截圖、金框、進場反光（frame 0＝這張卡進場） */
+const CardBox: React.FC<{
+  card: Card; lay: CardLayout; left: number; top: number; opacity?: number; scale?: number; glowOpacity?: number;
+}> = ({ card, lay, left, top, opacity = 1, scale = 1, glowOpacity = 1 }) => {
+  const f = useCurrentFrame();
+  const { crop, s, w, h } = lay;
+  // 反光掃過（進場後 0.2 秒開始，0.6 秒）
+  const sweep = interpolate(f, [6, 6 + Math.round(0.6 * VIDEO_FPS)], [-0.6, 1.6], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left,
+        top,
+        width: w,
+        height: h,
+        borderRadius: CARD_RADIUS,
+        overflow: 'hidden',
+        backgroundColor: '#161618',
+        border: '2px solid rgba(255,255,255,0.18)',
+        boxShadow: '0 30px 80px rgba(0,0,0,0.6), 0 8px 24px rgba(0,0,0,0.4)',
+        transform: `scale(${scale})`,
+        opacity,
+      }}
+    >
+      {crop ? (
+        <Img
+          src={staticFile(card.src)}
+          style={{
+            position: 'absolute',
+            left: -crop.x * s,
+            top: -crop.y * s,
+            width: (card.imgW || 0) * s,
+            height: (card.imgH || 0) * s,
+            maxWidth: 'none',
+          }}
+        />
+      ) : (
+        <Img src={staticFile(card.src)} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+      )}
+      {crop && glowOpacity > 0 ? (
+        <div style={{ position: 'absolute', inset: 0, opacity: glowOpacity }}>
+          <MovingGlow steps={card.steps} cardStartSec={card.startSec} crop={crop} s={s} w={w} h={h} />
+        </div>
+      ) : null}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: `linear-gradient(115deg, rgba(255,255,255,0) ${(sweep - 0.25) * 100}%, rgba(255,255,255,0.28) ${sweep * 100}%, rgba(255,255,255,0) ${(sweep + 0.25) * 100}%)`,
+          pointerEvents: 'none',
+        }}
+      />
+    </div>
+  );
+};
+
 const CardView: React.FC<{ card: Card; enterAt: number; first: boolean; exitAt: number | null }> = ({
   card,
   enterAt,
@@ -233,7 +364,8 @@ const CardView: React.FC<{ card: Card; enterAt: number; first: boolean; exitAt: 
   exitAt,
 }) => {
   const f = useCurrentFrame();
-  const { crop, s, w, h } = layoutCard(card);
+  const lay = layoutCard(card);
+  const { w, h } = lay;
   const local = f - enterAt;
   // 進場：第一張彈進來，之後的從右邊滑進來
   const enterP = interpolate(local, [0, T_SWAP], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
@@ -247,76 +379,82 @@ const CardView: React.FC<{ card: Card; enterAt: number; first: boolean; exitAt: 
     exitX = interpolate(exitP, [0, 1], [0, -ZONE_W * 0.55], { easing: Easing.inOut(Easing.cubic) });
     opacity *= 1 - exitP;
   }
-  // 反光掃過（進場後 0.2 秒開始，0.6 秒）
-  const sweep = interpolate(local, [6, 6 + Math.round(0.6 * VIDEO_FPS)], [-0.6, 1.6], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-  });
+  // 卡片位置不變，標題跟著卡片走：標題底緣離卡片上緣 TITLE_GAP
   const top = CARD_TOP + Math.round((CARD_BOTTOM - CARD_TOP - h) / 2);
   const left = Math.round((ZONE_W - w) / 2);
 
   return (
     <AbsoluteFill style={{ width: ZONE_W, opacity, transform: `translateX(${enterX + exitX}px)` }}>
       {card.title ? (
-        <div
-          style={{
-            position: 'absolute',
-            left: 0,
-            width: ZONE_W,
-            top: TITLE_Y - 45,
-            textAlign: 'center',
-            fontFamily: '"Noto Sans TC", sans-serif',
-            fontWeight: 900,
-            fontSize: 60,
-            lineHeight: '90px',
-            color: '#ffffff',
-            textShadow: '0 5px 18px rgba(8,6,4,0.9), 0 0 4px rgba(8,6,4,0.6)',
-            transform: `scale(${first ? 0.85 + 0.15 * backOut(enterP) : 1})`,
-          }}
-        >
-          {card.title}
-        </div>
+        <CardTitle text={card.title} top={top - TITLE_GAP - TITLE_LINE_H} scale={first ? 0.85 + 0.15 * backOut(enterP) : 1} />
       ) : null}
-      <div
-        style={{
-          position: 'absolute',
-          left,
-          top,
-          width: w,
-          height: h,
-          borderRadius: CARD_RADIUS,
-          overflow: 'hidden',
-          backgroundColor: '#161618',
-          border: '2px solid rgba(255,255,255,0.18)',
-          boxShadow: '0 30px 80px rgba(0,0,0,0.6), 0 8px 24px rgba(0,0,0,0.4)',
-          transform: `scale(${scale})`,
-        }}
-      >
-        {crop ? (
-          <Img
-            src={staticFile(card.src)}
-            style={{
-              position: 'absolute',
-              left: -crop.x * s,
-              top: -crop.y * s,
-              width: (card.imgW || 0) * s,
-              height: (card.imgH || 0) * s,
-              maxWidth: 'none',
-            }}
-          />
-        ) : (
-          <Img src={staticFile(card.src)} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-        )}
-        {crop ? <MovingGlow steps={card.steps} cardStartSec={card.startSec} crop={crop} s={s} w={w} h={h} /> : null}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            background: `linear-gradient(115deg, rgba(255,255,255,0) ${(sweep - 0.25) * 100}%, rgba(255,255,255,0.28) ${sweep * 100}%, rgba(255,255,255,0) ${(sweep + 0.25) * 100}%)`,
-            pointerEvents: 'none',
-          }}
-        />
-      </div>
+      <Sequence from={enterAt} layout="none">
+        <CardBox card={card} lay={lay} left={left} top={top} scale={scale} />
+      </Sequence>
+    </AbsoluteFill>
+  );
+};
+
+/** 一疊卡片：位置一開始就排好（後面的進來時前面的不會跳），每張在自己那句開始時由下往上淡入 */
+const StackView: React.FC<{ cards: Card[]; startSec: number; first: boolean; exitAt: number | null }> = ({ cards, startSec, first, exitAt }) => {
+  const f = useCurrentFrame();
+  const lay = stackLayout(cards)!;
+  const total = lay.reduce((a, l) => a + l.h, 0) + STACK_GAP * (cards.length - 1);
+  const top0 = CARD_TOP + Math.round((CARD_BOTTOM - CARD_TOP - total) / 2);
+  const enters = cards.map((c) => secToFrame(c.startSec) - secToFrame(startSec));
+  let active = 0;
+  while (active + 1 < cards.length && f >= enters[active + 1]) active++;
+  // 整組的進出場跟單張卡一樣：段落第一組彈進來，其他從右邊滑進來；換下一組時往左滑出
+  const firstP = interpolate(f, [0, T_SWAP], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  let groupX = first ? 0 : interpolate(firstP, [0, 1], [ZONE_W * 0.55, 0], { easing: Easing.inOut(Easing.cubic) });
+  let groupO = first ? interpolate(firstP, [0, 0.6], [0, 1], { extrapolateRight: 'clamp' }) : firstP;
+  if (exitAt != null) {
+    const exitP = interpolate(f - exitAt, [0, T_SWAP], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+    groupX += interpolate(exitP, [0, 1], [0, -ZONE_W * 0.55], { easing: Easing.inOut(Easing.cubic) });
+    groupO *= 1 - exitP;
+  }
+  const common = stackTitle(cards.map((c) => c.title || ''));
+  let y = top0;
+  const tops = lay.map((l) => { const t = y; y += l.h + STACK_GAP; return t; });
+  return (
+    <AbsoluteFill style={{ width: ZONE_W, opacity: groupO, transform: `translateX(${groupX}px)` }}>
+      {common != null ? (
+        <CardTitle text={common} top={top0 - TITLE_GAP - TITLE_LINE_H} scale={first ? 0.85 + 0.15 * backOut(firstP) : 1} />
+      ) : (
+        cards.map((c, k) => {
+          if (!c.title) return null;
+          // 沒有共同標題 → 跟著最新那張換（交叉淡入淡出 0.25 秒）
+          const on = interpolate(f - enters[k], [0, T_FADE], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+          const off = k + 1 < cards.length
+            ? interpolate(f - enters[k + 1], [0, T_FADE], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }) : 0;
+          const o = on * (1 - off);
+          return o > 0 ? <CardTitle key={k} text={c.title} top={top0 - TITLE_GAP - TITLE_LINE_H} opacity={o} /> : null;
+        })
+      )}
+      {cards.map((c, k) => {
+        const l = lay[k];
+        const local = f - enters[k];
+        if (local < 0) return null;
+        // 第一張跟著整組進場；後面的各自在那句開始時由下往上淡入
+        const p = k === 0 ? 1 : interpolate(local, [0, T_SWAP], [0, 1], { extrapolateRight: 'clamp' });
+        const ease = Easing.out(Easing.cubic)(p);
+        // 不是最新那張 → 稍微變暗、金框收掉
+        const dim = k < active
+          ? interpolate(f - enters[active], [0, T_FADE], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }) : 0;
+        return (
+          <Sequence key={k} from={enters[k]} layout="none">
+            <CardBox
+              card={c}
+              lay={l}
+              left={Math.round((ZONE_W - l.w) / 2)}
+              top={tops[k] + (1 - ease) * 40}
+              opacity={p * (1 - 0.4 * dim)}
+              scale={0.96 + 0.04 * ease}
+              glowOpacity={1 - dim}
+            />
+          </Sequence>
+        );
+      })}
     </AbsoluteFill>
   );
 };
@@ -332,15 +470,19 @@ export const AppCardShots: React.FC<{ shots: DapanShot[] }> = ({ shots }) => {
           <Sequence key={`card-block-${bi}`} from={from} durationInFrames={dur}>
             <AbsoluteFill style={{ width: ZONE_W, height: ZONE_H, overflow: 'hidden' }}>
               <Background dur={dur} />
-              {b.cards.map((c, ci) => {
-                const enterAt = secToFrame(c.startSec) - from;
-                const next = b.cards[ci + 1];
-                const exitAt = next ? secToFrame(next.startSec) - from : null;
+              {groupStacks(b.cards).map((g, gi, all) => {
+                const enterAt = secToFrame(g[0].startSec) - from;
+                const next = all[gi + 1];
+                const exitAt = next ? secToFrame(next[0].startSec) - from : null;
                 // 只在自己的時間（加上出場那 0.32 秒）畫，免得疊一堆看不見的卡片
                 const until = exitAt != null ? exitAt + T_SWAP : dur;
                 return (
-                  <Sequence key={`card-${ci}`} from={enterAt} durationInFrames={Math.max(1, until - enterAt)} layout="none">
-                    <CardView card={c} enterAt={0} first={ci === 0} exitAt={exitAt != null ? exitAt - enterAt : null} />
+                  <Sequence key={`card-${gi}`} from={enterAt} durationInFrames={Math.max(1, until - enterAt)} layout="none">
+                    {g.length > 1 ? (
+                      <StackView cards={g} startSec={g[0].startSec} first={gi === 0} exitAt={exitAt != null ? exitAt - enterAt : null} />
+                    ) : (
+                      <CardView card={g[0]} enterAt={0} first={gi === 0} exitAt={exitAt != null ? exitAt - enterAt : null} />
+                    )}
                   </Sequence>
                 );
               })}
