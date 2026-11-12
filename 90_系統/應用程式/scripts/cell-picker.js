@@ -88,7 +88,8 @@ function buildPrompt({ phrase, page, listing, width, height }) {
     '',
     '怎麼回：',
     '- 優先從編號挑：words 放詞框編號，rows 放整列（只有整列都是要框的東西才用）。',
-    '- 要框的字 OCR 沒讀到（清單裡找不到），才用 box: [x, y, w, h] 自己給座標，words／rows 留空。',
+    '- 要框的字 OCR 沒讀到（清單裡找不到），用 box: [x, y, w, h] 自己給座標。',
+    '- 只讀到一部分（例：讀到「100」但下一行的「(4.68%)」清單裡沒有）→ words 挑讀到的部分，box 補上沒讀到的那塊，兩者會合併成一個框。',
     '- OCR 偶爾讀錯字（例：6.3 讀成 @.3），看圖確認位置就好。',
     '',
     '只輸出 JSON：{"words":["W12"],"rows":[],"box":null,"why":"一句話說明框的是什麼","none":false}',
@@ -142,11 +143,12 @@ function parseReply(text, cands) {
   for (const w of Array.isArray(o.words) ? o.words : []) {
     if (cands.words.has(String(w))) ids.add(String(w));
   }
-  if (ids.size) return { none: false, ids: [...ids], why };
   const b = Array.isArray(o.box) ? o.box.map(Number) : null;
-  if (b && b.length === 4 && b.every(Number.isFinite) && b[2] > 0 && b[3] > 0) {
-    return { none: false, ids: [], box: { x: b[0], y: b[1], w: b[2], h: b[3] }, why };
-  }
+  const box = b && b.length === 4 && b.every(Number.isFinite) && b[2] > 0 && b[3] > 0
+    ? { x: b[0], y: b[1], w: b[2], h: b[3] } : null;
+  if (ids.size && box) return { none: false, ids: [...ids], box, why };
+  if (ids.size) return { none: false, ids: [...ids], why };
+  if (box) return { none: false, ids: [], box, why };
   return { none: true, ids: [], why: why || '回覆的編號都不存在' };
 }
 
@@ -157,6 +159,43 @@ function unscaleBox(b, scale, width, height) {
   const w = Math.min(width - x, Math.round(b.w / scale));
   const h = Math.min(height - y, Math.round(b.h / scale));
   return w > 0 && h > 0 ? { x, y, w, h } : null;
+}
+
+/**
+ * 漲跌組自動補齊（2026-11-12 實測：Claude 只挑到「▲335」沒挑到下一行的「(9.88%)」）。
+ * APP 的漲跌點數與漲跌幅是上下兩行，OCR 會分成兩列；▲ 常被讀成「人」「A」而且跟數字分開。
+ *   ① 挑到漲跌點數 → 正下方（或正上方）的漲跌幅一起框；反過來也一樣
+ *   ② 挑到的數字左邊緊鄰一個 ▲／▼（或誤讀的「人」「A」）→ 一起框
+ * OCR 根本沒讀到的那一行補不到 —— 那要靠 Claude 回 box（見 buildPrompt）。
+ */
+const PCT_RE = /^\(?[+\-−]?\d[\d.,]*%\)?$/;
+const CHG_RE = /^[▲▼△▽+\-−A人]?\d[\d.,]*$/;
+const ARROW_RE = /^[▲▼△▽A人]$/;
+
+function expandChange(ids, cands) {
+  const all = [...cands.words.entries()];
+  const out = new Set(ids);
+  const kind = (t) => (PCT_RE.test(t) ? 'pct' : CHG_RE.test(t) ? 'chg' : null);
+  for (const id of ids) {
+    const w = cands.words.get(id);
+    const t = w.t.trim();
+    const k = kind(t);
+    for (const [oid, o] of all) {
+      if (out.has(oid)) continue;
+      const ot = o.t.trim();
+      const ok = kind(ot);
+      const overlapX = Math.min(w.x + w.w, o.x + o.w) - Math.max(w.x, o.x);
+      const gapY = Math.max(o.y - (w.y + w.h), w.y - (o.y + o.h));
+      const h = Math.max(w.h, o.h);
+      // ① 上下疊的漲跌點數＋漲跌幅
+      if (k && ok && k !== ok && overlapX >= 0.4 * Math.min(w.w, o.w) && gapY <= 1.0 * h) out.add(oid);
+      // ② 左邊緊鄰的箭頭（同一列、間隔不到半個字高）
+      const sameRow = Math.abs((o.y + o.h / 2) - (w.y + w.h / 2)) <= 0.6 * h;
+      const gapX = w.x - (o.x + o.w);
+      if (k && ARROW_RE.test(ot) && sameRow && gapX >= -2 && gapX <= 0.5 * h) out.add(oid);
+    }
+  }
+  return [...out];
 }
 
 /** 挑中的詞框聯集，外擴 pad px，夾在圖內。 */
@@ -203,5 +242,5 @@ function iou(a, b) {
 }
 
 module.exports = {
-  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, unscaleBox, unionBox, numbersIn, numberCheck, iou,
+  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, expandChange, unscaleBox, unionBox, numbersIn, numberCheck, iou,
 };

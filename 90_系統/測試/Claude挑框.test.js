@@ -65,6 +65,34 @@ test('送給 Claude 的圖縮到長邊 1568、總像素 115 萬以內（超過�
   assert.deepEqual(fitSize(800, 600), { width: 800, height: 600, scale: 1 });
 });
 
+test('漲跌組自動補齊：漲跌點數＋正下方漲跌幅、左邊被讀成「人」的 ▲ 一起框', () => {
+  // 取自 1109 暴漲近2,000點 shot1 的 OCR（聯發科、台達電兩檔）
+  const words = [
+    { t: '_3725', x: 18, y: 156, w: 289, h: 130 },
+    { t: 'A335', x: 319, y: 180, w: 118, h: 34 },
+    { t: '(9.88%)', x: 320, y: 230, w: 174, h: 44 },
+    { t: '屬性', x: 531, y: 232, w: 319, h: 57 },
+    { t: '_1160', x: 18, y: 471, w: 284, h: 128 },
+    { t: '人', x: 319, y: 495, w: 29, h: 31 },
+    { t: '105', x: 354, y: 492, w: 76, h: 36 },
+  ];
+  const c = picker.candidates(words);
+  const idOf = (t) => [...c.words].find(([, w]) => w.t === t)[0];
+  const texts = (ids) => ids.map((id) => c.words.get(id).t).sort();
+  assert.deepEqual(texts(picker.expandChange([idOf('A335')], c)), ['(9.88%)', 'A335']);
+  assert.deepEqual(texts(picker.expandChange([idOf('(9.88%)')], c)), ['(9.88%)', 'A335']);
+  assert.deepEqual(texts(picker.expandChange([idOf('105')], c)), ['105', '人']);
+  // 股價大字不是漲跌組，不能被帶進來
+  assert.ok(!texts(picker.expandChange([idOf('A335')], c)).includes('_3725'));
+});
+
+test('編號挑到一部分、box 補 OCR 沒讀到的那塊，兩者都留著', () => {
+  const c = picker.candidates(WORDS);
+  const r = picker.parseReply('{"words":["W4"],"box":[600,480,200,40],"why":"補漲跌幅"}', c);
+  assert.deepEqual(r.ids, ['W4']);
+  assert.deepEqual(r.box, { x: 600, y: 480, w: 200, h: 40 });
+});
+
 test('框是詞框聯集外擴，夾在圖內', () => {
   assert.deepEqual(picker.unionBox([WORDS[2], WORDS[3]], 12, 1170, 2532), { x: 74, y: 392, w: 738, h: 98 });
   assert.deepEqual(picker.unionBox([{ x: 2, y: 3, w: 10, h: 10 }], 12, 100, 100), { x: 0, y: 0, w: 24, h: 25 });

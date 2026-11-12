@@ -18,6 +18,8 @@
  *   → { status: 'picked', source, cell, ids, text, why, verify }   挑到了（cell 是原圖像素座標）
  *        source='ocr'        從 OCR 詞框編號挑的（框＝詞框聯集）
  *        source='claude-box' OCR 沒讀到要框的字，Claude 自己給的座標（評估時分開看）
+ *        source='ocr+box'    編號挑到一部分，其餘 OCR 沒讀到的由 Claude 補座標，兩者合併
+ *        added               程式自動補進來的編號（漲跌點數＋漲跌幅、▲ 誤讀字，見 cell-picker.js）
  *   → { status: 'none', why }                             Claude 說這句在圖上找不到／不該框
  *   → { status: 'failed', error }                         沒裝、沒登入、逾時、回覆格式不對
  *   → { status: 'off' }                                   開關關著
@@ -53,18 +55,22 @@ function pick({ imagePath, words, width, height, phrase, page }) {
   const reply = picker.parseReply(r.text, cands);
   if (!reply) return { status: 'failed', error: `回覆不是預期的 JSON：${r.text.slice(0, 200)}` };
   if (reply.none) return { status: 'none', why: reply.why };
-  if (reply.box) {
-    const cell = picker.unscaleBox(reply.box, scale, width, height);
-    if (!cell) return { status: 'failed', error: `box 座標不合理：${JSON.stringify(reply.box)}` };
-    return { status: 'picked', source: 'claude-box', cell, ids: [], text: '', why: reply.why, verify: 'none' };
+  const extra = reply.box ? picker.unscaleBox(reply.box, scale, width, height) : null;
+  if (!reply.ids.length) {
+    if (!extra) return { status: 'failed', error: `box 座標不合理：${JSON.stringify(reply.box)}` };
+    return { status: 'picked', source: 'claude-box', cell: extra, ids: [], text: '', why: reply.why, verify: 'none' };
   }
-  const boxes = reply.ids.map((id) => cands.words.get(id));
+  const ids = picker.expandChange(reply.ids, cands);
+  const boxes = ids.map((id) => cands.words.get(id));
   const text = boxes.map((b) => b.t.trim()).join(' ');
+  const ocrCell = picker.unionBox(boxes, PAD, width, height);
   return {
     status: 'picked',
-    source: 'ocr',
-    cell: picker.unionBox(boxes, PAD, width, height),
-    ids: reply.ids,
+    // ocr＝全部從編號挑；ocr+box＝編號挑到的再加上 Claude 補的座標（OCR 只讀到一部分）
+    source: extra ? 'ocr+box' : 'ocr',
+    cell: extra ? picker.unionBox([ocrCell, extra], 0, width, height) : ocrCell,
+    ids,
+    added: ids.filter((id) => !reply.ids.includes(id)),
     text,
     why: reply.why,
     verify: picker.numberCheck(text, phrase),
