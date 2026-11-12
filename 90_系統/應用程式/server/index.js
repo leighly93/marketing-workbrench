@@ -2146,12 +2146,17 @@ async function doPrepare(job) {
   job.planView = buildPlanView(job);
   job.preparedAt = nowISO();
 
-  if (job.autoApprove) {
+  // 大盤小報由 Claude 排好配圖（2026-11-12 使用者：「似乎不用配圖計畫頁了」）→ 也直接出片。
+  // Claude 失敗、退回吃標注頁的段落時沒有 claude-annotations.json，照舊停在「待確認」讓人看。
+  const claudeReady = job.template === 'dapan' && planByClaude(job);
+  if (job.autoApprove || claudeReady) {
     // 一段式：不停下來，直接接著 render
     job.status = 'approved';
     job.approvedAt = nowISO();
-    job.approvedBy = '（自動出片）';
-    appendLog(job, '\n⏩ 已勾選「直接出片」，跳過人工確認\n');
+    job.approvedBy = job.autoApprove ? '（自動出片）' : '（Claude 排好，自動出片）';
+    appendLog(job, job.autoApprove
+      ? '\n⏩ 已勾選「直接出片」，跳過人工確認\n'
+      : '\n⏩ Claude 已排好配圖與動態，直接出片（Claude 沒排成功時才會停在配圖計畫頁）\n');
     // 2026-08-25：按「標好了，直接出片」也要留下修正紀錄、也要學進記憶庫。
     // 在這之前這兩支只在 /approve handler 呼叫，而這條路完全繞過它 —— 同事一按那顆按鈕，
     // 這支工作的 90_系統/資料/corrections.jsonl 與 90_系統/資料/shot-memory.json 就什麼都不會寫

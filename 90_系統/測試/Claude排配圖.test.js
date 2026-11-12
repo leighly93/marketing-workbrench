@@ -171,3 +171,11 @@ test('run.js：大盤小報有 Claude 計畫就讓 auto-shot 吃它；auto-shot 
   assert.match(auto, /--annots-file=/);
   assert.match(auto, /title: a\.title\.trim\(\)/);
 });
+
+test('伺服器：大盤小報 Claude 排好就直接出片，沒排成功才停在待確認', () => {
+  const src = fs.readFileSync(path.join(APP, 'server/index.js'), 'utf8');
+  assert.match(src, /const claudeReady = job\.template === 'dapan' && planByClaude\(job\);/);
+  assert.match(src, /if \(job\.autoApprove \|\| claudeReady\) \{/);
+  // 判斷依據是製作快照裡有沒有 Claude 的計畫檔（run.js 排成功才會留下）
+  assert.match(src, /jobPath\(job\.id, 'state', 'public', 'claude-annotations\.json'\)/);
+});

@@ -26,7 +26,7 @@ OCR 共用入口為 [ocr-engine.js](../應用程式/scripts/ocr-engine.js)，供
 
 ## Claude 排配圖（大盤小報，2026-11-12 起預設）
 
-使用者定案：「連圖片辨識都由 Claude 來，APP 截圖都像 skill 那樣呈現，先不管人工的設定了」；出片前仍停在配圖計畫頁確認。
+使用者定案：「連圖片辨識都由 Claude 來，APP 截圖都像 skill 那樣呈現，先不管人工的設定了」。2026-11-12 再定案「似乎不用配圖計畫頁了」：**Claude 排成功就直接出片**（伺服器 doPrepare 的 `claudeReady`），排失敗、退回吃標注頁的段落時才停在「待確認」。
 
 - **時機**：`run.js` 在截圖 OCR 跑完後背景執行 [claude-shot-plan.js](../應用程式/scripts/claude-shot-plan.js)，跟 HeyGen 平行；轉完字幕、排配圖計畫前才等它。
 - **第一步**（`planAssignments`，[shot-planner.js](../應用程式/scripts/shot-planner.js)）：所有截圖＋子句清單（`auto-shot --sentences` 的 units）一次問 → 哪張圖配哪幾個子句（1～4 句、不重疊）、卡片小標題，**以及動態小影片放哪**。同一張圖連續講好幾項要合成一段（Claude 沒合的話程式自己併，`mergeSameImage`）。
