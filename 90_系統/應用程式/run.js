@@ -1633,6 +1633,14 @@ async function main() {
   // 圖片 OCR 版面偵測：不需要講者影片，先啟動，跟 HeyGen 生成平行跑（省下等待時間、
   // 且圖有問題時馬上就知道，不會等到影片生完才發現）。稍後在需要它的步驟前 await。
   const imageAnalysis = startImageAnalysis();
+  // Claude 排配圖（2026-11-12，只有大盤小報）：要 OCR 結果，所以接在截圖分析後面，一樣跟 HeyGen 平行跑。
+  // 失敗或沒排出東西就不留 public/claude-annotations.json，prepareShots() 照舊吃人工標注。
+  const claudePlan = TEMPLATE === "dapan"
+    ? (async () => {
+        if (imageAnalysis) await imageAnalysis;
+        return runBackground("node scripts/claude-shot-plan.js", "Claude 排配圖");
+      })()
+    : null;
 
   if (SKIP_GENERATE) {
     // ── 跳過生成：直接用現有 public/heygen.mp4，不呼叫 HeyGen/MiniMax ──
@@ -1679,6 +1687,10 @@ async function main() {
   // 6. 跑 Remotion 後製（transcribe / correct-subtitles 兩版型共用；parse-script / 配圖 / render 各自版本）
   log("開始 Remotion 後製");
   transcribeWithRetry();
+  if (claudePlan) {
+    const r = await claudePlan;
+    log((r.ok ? "🤖 " : "⚠️ Claude 排配圖沒跑完（照舊用人工標注）：") + (r.stdout.trim() || r.stderr.trim().slice(-400)));
+  }
   prepareShots();
   renderMotionClips();
 
@@ -1734,7 +1746,14 @@ function prepareShots() {
   if (TEMPLATE === "dapan") {
     run("npm run parse-script:dapan");
     try {
-      run("npm run auto-shot:dapan");
+      // Claude 排出來了就用它的（使用者 2026-11-12：「先不管人工的設定了」），沒有就照舊吃人工標注
+      const claudeAnnots = resolve(PROJECT_DIR, "public/claude-annotations.json");
+      if (existsSync(claudeAnnots)) {
+        log("🤖 配圖用 Claude 排的計畫（public/claude-annotations.json），不用標注頁的段落");
+        run("npm run auto-shot:dapan -- --annots-file=public/claude-annotations.json");
+      } else {
+        run("npm run auto-shot:dapan");
+      }
     } catch (e) {
       log("⚠️ 自動配圖失敗（不影響出片，只是這支不會插圖）：" + e.message);
     }

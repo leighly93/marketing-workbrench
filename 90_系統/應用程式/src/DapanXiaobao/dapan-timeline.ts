@@ -82,6 +82,8 @@ type GeneratedShot = {
   wholePage?: boolean;
   imageWidth?: number | null;
   imageHeight?: number | null;
+  /** Claude 排配圖給的卡片小標題（2026-11-12） */
+  title?: string;
 };
 
 export type DapanShot = {
@@ -101,6 +103,8 @@ export type DapanShot = {
   wholePage?: boolean;
   imageWidth?: number | null;
   imageHeight?: number | null;
+  /** 卡片上方的小標題（AppCardShots 用） */
+  title?: string;
 };
 
 export const DAPAN_SHOTS: DapanShot[] = (generatedShots as unknown as GeneratedShot[])
@@ -123,6 +127,7 @@ export const DAPAN_SHOTS: DapanShot[] = (generatedShots as unknown as GeneratedS
         wholePage: g.wholePage,
         imageWidth: g.imageWidth,
         imageHeight: g.imageHeight,
+        title: g.title,
       },
     ];
   })

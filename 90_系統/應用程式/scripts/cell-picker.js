@@ -67,7 +67,7 @@ function candidates(words, scale = 1) {
 const SYSTEM_PROMPT =
   '你是財經短影音的配圖助手：在 APP 截圖上挑出旁白正在講的那一塊。只輸出 JSON，不要說明文字，不要 markdown 圍欄。';
 
-function buildPrompt({ phrase, page, listing, width, height }) {
+function buildPrompt({ phrase, page, listing, width, height, withCrop = false }) {
   return [
     '這是一張 APP 截圖，影片播到下面這句旁白時會顯示它，要用黃框框出旁白正在講的那一塊。',
     '',
@@ -92,7 +92,19 @@ function buildPrompt({ phrase, page, listing, width, height }) {
     '- 只讀到一部分（例：讀到「100」但下一行的「(4.68%)」清單裡沒有）→ words 挑讀到的部分，box 補上沒讀到的那塊，兩者會合併成一個框。',
     '- OCR 偶爾讀錯字（例：6.3 讀成 @.3），看圖確認位置就好。',
     '',
-    '只輸出 JSON：{"words":["W12"],"rows":[],"box":null,"why":"一句話說明框的是什麼","none":false}',
+    ...(withCrop ? [
+      '',
+      '另外要決定「卡片」：影片不會放整張截圖，只把講到的那一塊 UI 裁出來做成一張卡片。',
+      '- crop: [x, y, w, h] 是要裁出來的那一塊：一張完整的小卡、表頭加相關的幾列、或股價區，要包含框的位置，',
+      '  上下左右留一點邊、不要切到字；不要整張截圖（除非整張就是那一塊）。',
+      '- 這句旁白講到圖上好幾個項目時（例：「聯發科大漲、台達電漲停、日月光也強彈」），crop 要把**講到的每一項都包進去**；',
+      '  框（words／box）仍只框最主要的那一個。',
+      '- 就算這句不該框（none: true），crop 也要給。',
+      '',
+      '只輸出 JSON：{"words":["W12"],"rows":[],"box":null,"crop":[0,300,700,420],"why":"一句話說明框的是什麼","none":false}',
+    ] : [
+      '只輸出 JSON：{"words":["W12"],"rows":[],"box":null,"why":"一句話說明框的是什麼","none":false}',
+    ]),
   ].filter((s) => s !== '').join('\n');
 }
 
@@ -135,7 +147,11 @@ function parseReply(text, cands) {
   const o = lastJsonObject(text);
   if (!o) return null;
   const why = typeof o.why === 'string' ? o.why.trim().slice(0, 200) : '';
-  if (o.none === true) return { none: true, ids: [], why };
+  const c = Array.isArray(o.crop) ? o.crop.map(Number) : null;
+  const crop = c && c.length === 4 && c.every(Number.isFinite) && c[2] > 0 && c[3] > 0
+    ? { x: c[0], y: c[1], w: c[2], h: c[3] } : null;
+  const withCrop = (r) => (crop ? { ...r, crop } : r);
+  if (o.none === true) return withCrop({ none: true, ids: [], why });
   const ids = new Set();
   for (const r of Array.isArray(o.rows) ? o.rows : []) {
     for (const id of cands.rows.get(String(r)) || []) ids.add(id);
@@ -146,10 +162,10 @@ function parseReply(text, cands) {
   const b = Array.isArray(o.box) ? o.box.map(Number) : null;
   const box = b && b.length === 4 && b.every(Number.isFinite) && b[2] > 0 && b[3] > 0
     ? { x: b[0], y: b[1], w: b[2], h: b[3] } : null;
-  if (ids.size && box) return { none: false, ids: [...ids], box, why };
-  if (ids.size) return { none: false, ids: [...ids], why };
-  if (box) return { none: false, ids: [], box, why };
-  return { none: true, ids: [], why: why || '回覆的編號都不存在' };
+  if (ids.size && box) return withCrop({ none: false, ids: [...ids], box, why });
+  if (ids.size) return withCrop({ none: false, ids: [...ids], why });
+  if (box) return withCrop({ none: false, ids: [], box, why });
+  return withCrop({ none: true, ids: [], why: why || '回覆的編號都不存在' });
 }
 
 /** 縮圖座標換回原圖像素，夾在圖內 */
@@ -198,6 +214,25 @@ function expandChange(ids, cands) {
   return [...out];
 }
 
+/**
+ * 卡片裁切範圍收尾：一定要包住黃框（外加 pad）、不能太扁太小、夾在圖內。
+ * crop 給不出來就退回「以黃框為中心、寬度整張」的一塊；連黃框都沒有就整張。
+ */
+function fitCrop(crop, cell, width, height, pad = 24) {
+  let c = crop ? { ...crop } : null;
+  if (!c && cell) c = { x: 0, y: cell.y - cell.h * 1.5, w: width, h: cell.h * 4 };
+  if (!c) return { x: 0, y: 0, w: width, h: height };
+  if (cell) {
+    const x1 = Math.min(c.x, cell.x - pad); const y1 = Math.min(c.y, cell.y - pad);
+    const x2 = Math.max(c.x + c.w, cell.x + cell.w + pad); const y2 = Math.max(c.y + c.h, cell.y + cell.h + pad);
+    c = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+  }
+  const minH = Math.min(height, Math.round(width * 0.18));
+  if (c.h < minH) { c.y -= (minH - c.h) / 2; c.h = minH; }
+  const x = Math.max(0, Math.round(c.x)); const y = Math.max(0, Math.round(c.y));
+  return { x, y, w: Math.min(width - x, Math.round(c.w + (c.x - x))), h: Math.min(height - y, Math.round(c.h + (c.y - y))) };
+}
+
 /** 挑中的詞框聯集，外擴 pad px，夾在圖內。 */
 function unionBox(boxes, pad, width, height) {
   if (!boxes.length) return null;
@@ -242,5 +277,6 @@ function iou(a, b) {
 }
 
 module.exports = {
-  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, expandChange, unscaleBox, unionBox, numbersIn, numberCheck, iou,
+  lastJsonObject,
+  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, expandChange, fitCrop, unscaleBox, unionBox, numbersIn, numberCheck, iou,
 };

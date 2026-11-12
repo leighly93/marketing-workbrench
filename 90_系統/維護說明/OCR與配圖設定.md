@@ -24,6 +24,18 @@ OCR 共用入口為 [ocr-engine.js](../應用程式/scripts/ocr-engine.js)，供
 
 對照組現在只有 `auto-shot.js` 一種格式，段落一律帶 `src`。（2026-09-22 之前還有 `auto-focus.js`（三大法人）那種只有 `section` 與 `cellText`、圖固定是版面截圖的格式，隨該版型一起移除。）對照組整份 0 段代表沒有比較基準（多半是頁型未辨識），與「AI 判斷不需要配圖」是不同結論，紀錄以 `autoKind` 區分。
 
+## Claude 排配圖（大盤小報，2026-11-12 起預設）
+
+使用者定案：「連圖片辨識都由 Claude 來，APP 截圖都像 skill 那樣呈現，先不管人工的設定了」；出片前仍停在配圖計畫頁確認。
+
+- **時機**：`run.js` 在截圖 OCR 跑完後背景執行 [claude-shot-plan.js](../應用程式/scripts/claude-shot-plan.js)，跟 HeyGen 平行；轉完字幕、排配圖計畫前才等它。
+- **第一步**（`planAssignments`，[shot-planner.js](../應用程式/scripts/shot-planner.js)）：所有截圖＋子句清單（`auto-shot --sentences` 的 units）一次問 → 哪張圖配哪幾個子句（1～3 句、不重疊）、卡片小標題。已經設了動態小影片（`public/motion.json`）的子句先拿掉，不然配了也被動態蓋住。
+- **第二步**（每段 `pick({ withCrop })`）：卡片要裁哪一塊（`region`，一定包住金框，講到好幾項就全包）、金框框哪裡（`cell`）。
+- **結果**：`public/claude-annotations.json`（跟標注頁同格式，多 `title` 與 `_claude` 說明），`auto-shot:dapan -- --annots-file=…` 吃它；配圖計畫頁照樣看得到、改得動。檔案跟著製作快照，伺服器用它判斷「這支是 Claude 排的」：核可時**不補回標注頁的段落**、也不跑下面的旁觀比對。
+- **退路**：關掉（`CELL_PICKER=off`）、失敗、或 Claude 判斷沒有句子適合配圖 → 不留檔，照舊吃人工標注。每次開跑先刪掉上一支留下的檔。
+- **呈現**：橫式截圖段改成浮動卡片（[AppCardShots.tsx](../應用程式/src/DapanXiaobao/AppCardShots.tsx)）—— 模糊暖色背景、白色小標題、只放裁出來的那塊、金色發光框、同一段換圖左右輪播；舊的整張捲動版留在 `shotStyle: 'focus'`。
+- 2026-11-12 拿「暴漲近2,000點」實測：第一步＋第二步共約 23 秒，排出 4 段，跟人工標的段落大致相同。
+
 ## Claude 挑框旁觀模式（2026-11-11）
 
 使用者選了「讓 Claude 自動框」，先旁觀、確認準確率再決定要不要放進配圖計畫頁。現在的行為：

@@ -12,7 +12,9 @@ import {
 import {
   DAPAN_BGM,
   DAPAN_LANDSCAPE_DURATION_SEC,
+  DAPAN_SHOTS,
   DAPAN_SHOT_RUNS,
+  joinPunctuationAdjacent,
   VIDEO_FPS,
   secToFrame,
 } from './dapan-timeline';
@@ -24,6 +26,7 @@ import { MotionOverlay } from '../MotionClip/MotionOverlay';
 import { MOTION_RUNS } from '../MotionClip/motion-timeline';
 import videoMeta from '../video-meta.json';
 import { SerifSubtitles } from './SerifSubtitles';
+import { AppCardShots } from './AppCardShots';
 
 /**
  * 大盤小報「橫式版型」composition（16:9，1920×1080）。
@@ -99,11 +102,17 @@ function fadeProgress(
 export type DapanLandscapeProps = {
   subtitleStyle?: 'classic' | 'serif';
   previewKeywords?: string[];
+  /**
+   * 截圖段呈現（2026-11-12 使用者定案）：'card' ＝ 浮動 UI 卡片（AppCardShots.tsx，預設）；
+   * 'focus' ＝ 舊的整張截圖捲動加黃框（ShotFocusImage），保留給比對用。
+   */
+  shotStyle?: 'card' | 'focus';
 };
 
 export const DapanLandscapeComposition: React.FC<DapanLandscapeProps> = ({
   subtitleStyle = 'serif',
   previewKeywords,
+  shotStyle = 'card',
 }) => {
   const totalFrames = secToFrame(DAPAN_LANDSCAPE_DURATION_SEC);
 
@@ -146,6 +155,10 @@ export const DapanLandscapeComposition: React.FC<DapanLandscapeProps> = ({
       {/* 截圖段：只在左側講者可見區（0 ~ PANEL_LEFT_X）作用，右側品牌面板不覆蓋。
           左右各留 20px、捲到重點、上下壓黑（2026-08-12 使用者選定 V3 捲動式）。
           橫式畫布只有 1080 高，聚焦線改用 0.45 高度（直式的 760 在這裡會太低）。 */}
+      {shotStyle === 'card' ? (
+        <AppCardShots shots={joinPunctuationAdjacent(DAPAN_SHOTS)} />
+      ) : (
+        <>
       {DAPAN_SHOT_RUNS.map((run, idx) => {
         const { from, durationInFrames } = frameSpan(run.startSec, run.endSec);
         return (
@@ -171,6 +184,8 @@ export const DapanLandscapeComposition: React.FC<DapanLandscapeProps> = ({
           </Sequence>
         );
       })}
+        </>
+      )}
 
       {/* 字幕改放到最上層（面板/日期/標題之後）並靠左 —— 見下方 LandscapeTitleCard 之後 */}
 

@@ -42,33 +42,39 @@ function enabled() {
   return ENGINE !== 'off';
 }
 
-function pick({ imagePath, words, width, height, phrase, page }) {
+function pick({ imagePath, words, width, height, phrase, page, withCrop = false }) {
   if (!enabled()) return { status: 'off' };
   if (ENGINE !== 'claude-cli') return { status: 'failed', error: `不認得的 CELL_PICKER：${ENGINE}` };
   // 送給 Claude 的是縮到上限內的圖（claude-cli.js 的 fitSize）；清單座標與它回的 box 都用縮圖尺寸
   const fit = fitSize(width, height);
   const scale = fit.scale;
   const cands = picker.candidates(words, scale);
-  const prompt = picker.buildPrompt({ phrase, page, listing: cands.listing, width: fit.width, height: fit.height });
+  const prompt = picker.buildPrompt({ phrase, page, listing: cands.listing, width: fit.width, height: fit.height, withCrop });
   const r = runClaude({ prompt, system: picker.SYSTEM_PROMPT, images: [{ path: imagePath, width, height }] });
   if (!r.ok) return { status: 'failed', error: r.error };
   const reply = picker.parseReply(r.text, cands);
   if (!reply) return { status: 'failed', error: `回覆不是預期的 JSON：${r.text.slice(0, 200)}` };
-  if (reply.none) return { status: 'none', why: reply.why };
+  // 卡片裁切（withCrop 才有）：一定要包住黃框，見 cell-picker.js 的 fitCrop
+  const cropOf = (cell) => (withCrop
+    ? { crop: picker.fitCrop(reply.crop ? picker.unscaleBox(reply.crop, scale, width, height) : null, cell, width, height) }
+    : {});
+  if (reply.none) return { status: 'none', why: reply.why, ...cropOf(null) };
   const extra = reply.box ? picker.unscaleBox(reply.box, scale, width, height) : null;
   if (!reply.ids.length) {
     if (!extra) return { status: 'failed', error: `box 座標不合理：${JSON.stringify(reply.box)}` };
-    return { status: 'picked', source: 'claude-box', cell: extra, ids: [], text: '', why: reply.why, verify: 'none' };
+    return { status: 'picked', source: 'claude-box', cell: extra, ids: [], text: '', why: reply.why, verify: 'none', ...cropOf(extra) };
   }
   const ids = picker.expandChange(reply.ids, cands);
   const boxes = ids.map((id) => cands.words.get(id));
   const text = boxes.map((b) => b.t.trim()).join(' ');
   const ocrCell = picker.unionBox(boxes, PAD, width, height);
+  const cell = extra ? picker.unionBox([ocrCell, extra], 0, width, height) : ocrCell;
   return {
+    ...cropOf(cell),
     status: 'picked',
     // ocr＝全部從編號挑；ocr+box＝編號挑到的再加上 Claude 補的座標（OCR 只讀到一部分）
     source: extra ? 'ocr+box' : 'ocr',
-    cell: extra ? picker.unionBox([ocrCell, extra], 0, width, height) : ocrCell,
+    cell,
     ids,
     added: ids.filter((id) => !reply.ids.includes(id)),
     text,
@@ -77,4 +83,30 @@ function pick({ imagePath, words, width, height, phrase, page }) {
   };
 }
 
-module.exports = { pick, enabled, ENGINE };
+/**
+ * Claude 排配圖第一步（2026-11-12）：所有截圖＋子句清單 → 哪張圖配哪幾句、小標題。
+ *   images [{ file, path, width, height, words }]；units 來自 auto-shot --sentences
+ *   → { status: 'planned', segments } | { status: 'failed', error } | { status: 'off' }
+ * 跟 pick() 同一個開關（CELL_PICKER=off 就不呼叫）。
+ */
+function planAssignments({ units, images }) {
+  if (!enabled()) return { status: 'off' };
+  if (ENGINE !== 'claude-cli') return { status: 'failed', error: `不認得的 CELL_PICKER：${ENGINE}` };
+  if (!images.length) return { status: 'failed', error: '沒有截圖' };
+  if (!units.length) return { status: 'failed', error: '稿件沒有子句' };
+  const planner = require('./shot-planner');
+  const listed = images.map((im, k) => ({ file: im.file, label: `圖${k + 1}（${im.file}）`, ocr: planner.ocrSummary(im.words) }));
+  const prompt = planner.buildPrompt({ units, images: listed });
+  const r = runClaude({
+    prompt,
+    system: planner.SYSTEM_PROMPT,
+    images: images.map((im) => ({ path: im.path, width: im.width, height: im.height })),
+    timeoutMs: 240000,
+  });
+  if (!r.ok) return { status: 'failed', error: r.error };
+  const segments = planner.parseReply(r.text, { units, files: images.map((im) => im.file) });
+  if (!segments) return { status: 'failed', error: `回覆不是預期的 JSON：${r.text.slice(0, 200)}` };
+  return { status: 'planned', segments };
+}
+
+module.exports = { pick, planAssignments, enabled, ENGINE };

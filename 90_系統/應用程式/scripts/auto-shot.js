@@ -63,6 +63,12 @@ const imagesArg = process.argv.find((a) => a.startsWith('--images='));
 const IMAGES_PATH = imagesArg
   ? cliPath(ROOT, imagesArg.slice('--images='.length))
   : path.join(ROOT, 'src', 'app-images.generated.json');
+// --annots-file=路徑：標注改讀這一份（2026-11-12 Claude 排配圖：run.js 指向 public/claude-annotations.json，
+// 格式跟標注頁的 annotations.json 一樣，多帶卡片小標題 title）。沒給就照舊讀 public/annotations.json。
+const annotsArg = process.argv.find((a) => a.startsWith('--annots-file='));
+const ANNOTS_PATH = annotsArg
+  ? cliPath(ROOT, annotsArg.slice('--annots-file='.length))
+  : path.join(ROOT, 'public', 'annotations.json');
 // --suggest-cells=路徑：只回答「這張圖、這一句，系統會框哪裡」，不排計畫也不寫計畫檔。
 // ⚠️ 規則庫（app-locators.json）／股名表／記憶庫**刻意還是讀 ROOT 的**：那是全域知識，
 //    而且記憶庫要讀「還沒學這一支」的版本 —— server/index.js 的 recordCorrections()
@@ -788,7 +794,7 @@ if (SUGGEST_PATH) {
 // 跟腳本裡手寫的 (shot:) 標記走同一條路：被標到的句子，自動判定完全不碰。
 // 差別是標注頁還帶了「框在哪」與「要不要滑動」，手寫標記做不到這兩件事。
 {
-  const AP = path.join(ROOT, 'public', 'annotations.json');
+  const AP = ANNOTS_PATH;
   if (NO_ANNOTS && fs.existsSync(AP)) console.log('\n🔬 --no-annots：這一輪刻意忽略手動標注（對照組）\n');
   if (!NO_ANNOTS && fs.existsSync(AP)) {
     let ann = [];
@@ -832,6 +838,7 @@ if (SUGGEST_PATH) {
           ...(hasRegion0 ? { region: a.region } : {}),
           ...(arrowOf(a) ? { arrow: arrowOf(a) } : {}),
           ...(!hasCell0 && !hasRegion0 ? { wholePage: true } : {}),
+          ...(typeof a.title === 'string' && a.title.trim() ? { title: a.title.trim() } : {}),
         });
         continue;
       }

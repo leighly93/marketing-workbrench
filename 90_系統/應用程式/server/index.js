@@ -854,7 +854,17 @@ function carryPlanEditsAsAnnots(src, annShots) {
  *
  * ⚠️ 被同事**刪掉**的段落不要復活 —— 同一張圖、範圍重疊而且 deleted 的，視為刻意移除。
  */
+/**
+ * 這支的配圖計畫是不是 Claude 排的（2026-11-12）。run.js 排成功才會留下 public/claude-annotations.json，
+ * 製作快照一起帶著。是的話人工標注不參與這支：不補回、也不跑 Claude 旁觀比對（等於拿 Claude 比 Claude）。
+ */
+function planByClaude(job) {
+  try { return fs.existsSync(jobPath(job.id, 'state', 'public', 'claude-annotations.json')); } catch (_) { return false; }
+}
+
 function appendMissingAnnots(job, edits) {
+  // 使用者定案「先不管人工的設定」：計畫是 Claude 排的，就不把標注頁的段落補回去
+  if (planByClaude(job)) return edits;
   let ann = [];
   try {
     ann = JSON.parse(fs.readFileSync(
@@ -1544,6 +1554,7 @@ function finalSegmentsOf(job, edits) {
 function startClaudeCells(job, edits) {
   try {
     if (String(process.env.CELL_PICKER || '').toLowerCase() === 'off') return;
+    if (planByClaude(job)) return;   // 計畫本來就是 Claude 排的，沒有東西可比
     const items = finalSegmentsOf(job, edits);
     if (!items.length) return;
     const inF = jobPath(job.id, 'claude-cells-in.json');

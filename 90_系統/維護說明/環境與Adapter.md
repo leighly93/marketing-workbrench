@@ -92,7 +92,8 @@ whisper 分 30 秒 window 解碼，會在某些切點把一句話的結束時間
 
 入口：[cell-picker-engine.js](../應用程式/scripts/cell-picker-engine.js)，附圖片的 `claude -p` 呼叫集中在 [claude-cli.js](../應用程式/scripts/claude-cli.js)（stream-json 送 image block；純文字的動態卡片仍走 `motion-engine.js` 自己那份）。
 
-- `CELL_PICKER` 切換：`claude-cli`（預設，訂閱、同一個 `CLAUDE_CODE_OAUTH_TOKEN`）／`off`（不呼叫，伺服器也不啟動比對）。
+- `CELL_PICKER` 切換：`claude-cli`（預設，訂閱、同一個 `CLAUDE_CODE_OAUTH_TOKEN`）／`off`（不呼叫：伺服器不啟動比對，大盤小報也不讓 Claude 排配圖）。
+- 2026-11-12 起同一個引擎多了 `planAssignments()`：一次附所有截圖＋子句清單，回「哪張圖配哪幾句、小標題」，大盤小報的配圖計畫由它排（見 OCR與配圖設定）。
 - 輸入：截圖（長邊縮到 1568）＋ OCR 詞框清單（W 編號、按列分 R 編號）＋旁白。輸出：Claude 只回編號，框＝詞框聯集外擴 12px；**不讓 Claude 報座標**。另外記一欄數字驗算（框裡的數字有沒有出現在旁白）。
 - 限制：OCR 沒讀到的圖表、色塊框不到；模型是訂閱帳號的預設模型，跟著 Claude Code 版本走。每段一次呼叫，約 15～40 秒。
 - 失敗（沒裝、沒登入、逾時、回覆格式不對）只寫 log，不影響出片。細節與比對資料見 [OCR與配圖設定](OCR與配圖設定.md)。
