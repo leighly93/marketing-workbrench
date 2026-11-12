@@ -97,7 +97,7 @@ export type MiddayShot = {
   imageHeight?: number | null;
 };
 
-export const MIDDAY_SHOTS: MiddayShot[] = (generatedShots as GeneratedShot[])
+export const MIDDAY_SHOTS: MiddayShot[] = (generatedShots as unknown as GeneratedShot[])
   .flatMap((g) => {
     const t = resolveByCharIdx(g.startCharIdx, g.endCharIdx);
     if (!t) return [];
@@ -123,7 +123,7 @@ export const MIDDAY_SHOTS: MiddayShot[] = (generatedShots as GeneratedShot[])
 if (typeof window !== 'undefined') {
   // eslint-disable-next-line no-console
   console.log(
-    `[midday-timeline] ${(generatedShots as GeneratedShot[]).length} 個截圖標記 → 命中 ${MIDDAY_SHOTS.length} 個`,
+    `[midday-timeline] ${(generatedShots as unknown as GeneratedShot[]).length} 個截圖標記 → 命中 ${MIDDAY_SHOTS.length} 個`,
     MIDDAY_SHOTS
   );
 }

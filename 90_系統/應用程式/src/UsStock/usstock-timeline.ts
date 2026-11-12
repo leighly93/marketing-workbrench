@@ -97,7 +97,7 @@ export type UsStockShot = {
   imageHeight?: number | null;
 };
 
-export const USSTOCK_SHOTS: UsStockShot[] = (generatedShots as GeneratedShot[])
+export const USSTOCK_SHOTS: UsStockShot[] = (generatedShots as unknown as GeneratedShot[])
   .flatMap((g) => {
     const t = resolveByCharIdx(g.startCharIdx, g.endCharIdx);
     if (!t) return [];
@@ -123,7 +123,7 @@ export const USSTOCK_SHOTS: UsStockShot[] = (generatedShots as GeneratedShot[])
 if (typeof window !== 'undefined') {
   // eslint-disable-next-line no-console
   console.log(
-    `[usstock-timeline] ${(generatedShots as GeneratedShot[]).length} 個截圖標記 → 命中 ${USSTOCK_SHOTS.length} 個`,
+    `[usstock-timeline] ${(generatedShots as unknown as GeneratedShot[]).length} 個截圖標記 → 命中 ${USSTOCK_SHOTS.length} 個`,
     USSTOCK_SHOTS
   );
 }

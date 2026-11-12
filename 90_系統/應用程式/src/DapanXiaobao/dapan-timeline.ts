@@ -103,7 +103,7 @@ export type DapanShot = {
   imageHeight?: number | null;
 };
 
-export const DAPAN_SHOTS: DapanShot[] = (generatedShots as GeneratedShot[])
+export const DAPAN_SHOTS: DapanShot[] = (generatedShots as unknown as GeneratedShot[])
   .flatMap((g) => {
     const t = resolveByCharIdx(g.startCharIdx, g.endCharIdx);
     if (!t) return [];
@@ -131,7 +131,7 @@ export const DAPAN_SHOTS: DapanShot[] = (generatedShots as GeneratedShot[])
 if (typeof window !== 'undefined') {
   // eslint-disable-next-line no-console
   console.log(
-    `[dapan-timeline] ${(generatedShots as GeneratedShot[]).length} 個截圖標記 → 命中 ${DAPAN_SHOTS.length} 個`,
+    `[dapan-timeline] ${(generatedShots as unknown as GeneratedShot[]).length} 個截圖標記 → 命中 ${DAPAN_SHOTS.length} 個`,
     DAPAN_SHOTS
   );
 }

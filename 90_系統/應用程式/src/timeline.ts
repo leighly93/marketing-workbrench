@@ -117,7 +117,7 @@ type AnchorResolution = {
   endSec?: number;
 };
 
-const RESOLVED: AnchorResolution[] = (generatedOverlays as GeneratedOverlay[]).map((cfg) => {
+const RESOLVED: AnchorResolution[] = (generatedOverlays as unknown as GeneratedOverlay[]).map((cfg) => {
   const t = resolveByCharIdx(cfg.startCharIdx, cfg.endCharIdx);
   if (!t) return { cfg, status: 'unresolved' };
   return { cfg, status: 'matched', startSec: t.start, endSec: t.end };
@@ -175,7 +175,7 @@ type GeneratedTextCard = {
   _phrase?: string;
 };
 
-export const TEXT_CARDS: TextCardItem[] = (generatedTextCards as GeneratedTextCard[]).flatMap(
+export const TEXT_CARDS: TextCardItem[] = (generatedTextCards as unknown as GeneratedTextCard[]).flatMap(
   (g) => {
     const t = resolveByCharIdx(g.startCharIdx, g.endCharIdx);
     if (!t) return [];

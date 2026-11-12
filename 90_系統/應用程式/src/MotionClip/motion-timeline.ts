@@ -44,8 +44,12 @@ const HEYGEN_END_SEC: number =
   Number((videoMeta as { heygenDurationSec?: number }).heygenDurationSec) || 0;
 
 type GeneratedMotion = {
-  /** 直式那支的檔名（相對於 public/） */
-  src: string;
+  /**
+   * 直式那支的檔名（相對於 public/）。大盤小報 2026-10-22 起只出橫式，那時就沒有這欄。
+   * ⚠️ 一定要是選填：2026-11-12 Mac mini 的「更新工作台」因為這欄寫成必填，
+   *    拿只有橫式的 motion.generated.json 跑型別檢查失敗、整個更新被退回。
+   */
+  src?: string;
   /** 橫式那支的檔名。只出直式的版型不會有這欄。 */
   srcLandscape?: string;
   startCharIdx: number;
@@ -60,7 +64,8 @@ type GeneratedMotion = {
 };
 
 export type MotionRun = {
-  src: string;
+  /** 直式檔；只出橫式時沒有（MotionOverlay 會跳過沒有對應檔的版本） */
+  src?: string;
   srcLandscape?: string;
   startSec: number;
   endSec: number;
@@ -74,7 +79,9 @@ export type MotionRun = {
  * 解不出時間的段落直接丟掉（跟配圖同一個規則）——
  * 寧可這支沒有動態，也不要用錯的時間貼上去蓋住講者。
  */
-export const MOTION_RUNS: MotionRun[] = (generatedMotion as GeneratedMotion[])
+// 先轉 unknown：這份 JSON 是每支工作重新產生的資料（git 不收），型別檢查不該因為
+// 某一支的欄位組合不同就失敗 —— 欄位有沒有，由上面的型別與 MotionOverlay 的跳過處理。
+export const MOTION_RUNS: MotionRun[] = (generatedMotion as unknown as GeneratedMotion[])
   .flatMap((g) => {
     const t = resolveByCharIdx(g.startCharIdx, g.endCharIdx);
     if (!t) return [];
