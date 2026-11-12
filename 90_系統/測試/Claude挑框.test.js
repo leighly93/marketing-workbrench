@@ -10,6 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { applicationPath } = require('../paths');
+const { fixture, loadServer } = require('./隔離服務');
 
 const ROOT = path.resolve(__dirname, '../..');
 const APP = applicationPath(ROOT);
@@ -190,4 +191,25 @@ test('沒裝 claude、或開關關著：不丟例外，照實記錄', (t) => {
 
 test('摘要：沒有段落時也有一句話', () => {
   assert.equal(summary([]), 'Claude 框選對照：沒有可比對的段落');
+});
+
+test('伺服器：最後要比對的段落同一段只出現一次，人工改過的版本優先', (t) => {
+  const api = loadServer(fixture(t));
+  const job = { planView: {
+    chars: [...'今天台股漲了一千點聯發科大漲'].map((c) => ({ c })),
+    rows: [
+      { src: 'shot1.png', startCharIdx: 0, endCharIdx: 5, cell: { x: 1, y: 1, w: 9, h: 9 }, imageWidth: 100, imageHeight: 200 },
+      { src: 'shot2.png', startCharIdx: 9, endCharIdx: 13, cell: null, imageWidth: 100, imageHeight: 200 },
+    ],
+  } };
+  const segs = JSON.parse(JSON.stringify(api.finalSegmentsOf(job, [
+    { i: 0, src: 'shot1.png', startCharIdx: 0, endCharIdx: 5, cell: { x: 5, y: 5, w: 20, h: 20 } },
+    // appendMissingAnnots 補回來的同一段（edits 沒帶齊時會發生）
+    { i: 'ann0', _added: true, src: 'shot1.png', startCharIdx: 0, endCharIdx: 5, cell: { x: 1, y: 1, w: 9, h: 9 } },
+    { i: 'ann1', _added: true, src: 'shot2.png', startCharIdx: 9, endCharIdx: 13, cell: null },
+  ])));
+  assert.equal(segs.length, 2);
+  assert.deepEqual(segs[0].cell, { x: 5, y: 5, w: 20, h: 20 });
+  assert.equal(segs[0].phrase, '今天台股漲了');
+  assert.equal(segs[1].src, 'shot2.png');
 });

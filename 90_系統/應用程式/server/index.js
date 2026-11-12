@@ -1523,7 +1523,16 @@ function finalSegmentsOf(job, edits) {
       phrase: textOf(b.startCharIdx, b.endCharIdx) || b.phrase || '', cell: b.cell || null,
       region: b.region || null, imgW: b.imageWidth, imgH: b.imageHeight });
   });
-  return out.filter((r) => r.src && r.startCharIdx != null && r.endCharIdx != null);
+  // 同一段只比一次：/approve 的 appendMissingAnnots 在 edits 沒帶齊時會把標注補成 _added，
+  // 跟計畫列重複（2026-11-12 用 API 空清單核可時，5 段變成 10 段、命中數也算兩次）。先到先贏 → 人工改過的版本優先。
+  const seen = new Set();
+  return out.filter((r) => {
+    if (!r.src || r.startCharIdx == null || r.endCharIdx == null) return false;
+    const k = `${r.src}@${Math.min(r.startCharIdx, r.endCharIdx)}~${Math.max(r.startCharIdx, r.endCharIdx)}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 /**
