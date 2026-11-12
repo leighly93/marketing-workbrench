@@ -1726,7 +1726,14 @@ function renderMotionClips() {
   } catch (e) { /* 清不掉不是致命的，下面照跑 */ }
 
   try {
-    run(`npm run render-motion -- --template=${TEMPLATE}`);
+    // Claude 排了動態（大盤小報，2026-11-12）就用它的位置，人工設的動態這支不用
+    const claudeMotion = resolve(PROJECT_DIR, "public/claude-motion.json");
+    if (TEMPLATE === "dapan" && existsSync(claudeMotion)) {
+      log("🤖 動態小影片用 Claude 排的位置（public/claude-motion.json）");
+      run(`npm run render-motion -- --template=${TEMPLATE} --input=public/claude-motion.json`);
+    } else {
+      run(`npm run render-motion -- --template=${TEMPLATE}`);
+    }
   } catch (e) {
     log("⚠️ 動態小影片生成失敗（不影響出片，只是這支沒有動態）：" + e.message);
     try {

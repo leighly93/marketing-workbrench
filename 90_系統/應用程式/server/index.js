@@ -862,6 +862,19 @@ function planByClaude(job) {
   try { return fs.existsSync(jobPath(job.id, 'state', 'public', 'claude-annotations.json')); } catch (_) { return false; }
 }
 
+/**
+ * 出片要用哪一份動態設定：Claude 排的計畫有動態（state/public/claude-motion.json）就用它，
+ * 否則用前台設的（input/motion.json）。2026-11-12 使用者：動態也交給 Claude 決定，開頭結尾各一段。
+ */
+function motionEntriesFor(job) {
+  if (planByClaude(job)) {
+    try {
+      return normalizeMotion(JSON.parse(fs.readFileSync(jobPath(job.id, 'state', 'public', 'claude-motion.json'), 'utf-8')));
+    } catch (_) { /* 這支 Claude 沒排動態 → 用前台設的 */ }
+  }
+  return readJobMotion(job);
+}
+
 function appendMissingAnnots(job, edits) {
   // 使用者定案「先不管人工的設定」：計畫是 Claude 排的，就不把標注頁的段落補回去
   if (planByClaude(job)) return edits;
@@ -2183,7 +2196,7 @@ async function doRender(job) {
   try {
     const mf = path.join(ROOT, 'public', 'motion.json');
     const { keep: motion, dropped } =
-      motionClearOfShots(readJobMotion(job), planItemsOf(ROOT, job.template).items);
+      motionClearOfShots(motionEntriesFor(job), planItemsOf(ROOT, job.template).items);
     for (const m of dropped) {
       appendLog(job, `\n⏭  動態（第 ${m.startCharIdx}–${m.endCharIdx} 字）跟 APP 配圖重疊，APP 優先，這段不做動態\n`);
     }

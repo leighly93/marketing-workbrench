@@ -233,6 +233,55 @@ function fitCrop(crop, cell, width, height, pad = 24) {
   return { x, y, w: Math.min(width - x, Math.round(c.w + (c.x - x))), h: Math.min(height - y, Math.round(c.h + (c.y - y))) };
 }
 
+/**
+ * 卡片版（2026-11-12 使用者定案，之後固定這樣呈現）：一段配一張卡片，卡片裁切整段共用，
+ * **金框跟著每一句往下移**（「聯發科大漲」框聯發科、下一句「台達電漲停」框台達電）。
+ * 一次問完整段：crop ＋ 每一句（U 編號）各自框哪裡。
+ * @param steps [{ id: 'U12', text: '聯發科大漲9.88%' }]
+ */
+function buildCardPrompt({ steps, page, listing, width, height }) {
+  return [
+    '這是一張 APP 截圖。影片會把講到的那一塊 UI 裁出來做成一張卡片，旁白一句一句講，金框跟著每一句移到它講的地方。',
+    '',
+    '這段旁白（依序）：',
+    steps.map((s) => `${s.id}：${s.text}`).join('\n'),
+    page && page !== 'unknown' ? `系統判斷的頁面類型：${page}` : '',
+    `圖片尺寸：${width}×${height}（下面的座標與你回的 crop／box 都用這個尺寸，左上角是原點）`,
+    '',
+    'OCR 讀到的文字（W 是詞框編號、x 是左緣位置；同一列的字排在同一行，R 是列編號）：',
+    listing || '（OCR 沒讀到任何字）',
+    '',
+    '卡片（crop: [x, y, w, h]）：',
+    '- 只裁這段講到的那一塊 UI（完整的小卡、表頭加相關的幾列、股價區），要包含每一句要框的地方，留一點邊、不要切到字；不要整張截圖（除非整張就是那一塊）。',
+    '- 講大盤指數（加權指數、櫃買指數的點數與漲跌）時，**上方的走勢圖（K 線／分時圖）也要一起包進去**，畫面比較好看。',
+    '',
+    '每一句的金框（steps，每個 U 一筆，照順序）：',
+    '- 個股漲跌只框漲跌幅那個數字（例「▲335 (9.88%)」），不框股名、不框整列。',
+    '- 大盤指數在總覽頁框整張指數小卡；在大盤自己的報價頁只框漲跌那一行。單一數字只框數字。',
+    '- 這一句講的是下一檔／下一個項目，框就移到那一項（例：「台達電漲停」框台達電的漲跌幅）。',
+    '- 這一句只是點名、或圖上沒有對應的東西 → none: true。',
+    '- 優先從編號挑（words／rows）；OCR 沒讀到的部分才用 box: [x, y, w, h] 補，兩者會合併。',
+    '',
+    '只輸出 JSON：{"crop":[0,120,1206,300],"steps":[{"unit":"U12","words":["W7"],"rows":[],"box":null,"none":false}],"why":"一句話"}',
+  ].filter((x) => x !== '').join('\n');
+}
+
+/** 解析卡片版回覆：{ crop, steps: Map(U編號 → { ids, box, none }) , why }；格式不對回 null */
+function parseCardReply(text, cands, stepIds) {
+  const o = lastJsonObject(text);
+  if (!o) return null;
+  const c = Array.isArray(o.crop) ? o.crop.map(Number) : null;
+  const crop = c && c.length === 4 && c.every(Number.isFinite) && c[2] > 0 && c[3] > 0
+    ? { x: c[0], y: c[1], w: c[2], h: c[3] } : null;
+  const steps = new Map();
+  for (const st of Array.isArray(o.steps) ? o.steps : []) {
+    if (!st || !stepIds.includes(String(st.unit))) continue;
+    const one = parseReply(JSON.stringify({ ...st, crop: undefined }), cands);
+    if (one) steps.set(String(st.unit), one);
+  }
+  return { crop, steps, why: typeof o.why === 'string' ? o.why.trim().slice(0, 200) : '' };
+}
+
 /** 挑中的詞框聯集，外擴 pad px，夾在圖內。 */
 function unionBox(boxes, pad, width, height) {
   if (!boxes.length) return null;
@@ -278,5 +327,5 @@ function iou(a, b) {
 
 module.exports = {
   lastJsonObject,
-  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, expandChange, fitCrop, unscaleBox, unionBox, numbersIn, numberCheck, iou,
+  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, buildCardPrompt, parseCardReply, expandChange, fitCrop, unscaleBox, unionBox, numbersIn, numberCheck, iou,
 };

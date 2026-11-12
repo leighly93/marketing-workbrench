@@ -21,6 +21,7 @@ import type { DapanShot } from './dapan-timeline';
  *   - 小標題：卡片上方，白色極粗黑體 60px，只加柔和陰影、不要底
  *   - 重點：金色發光圓角框（cell），框外不壓暗，0.22 秒淡入
  *   - 進場：第一張從 0.9 倍彈到 1 倍並淡入，接一道斜向反光掃過；同一段換下一張用左右輪播（0.32 秒）
+ *   - 同一張卡講好幾項時（2026-11-12 使用者定案）：卡片不換，金框跟著旁白**移到**下一項（0.25 秒滑過去）
  *   - 不晃、不推近；字幕照常（SerifSubtitles 已經每句墊黑底）
  * 卡片要裁哪裡、框哪裡、小標題寫什麼都是 Claude 排的（scripts/claude-shot-plan.js）。
  */
@@ -39,12 +40,15 @@ const T_SWAP = Math.round(0.32 * VIDEO_FPS);
 const T_FADE = Math.round(0.25 * VIDEO_FPS);
 const GOLD = 'rgb(255, 206, 80)';
 
+/** 金框的一個位置：從 startSec 起框 cell（沒有 cell＝這句不框） */
+type Step = { startSec: number; cell?: ShotBox };
+
 type Card = {
   src: string;
   startSec: number;
   endSec: number;
   crop: ShotBox | null;
-  cell?: ShotBox;
+  steps: Step[];
   title?: string;
   imgW?: number | null;
   imgH?: number | null;
@@ -61,13 +65,27 @@ export function buildCardBlocks(shots: DapanShot[]): Block[] {
       startSec: s.startSec,
       endSec: s.endSec,
       crop: s.region ?? null,
-      cell: s.cell,
+      steps: [{ startSec: s.startSec, cell: s.cell }],
       title: s.title,
       imgW: s.imageWidth,
       imgH: s.imageHeight,
     }));
-  const blocks: Block[] = [];
+  // 同一張圖、同一個裁切、前後相接 → 同一張卡，只是金框換位置（Claude 排配圖一句一筆）
+  const sameCard = (a: Card, b: Card) => a.src === b.src
+    && JSON.stringify(a.crop) === JSON.stringify(b.crop) && b.startSec - a.endSec <= JOIN_GAP_SEC;
+  const merged: Card[] = [];
   for (const c of cards) {
+    const prev = merged[merged.length - 1];
+    if (prev && sameCard(prev, c)) {
+      prev.steps.push(...c.steps);
+      prev.endSec = Math.max(prev.endSec, c.endSec);
+      if (!prev.title && c.title) prev.title = c.title;
+    } else {
+      merged.push(c);
+    }
+  }
+  const blocks: Block[] = [];
+  for (const c of merged) {
     const last = blocks[blocks.length - 1];
     if (last && c.startSec - last.endSec <= JOIN_GAP_SEC) {
       const prev = last.cards[last.cards.length - 1];
@@ -156,6 +174,58 @@ const Background: React.FC<{ dur: number }> = ({ dur }) => {
   );
 };
 
+/** 金框：跟著 steps 走，換句時從上一個位置滑到下一個（0.25 秒）；沒框的句子淡出 */
+const MovingGlow: React.FC<{ steps: Step[]; cardStartSec: number; crop: ShotBox; s: number; w: number; h: number }> = ({
+  steps, cardStartSec, crop, s, w, h,
+}) => {
+  const f = useCurrentFrame();
+  const pad = 8;
+  const rectOf = (c?: ShotBox) => (c ? {
+    left: Math.max(0, (c.x - crop.x) * s - pad),
+    top: Math.max(0, (c.y - crop.y) * s - pad),
+    width: Math.min(w, c.w * s + pad * 2),
+    height: Math.min(h, c.h * s + pad * 2),
+  } : null);
+  const T_MOVE = Math.round(0.25 * VIDEO_FPS);
+  const at = (k: number) => secToFrame(steps[k].startSec) - secToFrame(cardStartSec);
+  let k = 0;
+  while (k + 1 < steps.length && f >= at(k + 1)) k++;
+  const cur = rectOf(steps[k].cell);
+  const prev = k > 0 ? rectOf(steps[k - 1].cell) : null;
+  const local = f - (k === 0 ? 5 : at(k));
+  const p = interpolate(local, [0, k === 0 ? Math.round(0.22 * VIDEO_FPS) : T_MOVE], [0, 1], {
+    extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.cubic),
+  });
+  let rect = cur;
+  let opacity = 1;
+  if (cur && prev) {
+    rect = {
+      left: prev.left + (cur.left - prev.left) * p,
+      top: prev.top + (cur.top - prev.top) * p,
+      width: prev.width + (cur.width - prev.width) * p,
+      height: prev.height + (cur.height - prev.height) * p,
+    };
+  } else if (cur) {
+    opacity = p;                         // 第一個框、或上一句沒框 → 淡入
+  } else if (prev) {
+    rect = prev; opacity = 1 - p;        // 這句不框 → 上一個框淡出
+  }
+  if (!rect || opacity <= 0) return null;
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        ...rect,
+        borderRadius: 12,
+        border: `5px solid ${GOLD}`,
+        backgroundColor: 'rgba(255,206,80,0.08)',
+        boxShadow: '0 0 14px 3px rgba(255,206,80,0.75), inset 0 0 12px rgba(255,206,80,0.3)',
+        opacity,
+      }}
+    />
+  );
+};
+
 const CardView: React.FC<{ card: Card; enterAt: number; first: boolean; exitAt: number | null }> = ({
   card,
   enterAt,
@@ -182,22 +252,8 @@ const CardView: React.FC<{ card: Card; enterAt: number; first: boolean; exitAt: 
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
-  const glow = interpolate(local, [5, 5 + Math.round(0.22 * VIDEO_FPS)], [0, 1], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-  });
   const top = CARD_TOP + Math.round((CARD_BOTTOM - CARD_TOP - h) / 2);
   const left = Math.round((ZONE_W - w) / 2);
-  const pad = 8;
-  const cell =
-    crop && card.cell
-      ? {
-          left: Math.max(0, (card.cell.x - crop.x) * s - pad),
-          top: Math.max(0, (card.cell.y - crop.y) * s - pad),
-          width: Math.min(w, card.cell.w * s + pad * 2),
-          height: Math.min(h, card.cell.h * s + pad * 2),
-        }
-      : null;
 
   return (
     <AbsoluteFill style={{ width: ZONE_W, opacity, transform: `translateX(${enterX + exitX}px)` }}>
@@ -251,19 +307,7 @@ const CardView: React.FC<{ card: Card; enterAt: number; first: boolean; exitAt: 
         ) : (
           <Img src={staticFile(card.src)} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         )}
-        {cell ? (
-          <div
-            style={{
-              position: 'absolute',
-              ...cell,
-              borderRadius: 12,
-              border: `5px solid ${GOLD}`,
-              backgroundColor: 'rgba(255,206,80,0.08)',
-              boxShadow: '0 0 14px 3px rgba(255,206,80,0.75), inset 0 0 12px rgba(255,206,80,0.3)',
-              opacity: glow,
-            }}
-          />
-        ) : null}
+        {crop ? <MovingGlow steps={card.steps} cardStartSec={card.startSec} crop={crop} s={s} w={w} h={h} /> : null}
         <div
           style={{
             position: 'absolute',

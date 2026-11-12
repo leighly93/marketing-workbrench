@@ -29,12 +29,13 @@ OCR 共用入口為 [ocr-engine.js](../應用程式/scripts/ocr-engine.js)，供
 使用者定案：「連圖片辨識都由 Claude 來，APP 截圖都像 skill 那樣呈現，先不管人工的設定了」；出片前仍停在配圖計畫頁確認。
 
 - **時機**：`run.js` 在截圖 OCR 跑完後背景執行 [claude-shot-plan.js](../應用程式/scripts/claude-shot-plan.js)，跟 HeyGen 平行；轉完字幕、排配圖計畫前才等它。
-- **第一步**（`planAssignments`，[shot-planner.js](../應用程式/scripts/shot-planner.js)）：所有截圖＋子句清單（`auto-shot --sentences` 的 units）一次問 → 哪張圖配哪幾個子句（1～3 句、不重疊）、卡片小標題。已經設了動態小影片（`public/motion.json`）的子句先拿掉，不然配了也被動態蓋住。
-- **第二步**（每段 `pick({ withCrop })`）：卡片要裁哪一塊（`region`，一定包住金框，講到好幾項就全包）、金框框哪裡（`cell`）。
+- **第一步**（`planAssignments`，[shot-planner.js](../應用程式/scripts/shot-planner.js)）：所有截圖＋子句清單（`auto-shot --sentences` 的 units）一次問 → 哪張圖配哪幾個子句（1～4 句、不重疊）、卡片小標題，**以及動態小影片放哪**。同一張圖連續講好幾項要合成一段（Claude 沒合的話程式自己併，`mergeSameImage`）。
+- **動態（2026-11-12 使用者定案）**：整支剛好 2 段，開頭一段（前 25% 的子句）、結尾總結一段（後 25%），不跟截圖段重疊，不會有第 3 段（`parseMotions` 會擋）。寫在 `public/claude-motion.json`，`run.js` 用 `render-motion --input=` 產生；出片時伺服器 `motionEntriesFor()` 也用這份，前台設的動態這支不用。Claude 沒排出動態才退回前台設的。
+- **第二步**（每段 `pickCard`）：卡片要裁哪一塊（`region`，整段共用、包住每一句的框；講大盤指數時連上方走勢圖一起包），以及**每一句**的金框。一段因此寫成好幾筆標注（同一張圖、同一個 region、各自的 `cell` 與字元範圍），渲染時合成同一張卡片、金框跟著旁白滑到下一項。
 - **結果**：`public/claude-annotations.json`（跟標注頁同格式，多 `title` 與 `_claude` 說明），`auto-shot:dapan -- --annots-file=…` 吃它；配圖計畫頁照樣看得到、改得動。檔案跟著製作快照，伺服器用它判斷「這支是 Claude 排的」：核可時**不補回標注頁的段落**、也不跑下面的旁觀比對。
-- **退路**：關掉（`CELL_PICKER=off`）、失敗、或 Claude 判斷沒有句子適合配圖 → 不留檔，照舊吃人工標注。每次開跑先刪掉上一支留下的檔。
-- **呈現**：橫式截圖段改成浮動卡片（[AppCardShots.tsx](../應用程式/src/DapanXiaobao/AppCardShots.tsx)）—— 模糊暖色背景、白色小標題、只放裁出來的那塊、金色發光框、同一段換圖左右輪播；舊的整張捲動版留在 `shotStyle: 'focus'`。
-- 2026-11-12 拿「暴漲近2,000點」實測：第一步＋第二步共約 23 秒，排出 4 段，跟人工標的段落大致相同。
+- **退路**：關掉（`CELL_PICKER=off`）、失敗、或 Claude 判斷沒有句子適合配圖 → 不留檔，照舊吃人工標注與前台設的動態。每次開跑先刪掉上一支留下的兩個檔。
+- **呈現**：橫式截圖段改成浮動卡片（[AppCardShots.tsx](../應用程式/src/DapanXiaobao/AppCardShots.tsx)）—— 模糊暖色背景、白色小標題、只放裁出來的那塊、金色發光框（同一張卡講好幾項時滑到下一項）、同一段換圖左右輪播；舊的整張捲動版留在 `shotStyle: 'focus'`。
+- 2026-11-12 拿「暴漲近2,000點」實測：約 21 秒排出 4 張卡片（加權指數含走勢圖、電子股一張卡金框依序框聯發科→台達電→日月光）、動態在第 30–66 字（開頭）與 529–566 字（結尾總結）。
 
 ## Claude 挑框旁觀模式（2026-11-11）
 

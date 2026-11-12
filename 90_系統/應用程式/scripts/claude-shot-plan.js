@@ -6,13 +6,15 @@
  *
  * 使用者定案：「連圖片辨識都由 Claude 來，APP 截圖都像 skill 那樣呈現，先不管人工的設定了」，
  * 出片前仍停在配圖計畫頁讓人看。流程：
- *   ① planAssignments：所有截圖＋子句清單一次問 → 哪張圖配哪幾句、卡片小標題
- *   ② 每段 pick({ withCrop })：要裁哪一塊做卡片（region）、金框框哪裡（cell）
+ *   ① planAssignments：所有截圖＋子句清單一次問 → 哪張圖配哪幾句、卡片小標題、動態小影片放哪（開頭＋結尾各一段）
+ *   ② 每段 pickCard：卡片要裁哪一塊（region，整段共用），每一句的金框（cell）—— 金框跟著旁白往下移，
+ *      所以一段會寫成好幾筆標注：同一張圖、同一個 region、各自的 cell 與字元範圍
+ * 動態寫在 public/claude-motion.json（render-motion 的輸入格式）；人工設的動態這支不用。
  * run.js 在 OCR 跑完後背景執行這支（跟 HeyGen 平行），auto-shot 用 --annots-file 吃它的結果；
  * 這支失敗或沒排出任何一段 → 不寫檔，auto-shot 照舊吃人工標注。
  *
  * 用法：node scripts/claude-shot-plan.js [--script=public/script.txt] [--images=src/app-images.generated.json]
- *        [--public=public] [--motion=public/motion.json] [--out=public/claude-annotations.json]
+ *        [--public=public] [--out=public/claude-annotations.json] [--motion-out=public/claude-motion.json]
  */
 
 const fs = require('node:fs');
@@ -35,6 +37,7 @@ const SCRIPT = arg('script', 'public/script.txt');
 const IMAGES = arg('images', 'src/app-images.generated.json');
 const PUBLIC = arg('public', 'public');
 const OUT = arg('out', 'public/claude-annotations.json');
+const MOTION_OUT = arg('motion-out', 'public/claude-motion.json');
 
 function done(msg, code = 0) {
   console.log(msg);
@@ -44,6 +47,7 @@ function done(msg, code = 0) {
 function main() {
   // 上一支留下的結果一定先清掉：沒排出來的時候，auto-shot 不能吃到別支的配圖
   try { fs.unlinkSync(OUT); } catch (_) {}
+  try { fs.unlinkSync(MOTION_OUT); } catch (_) {}
   if (!engine.enabled()) done('Claude 排配圖：已關閉（CELL_PICKER=off），照舊用人工標注');
 
   let units = [];
@@ -54,17 +58,6 @@ function main() {
   } catch (e) {
     done(`Claude 排配圖：讀不到稿件子句（${e.message.slice(0, 120)}），照舊用人工標注`);
   }
-
-  // 已經設了動態小影片的句子不配圖：動態會蓋在截圖上面，配了也看不到（2026-11-12 實測「縮量反彈」那段）
-  const MOTION = arg('motion', 'public/motion.json');
-  let motion = [];
-  try { motion = JSON.parse(fs.readFileSync(MOTION, 'utf-8')); } catch (_) {}
-  const inMotion = (u) => (Array.isArray(motion) ? motion : []).some((m) => m
-    && typeof m.startCharIdx === 'number' && typeof m.endCharIdx === 'number'
-    && !(u.endCharIdx < m.startCharIdx || u.startCharIdx > m.endCharIdx));
-  const before = units.length;
-  units = units.filter((u) => !inMotion(u));
-  if (units.length < before) console.log(`（${before - units.length} 個子句已經有動態小影片，不配圖）`);
 
   let analysis = { images: [] };
   try { analysis = JSON.parse(fs.readFileSync(IMAGES, 'utf-8')); } catch (_) {}
@@ -87,30 +80,43 @@ function main() {
   let boxed = 0;
   for (const seg of plan.segments) {
     const im = images.find((x) => x.file === seg.src);
-    const phrase = units.filter((u) => u.startCharIdx >= seg.startCharIdx && u.endCharIdx <= seg.endCharIdx)
-      .map((u) => u.text).join('');
-    const r = engine.pick({
-      imagePath: im.path, words: im.words, width: im.width, height: im.height, phrase, page: im.page, withCrop: true,
+    const segUnits = units.filter((u) => u.startCharIdx >= seg.startCharIdx && u.endCharIdx <= seg.endCharIdx);
+    const steps = segUnits.map((u) => ({ id: `U${u.i}`, text: u.text, startCharIdx: u.startCharIdx, endCharIdx: u.endCharIdx }));
+    const r = steps.length
+      ? engine.pickCard({ imagePath: im.path, words: im.words, width: im.width, height: im.height, steps, page: im.page })
+      : { status: 'failed', error: '這段沒有完整的子句' };
+    const region = r.status === 'picked' ? r.crop : { x: 0, y: 0, w: im.width, h: im.height };
+    const base = { src: seg.src, title: seg.title, region, imgW: im.width, imgH: im.height };
+    if (r.status !== 'picked') {
+      shots.push({ ...base, startCharIdx: seg.startCharIdx, endCharIdx: seg.endCharIdx,
+        _claude: { why: seg.why, cellStatus: r.status, cellWhy: r.error || '' } });
+      continue;
+    }
+    // 連續幾句框同一個地方（或都不框）就併成一筆；第一筆從段落開頭、最後一筆到段落結尾
+    const same = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
+    const groups = [];
+    r.steps.forEach((st, k) => {
+      const last = groups[groups.length - 1];
+      if (last && same(last.cell, st.cell)) { last.end = steps[k].endCharIdx; return; }
+      groups.push({ cell: st.cell, start: steps[k].startCharIdx, end: steps[k].endCharIdx, why: st.why, source: st.source });
     });
-    const cell = r.status === 'picked' ? r.cell : null;
-    if (cell) boxed++;
-    shots.push({
-      src: seg.src,
-      startCharIdx: seg.startCharIdx,
-      endCharIdx: seg.endCharIdx,
-      title: seg.title,
-      // region＝卡片要裁的那一塊；第二步失敗就整張
-      region: r.crop || { x: 0, y: 0, w: im.width, h: im.height },
-      ...(cell ? { cell } : {}),
-      imgW: im.width,
-      imgH: im.height,
-      _claude: { why: seg.why, cellStatus: r.status, cellSource: r.source || null, cellWhy: r.why || r.error || '' },
-    });
+    groups[0].start = seg.startCharIdx;
+    groups[groups.length - 1].end = seg.endCharIdx;
+    for (const g of groups) {
+      if (g.cell) boxed++;
+      shots.push({ ...base, startCharIdx: g.start, endCharIdx: g.end, ...(g.cell ? { cell: g.cell } : {}),
+        _claude: { why: seg.why, cellSource: g.source, cellWhy: g.why } });
+    }
   }
 
+  if (plan.motions && plan.motions.length) {
+    fs.writeFileSync(MOTION_OUT, JSON.stringify(plan.motions.map((m) => ({ startCharIdx: m.startCharIdx, endCharIdx: m.endCharIdx })), null, 2) + '\n');
+  }
   fs.writeFileSync(OUT, JSON.stringify({ by: 'claude', at: new Date().toISOString(), shots }, null, 2));
   const lines = shots.map((s) => `   ${s.src}「${s.title}」字 ${s.startCharIdx}–${s.endCharIdx}${s.cell ? '' : '（不框）'}`);
-  done(`Claude 排配圖：${shots.length} 段（${boxed} 段有金框）→ ${path.relative(ROOT, OUT)}\n${lines.join('\n')}`);
+  const mlines = (plan.motions || []).map((m) => `   動態 字 ${m.startCharIdx}–${m.endCharIdx}（${m.why}）`);
+  done(`Claude 排配圖：${plan.segments.length} 張卡片、${shots.length} 段金框位置（${boxed} 段有框）、`
+    + `${(plan.motions || []).length} 段動態 → ${path.relative(ROOT, OUT)}\n${lines.concat(mlines).join('\n')}`);
 }
 
 main();

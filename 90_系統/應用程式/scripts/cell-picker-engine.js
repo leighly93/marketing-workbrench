@@ -84,9 +84,50 @@ function pick({ imagePath, words, width, height, phrase, page, withCrop = false 
 }
 
 /**
+ * 卡片版挑框（2026-11-12）：一段一張卡片，金框跟著每一句移動。
+ *   steps [{ id: 'U12', text, startCharIdx, endCharIdx }]
+ *   → { status: 'picked', crop, steps: [{ id, cell|null, source, text, why }] } | { status: 'failed', error }
+ * crop 一定包住所有句子的金框（cell-picker.js 的 fitCrop）。
+ */
+function pickCard({ imagePath, words, width, height, steps, page }) {
+  if (!enabled()) return { status: 'off' };
+  if (ENGINE !== 'claude-cli') return { status: 'failed', error: `不認得的 CELL_PICKER：${ENGINE}` };
+  const fit = fitSize(width, height);
+  const scale = fit.scale;
+  const cands = picker.candidates(words, scale);
+  const prompt = picker.buildCardPrompt({ steps, page, listing: cands.listing, width: fit.width, height: fit.height });
+  const r = runClaude({ prompt, system: picker.SYSTEM_PROMPT, images: [{ path: imagePath, width, height }] });
+  if (!r.ok) return { status: 'failed', error: r.error };
+  const reply = picker.parseCardReply(r.text, cands, steps.map((x) => x.id));
+  if (!reply) return { status: 'failed', error: `回覆不是預期的 JSON：${r.text.slice(0, 200)}` };
+  const out = steps.map((st) => {
+    const one = reply.steps.get(st.id);
+    if (!one || one.none) return { id: st.id, cell: null, source: null, text: '', why: one ? one.why : '' };
+    const extra = one.box ? picker.unscaleBox(one.box, scale, width, height) : null;
+    if (!one.ids.length) return { id: st.id, cell: extra, source: extra ? 'claude-box' : null, text: '', why: one.why };
+    const ids = picker.expandChange(one.ids, cands);
+    const boxes = ids.map((id) => cands.words.get(id));
+    const ocrCell = picker.unionBox(boxes, PAD, width, height);
+    return {
+      id: st.id,
+      cell: extra ? picker.unionBox([ocrCell, extra], 0, width, height) : ocrCell,
+      source: extra ? 'ocr+box' : 'ocr',
+      text: boxes.map((b) => b.t.trim()).join(' '),
+      why: one.why,
+    };
+  });
+  // 卡片要包住每一句的框
+  const cells = out.map((x) => x.cell).filter(Boolean);
+  const all = cells.length ? picker.unionBox(cells, 0, width, height) : null;
+  const crop = picker.fitCrop(reply.crop ? picker.unscaleBox(reply.crop, scale, width, height) : null, all, width, height);
+  return { status: 'picked', crop, steps: out, why: reply.why };
+}
+
+/**
  * Claude 排配圖第一步（2026-11-12）：所有截圖＋子句清單 → 哪張圖配哪幾句、小標題。
  *   images [{ file, path, width, height, words }]；units 來自 auto-shot --sentences
- *   → { status: 'planned', segments } | { status: 'failed', error } | { status: 'off' }
+ *   → { status: 'planned', segments, motions } | { status: 'failed', error } | { status: 'off' }
+ *   motions＝動態小影片的位置（開頭一段、結尾一段，不跟截圖段重疊）
  * 跟 pick() 同一個開關（CELL_PICKER=off 就不呼叫）。
  */
 function planAssignments({ units, images }) {
@@ -106,7 +147,7 @@ function planAssignments({ units, images }) {
   if (!r.ok) return { status: 'failed', error: r.error };
   const segments = planner.parseReply(r.text, { units, files: images.map((im) => im.file) });
   if (!segments) return { status: 'failed', error: `回覆不是預期的 JSON：${r.text.slice(0, 200)}` };
-  return { status: 'planned', segments };
+  return { status: 'planned', segments, motions: planner.parseMotions(r.text, { units, segments }) };
 }
 
-module.exports = { pick, planAssignments, enabled, ENGINE };
+module.exports = { pick, pickCard, planAssignments, enabled, ENGINE };
