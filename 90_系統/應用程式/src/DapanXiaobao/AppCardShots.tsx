@@ -124,6 +124,38 @@ function layoutCard(card: Card) {
   return { crop, s, w: Math.round(crop.w * s), h: Math.round(crop.h * s) };
 }
 
+/**
+ * 卡片內推近（2026-11-13 使用者：環球晶營收整頁做成卡片太小，「營收可以放大顯示，不然有點可惜」）。
+ * 規則（skill 的「卡片內推近／平移」，她認可過）：單張卡片顯示寬度不到 ZOOM_MIN_W、而且有金框時，
+ * 先給完整畫面停 ZOOM_HOLD_SEC，之後每一句有框就在 0.45 秒內把裁切移到**那一句的框**附近：
+ * 左右照原本整寬、卡片寬放到最大，上下以框為中心（碰到邊就貼邊；框比視窗還高就把視窗撐大）。
+ * 沒框的句子停在上一個位置。金框等移完才淡入。推近後高度跟完整畫面差不多（省不到 15%）就不推。
+ * 回傳每一句的視窗（null＝完整畫面）；整張不推回 null。
+ */
+const ZOOM_MIN_W = 700;
+const ZOOM_HOLD_SEC = 0.8;
+const ZOOM_SEC = 0.45;
+export function zoomViews(card: Card): (ShotBox | null)[] | null {
+  const full = layoutCard(card);
+  if (!full.crop || full.w >= ZOOM_MIN_W) return null;
+  if (!card.steps.some((st) => st.cell)) return null;
+  const crop = full.crop;
+  const s2 = Math.min(CARD_MAX_W / crop.w, 2.2);
+  const h2 = Math.floor((CARD_BOTTOM - CARD_TOP) / s2);
+  if (h2 >= crop.h * 0.85) return null;
+  let prev: ShotBox | null = null;
+  return card.steps.map((st) => {
+    const c = st.cell;
+    if (!c) return prev;
+    const margin = Math.round(c.h * 0.35);
+    const h = Math.min(crop.h, Math.max(h2, c.h + margin * 2));
+    let y = c.y + c.h / 2 - h / 2;
+    y = Math.max(crop.y, Math.min(y, crop.y + crop.h - h));
+    prev = { x: crop.x, y: Math.round(y), w: crop.w, h };
+    return prev;
+  });
+}
+
 /** 一組卡片疊起來的共同寬度（每張縮到同寬）；放不進 CARD_TOP～CARD_BOTTOM 或太窄回 null */
 export function stackLayout(cards: Card[]) {
   const crops = cards.map((c) => (c.crop && c.imgW && c.imgH ? c.crop : c.imgW && c.imgH ? { x: 0, y: 0, w: c.imgW, h: c.imgH } : null));
@@ -333,7 +365,38 @@ const CardView: React.FC<{ card: Card; enterAt: number; first: boolean; exitAt: 
   exitAt,
 }) => {
   const f = useCurrentFrame();
-  const lay = layoutCard(card);
+  const full = layoutCard(card);
+  const views = zoomViews(card);
+  // 推近：目前是第幾句、從哪個視窗移到哪個視窗
+  let view: ShotBox | null = null;
+  let glowIn = 1;
+  if (views && full.crop) {
+    const fullBox = full.crop;
+    const starts = card.steps.map((st, k) => {
+      const at = enterAt + secToFrame(st.startSec - card.startSec);
+      return k === 0 ? Math.max(at, enterAt + secToFrame(ZOOM_HOLD_SEC)) : at;
+    });
+    let k = -1;
+    while (k + 1 < starts.length && f >= starts[k + 1]) k++;
+    if (k >= 0) {
+      const from = (k > 0 ? views[k - 1] : null) || fullBox;
+      const to = views[k] || from;
+      const p = interpolate(f, [starts[k], starts[k] + secToFrame(ZOOM_SEC)], [0, 1], {
+        extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.cubic),
+      });
+      view = { x: to.x, w: to.w, y: from.y + (to.y - from.y) * p, h: from.h + (to.h - from.h) * p };
+      if (from.y !== to.y || from.h !== to.h || k === 0) {
+        const end = starts[k] + secToFrame(ZOOM_SEC);
+        glowIn = interpolate(f, [end, end + Math.round(0.22 * VIDEO_FPS)], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+      }
+    } else {
+      glowIn = 0;
+    }
+  }
+  const lay = view ? (() => {
+    const sc = Math.min(CARD_MAX_W / view.w, (CARD_BOTTOM - CARD_TOP) / view.h, 2.2);
+    return { crop: view, s: sc, w: Math.round(view.w * sc), h: Math.round(view.h * sc) };
+  })() : full;
   const { w, h } = lay;
   const local = f - enterAt;
   // 進場：第一張彈進來，之後的從右邊滑進來
@@ -358,7 +421,8 @@ const CardView: React.FC<{ card: Card; enterAt: number; first: boolean; exitAt: 
         <CardTitle text={card.title} top={top - TITLE_GAP - TITLE_LINE_H} scale={first ? 0.85 + 0.15 * backOut(enterP) : 1} />
       ) : null}
       <Sequence from={enterAt} layout="none">
-        <CardBox card={card} lay={lay} left={left} top={top} scale={scale} />
+        <CardBox card={card} lay={lay} left={left} top={top} scale={scale}
+          glowOpacity={glowIn} />
       </Sequence>
     </AbsoluteFill>
   );

@@ -232,3 +232,13 @@ test('卡片 prompt：個股只被點名時裁上方股價區、框漲跌幅，�
   assert.match(p, /大戶散戶/);
   assert.match(p, /個股被點名.*框它的漲跌幅/);
 });
+
+test('卡片內推近：單張卡片太窄（< 700px）又有金框時，每句推到那句的框，金框等推完才出現（2026-11-13 環球晶營收）', () => {
+  const src = fs.readFileSync(path.join(APP, 'src/DapanXiaobao/AppCardShots.tsx'), 'utf8');
+  assert.match(src, /const ZOOM_MIN_W = 700;/);
+  assert.match(src, /const ZOOM_HOLD_SEC = 0\.8;/);
+  assert.match(src, /export function zoomViews\(card: Card\)/);
+  assert.match(src, /const views = zoomViews\(card\);/, 'CardView（單張）要用');
+  assert.match(src, /glowOpacity=\{glowIn\}/, '金框等推完才淡入');
+  assert.match(src, /if \(h2 >= crop\.h \* 0\.85\) return null;/, '推了也放大不了多少就不推');
+});
