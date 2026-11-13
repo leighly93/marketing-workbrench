@@ -1216,3 +1216,28 @@ test('主角先出來：大數字與關卡線最晚 0.6 秒出現，項目照旁
   const list = { template: 'list', items: [{ text: 'a', atSec: 4 }] };
   assert.deepEqual(heroFirst(list), list);
 });
+
+test('Claude 動態參數格式不合格 → 帶提醒重產一次，不直接丟掉那段（2026-11-13 結尾總結不見）', (t) => {
+  const os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'motion-retry-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const good = { template: 'list', kicker: '明日焦點', title: '明天|看兩件事',
+    items: [{ text: '外資會不會繼續賣', at: '外資會不會繼續賣' }] };
+  const bin = path.join(dir, 'claude');
+  fs.writeFileSync(bin, `#!/usr/bin/env node
+const fs = require('fs'); const f = ${JSON.stringify(path.join(dir, 'n'))};
+const n = fs.existsSync(f) ? Number(fs.readFileSync(f, 'utf8')) : 0; fs.writeFileSync(f, String(n + 1));
+const prompt = process.argv[process.argv.indexOf('-p') + 1];
+fs.writeFileSync(${JSON.stringify(path.join(dir, 'prompt'))} + n, prompt);
+console.log(JSON.stringify({ type: 'result', result: n === 0 ? '好的，以下是動態卡片' : ${JSON.stringify(JSON.stringify(good))} }));
+`);
+  fs.chmodSync(bin, 0o755);
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${dir}:${oldPath}`;
+  t.after(() => { process.env.PATH = oldPath; });
+  const engine = require(path.join(app, "scripts/motion-engine.js"));
+  const spec = engine.ENGINES['claude-cli'].plan({ text: '明天如果沒有放颱風假就看兩件事第一外資會不會繼續賣' });
+  assert.ok(spec, '第二次合格就要用');
+  assert.equal(spec.template, 'list');
+  assert.match(fs.readFileSync(path.join(dir, 'prompt1'), 'utf8'), /上一版不是合格的參數/);
+});

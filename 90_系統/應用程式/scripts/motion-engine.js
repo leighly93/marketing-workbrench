@@ -368,7 +368,14 @@ const ENGINES = {
         }
         const spec = validate(extractJson(result));
         if (!spec) {
-          console.error('⚠️ claude -p 回傳的內容不符合參數格式，改用手動參數（若有）');
+          // 2026-11-13 21uc：結尾總結那段偶發一次格式不合格就直接放棄，整支片少了收尾。
+          // 同一段文字重問幾乎都會過 → 格式不合格也帶著提醒重產一次，第二次還不行才放棄。
+          console.error(`⚠️ claude -p 回傳的內容不符合參數格式（第 ${round} 次）：${String(result || '').replace(/\s+/g, ' ').slice(0, 200)}`);
+          if (round < 2) {
+            feedback = '\n\n上一版不是合格的參數：請只輸出一個 JSON 物件，template 用上面列的其中一種，欄位照該 template 的格式填齊。';
+            continue;
+          }
+          console.error('⚠️ 重產一次格式還是不合格，改用手動參數（若有）');
           return validate(manualSpec);
         }
         const problems = checkAgainstSource(spec, text);
