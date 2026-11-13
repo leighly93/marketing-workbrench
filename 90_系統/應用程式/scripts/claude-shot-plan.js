@@ -15,7 +15,9 @@
  *
  * 用法：node scripts/claude-shot-plan.js [--script=public/script.txt] [--images=src/app-images.generated.json]
  *        [--public=public] [--out=public/claude-annotations.json] [--motion-out=public/claude-motion.json]
- *        [--note=public/claude-note.txt]
+ *        [--note=public/claude-note.txt] [--facts-out=public/claude-facts.json]
+ * 補充字卡（2026-11-13）寫在 public/claude-facts.json：[{ startCharIdx, endCharIdx, items:[{label,value,tone}] }]，
+ * parse-dapan-script.js 把它寫進 video-meta.json.factCards，渲染端（FactCards.tsx）照字元位置換算時間。
  */
 
 const fs = require('node:fs');
@@ -39,6 +41,7 @@ const IMAGES = arg('images', 'src/app-images.generated.json');
 const PUBLIC = arg('public', 'public');
 const OUT = arg('out', 'public/claude-annotations.json');
 const MOTION_OUT = arg('motion-out', 'public/claude-motion.json');
+const FACTS_OUT = arg('facts-out', 'public/claude-facts.json');
 // 重新出片時寫給 Claude 的指示（2026-11-12，只影響那一支）
 const NOTE = (() => { try { return fs.readFileSync(arg('note', 'public/claude-note.txt'), 'utf-8').trim(); } catch (_) { return ''; } })();
 
@@ -51,6 +54,7 @@ function main() {
   // 上一支留下的結果一定先清掉：沒排出來的時候，auto-shot 不能吃到別支的配圖
   try { fs.unlinkSync(OUT); } catch (_) {}
   try { fs.unlinkSync(MOTION_OUT); } catch (_) {}
+  try { fs.unlinkSync(FACTS_OUT); } catch (_) {}
   if (!engine.enabled()) done('Claude 排配圖：已關閉（CELL_PICKER=off），照舊用人工標注');
 
   let units = [];
@@ -121,11 +125,16 @@ function main() {
   if (plan.motions && plan.motions.length) {
     fs.writeFileSync(MOTION_OUT, JSON.stringify(plan.motions.map((m) => ({ startCharIdx: m.startCharIdx, endCharIdx: m.endCharIdx })), null, 2) + '\n');
   }
+  // 補充字卡：避開最終的截圖段（已延到句尾）與動態段
+  const planner = require('./shot-planner');
+  const facts = planner.parseFacts(plan.reply || '', { units, taken: shots.concat(plan.motions || []) });
+  if (facts.length) fs.writeFileSync(FACTS_OUT, JSON.stringify(facts, null, 2) + '\n');
   fs.writeFileSync(OUT, JSON.stringify({ by: 'claude', at: new Date().toISOString(), shots }, null, 2));
   const lines = shots.map((s) => `   ${s.src}「${s.title}」字 ${s.startCharIdx}–${s.endCharIdx}${s.cell ? '' : '（不框）'}`);
   const mlines = (plan.motions || []).map((m) => `   動態 字 ${m.startCharIdx}–${m.endCharIdx}（${m.why}）`);
+  const flines = facts.map((f) => `   字卡 字 ${f.startCharIdx}–${f.endCharIdx}：${f.items.map((it) => `${it.label} ${it.value}`).join('｜')}`);
   done(`Claude 排配圖：${plan.segments.length} 張卡片、${shots.length} 段金框位置（${boxed} 段有框）、`
-    + `${(plan.motions || []).length} 段動態 → ${path.relative(ROOT, OUT)}\n${lines.concat(mlines).join('\n')}`);
+    + `${(plan.motions || []).length} 段動態、${facts.length} 張補充字卡 → ${path.relative(ROOT, OUT)}\n${lines.concat(mlines, flines).join('\n')}`);
 }
 
 main();

@@ -54,13 +54,19 @@ function buildPrompt({ units, images, note = '' }) {
     `5. **剛好 2 段：開頭一段、結尾總結一段**，整支不要第 3 段。開頭那段只能在 ${range(win.head)} 裡挑，結尾那段只能在 ${range(win.tail)} 裡挑。`,
     '6. 每段 2～6 個連續子句，挑適合整理成重點的句子（關鍵數字、結論、明天要注意的事），**不能跟上面的截圖段重疊**。',
     '',
+    '另外選「補充字卡」（講者畫面上、字幕正上方跳出的小數字卡，例：「外資賣超 816億｜投信買超 88.7億」）：',
+    '7. 只放在**沒有配截圖、也不在動態卡片裡**的子句；旁白講到具體的「主詞＋數字」（法人買賣超、漲跌幅、家數、成交金額…）才放。整支 0～3 張，寧少勿多。',
+    '8. 每張 1～2 項，每項 label 是主詞（2～6 字，例「外資賣超」「上漲家數」），value 是數字加單位（例「816億」「3.6倍」「-5.4%」），**數字一定要照旁白原文**，不能自己算或換單位。',
+    '9. tone：漲、買超、增加 → "up"（紅）；跌、賣超、減少、虧損 → "down"（綠）；其他 → "gold"。from／to 指出那句話的子句範圍（1～3 句）。',
+    '',
     ...(note ? [
       `剪輯師對這支片的指示（優先照做；但動態仍是開頭、結尾各一段，段落不能重疊，格式照下面）：${note}`,
       '',
     ] : []),
     // 範例的檔名用這支實際的第一張圖：寫死 shot1.jpg 時，素材是 .png 的那支 Claude 照抄 .jpg，整批對不上（2026-11-12 7eov）
     `只輸出 JSON：{"segments":[{"image":${JSON.stringify((images[0] && images[0].file) || 'shot1.png')},"from":"U3","to":"U4","title":"加權指數","why":"一句話"}],`
-      + '"motions":[{"from":"U0","to":"U2","why":"開頭"},{"from":"U40","to":"U43","why":"結尾總結"}]}',
+      + '"motions":[{"from":"U0","to":"U2","why":"開頭"},{"from":"U40","to":"U43","why":"結尾總結"}],'
+      + '"facts":[{"from":"U20","to":"U21","items":[{"label":"外資賣超","value":"816億","tone":"down"},{"label":"投信買超","value":"88.7億","tone":"up"}]}]}',
   ].join('\n');
 }
 
@@ -183,6 +189,50 @@ function parseMotions(text, { units, segments }) {
 }
 
 /**
+ * 補充字卡（2026-11-13 使用者選定，cmoney-ad-subtitles skill 的「補充數字字卡」）：
+ * 講者畫面、字幕正上方的小數字卡，只放在沒配截圖、也沒動態的句子。
+ * 驗證：子句要存在、最多 3 句；不能跟截圖段、動態段或彼此重疊；每項 label 2～6 字、value 要有數字，
+ * 而且 value 裡的數字（去掉逗號）一定要出現在那幾句旁白裡 —— 財經影片放錯數字比少一張卡嚴重。
+ * 整支最多 3 張。回傳 [{ startCharIdx, endCharIdx, items: [{ label, value, tone }] }]。
+ *   taken：[{ startCharIdx, endCharIdx }]（最終的截圖段＋動態段）
+ */
+const FACT_TONES = ['up', 'down', 'gold'];
+function parseFacts(text, { units, taken = [] }) {
+  const o = lastJsonObject(text);
+  if (!o || !Array.isArray(o.facts)) return [];
+  const order = new Map(units.map((u, k) => [`U${u.i}`, k]));
+  const busy = taken.map((t) => [t.startCharIdx, t.endCharIdx]);
+  const overlaps = (a, b) => busy.some(([x, y]) => !(b < x || a > y));
+  const digits = (str) => String(str).replace(/[,，\s]/g, '');
+  const out = [];
+  const cands = o.facts.map((f) => {
+    if (!f || !order.has(String(f.from))) return null;
+    let a = order.get(String(f.from));
+    let b = order.has(String(f.to)) ? order.get(String(f.to)) : a;
+    if (a > b) [a, b] = [b, a];
+    if (b - a > 2) return null;
+    const said = digits(units.slice(a, b + 1).map((u) => u.text).join(''));
+    const items = (Array.isArray(f.items) ? f.items : []).slice(0, 2).map((it) => {
+      const label = String((it && it.label) || '').trim();
+      const value = String((it && it.value) || '').trim();
+      const nums = value.match(/\d[\d,]*(?:\.\d+)?/g) || [];
+      if ([...label].length < 2 || [...label].length > 6 || !value || [...value].length > 9 || !nums.length) return null;
+      if (!nums.every((n) => said.includes(digits(n)))) return null;
+      return { label, value, tone: FACT_TONES.includes(it.tone) ? it.tone : 'gold' };
+    });
+    if (!items.length || items.some((x) => !x)) return null;
+    return { startCharIdx: units[a].startCharIdx, endCharIdx: units[b].endCharIdx, items };
+  }).filter((f) => f && f.startCharIdx != null && f.endCharIdx != null)
+    .sort((x, y) => x.startCharIdx - y.startCharIdx);
+  for (const f of cands) {
+    if (out.length >= 3 || overlaps(f.startCharIdx, f.endCharIdx)) continue;
+    busy.push([f.startCharIdx, f.endCharIdx]);
+    out.push(f);
+  }
+  return out;
+}
+
+/**
  * 句子最後一張圖留到句子講完（2026-11-12 使用者：「有的圖出現一秒不到就沒了，如果是這段落連續出現圖片後的
  * 最後一張圖，可以讓他多出現到後面句子講完嗎」）。
  * 例：「台郡、和益、德淵，逆勢飆漲停！」Claude 只配到「德淵」兩個字（0.3 秒）→ 德淵那張延到「漲停」講完。
@@ -211,4 +261,4 @@ function extendToSentenceEnd(shots, units, motions = []) {
   return sorted;
 }
 
-module.exports = { SYSTEM_PROMPT, ocrSummary, buildPrompt, parseReply, resolveImage, parseMotions, motionWindows, mergeSameImage, extendToSentenceEnd };
+module.exports = { SYSTEM_PROMPT, ocrSummary, buildPrompt, parseReply, resolveImage, parseMotions, parseFacts, motionWindows, mergeSameImage, extendToSentenceEnd };

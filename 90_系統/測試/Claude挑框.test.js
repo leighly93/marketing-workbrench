@@ -286,3 +286,26 @@ test('卡片回覆帶 stock 旗標；prompt 寫明股價區範圍（股名列到
   assert.match(p, /下緣到「屬性」那一列/);
   assert.match(p, /"stock":false/);
 });
+
+test('個股頁首帶（股名代號列～可當沖列）裡的裁切一律換成股價卡（2026-11-13「CCL的聯茂」股名被切掉）', () => {
+  // 聯茂（yg21 實際 OCR，900×1600）：Claude 裁了標籤列 y219–381、框「CCL銅箔基板」
+  const words = [
+    { t: '4:22', x: 16, y: 13, w: 54, h: 20 }, { t: '6213', x: 457, y: 64, w: 71, h: 24 },
+    { t: '總', x: 415, y: 165, w: 58, h: 29 }, { t: 'v-46.0', x: 257, y: 171, w: 91, h: 23 },
+    { t: '(5.59%)', x: 259, y: 206, w: 112, h: 33 }, { t: '上', x: 17, y: 271, w: 46, h: 23 },
+    { t: '可', x: 33, y: 328, w: 22, h: 22 },
+  ];
+  const tagCrop = { x: 0, y: 219, w: 900, h: 162 };
+  const code = picker.stockHeaderBandCode(words, tagCrop, 900);
+  assert.equal(code && code.t, '6213');
+  assert.equal(picker.looksLikeStockHeader(words, tagCrop, 900), false, '舊規則抓不到這種');
+  // 下方的大戶散戶、走勢圖不算
+  assert.equal(picker.stockHeaderBandCode(words, { x: 0, y: 900, w: 900, h: 400 }, 900), null);
+  assert.equal(picker.stockHeaderBandCode([], tagCrop, 900), null);
+  const engine = fs.readFileSync(path.join(APP, 'scripts/cell-picker-engine.js'), 'utf8');
+  assert.match(engine, /stockHeaderBandCode\(words \|\| \[\], claudeCrop, width\)/);
+  // 上緣拉到代號上方再對齊 → 股名列到屬性列
+  const anchor = { ...tagCrop, y: code.y - code.h, h: tagCrop.y + tagCrop.h - (code.y - code.h) };
+  const r = picker.stockCrop(anchor, 900, words);
+  assert.ok(r.y > 33 && r.y < 64 && r.y + r.h > 239 && r.y + r.h < 271, JSON.stringify(r));
+});

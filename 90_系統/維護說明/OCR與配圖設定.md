@@ -20,6 +20,7 @@ OCR 共用入口為 [ocr-engine.js](../應用程式/scripts/ocr-engine.js)，供
 - [app-locators.json](../應用程式/scripts/app-locators.json) 的 `regions` 定義局部區域；辨識得出頁型，不代表已有對應框位規則。
 - [auto-shot.js](../應用程式/scripts/auto-shot.js) 結合辨識結果、旁白、區域規則與配圖記憶，提供建議與配圖計畫。
 - [app-pages.js](../應用程式/scripts/app-pages.js) 把頁型代號翻成頁型圖鑑的中文名稱，常見頁另附裁切提示，給 Claude 排配圖與挑框的 prompt 使用；只是提示文字，不影響辨識與記憶鍵。大盤小報最常見的是個股即時（大戶散戶）、大盤三磚（加權／櫃買／台指電子盤或台指期貨）、大盤頁往下捲的加權指數貢獻排行（`market-contrib`，與指數詳情頁的 `contrib-rank` 版面不同）。
+- 個股頁「頁首帶」（股名代號列～可當沖列、分頁列以上）裡的任何裁切都換成標準股價卡（`stockHeaderBandCode`）：2026-11-13 旁白「CCL的聯茂」時 Claude 裁了標籤列框「CCL銅箔基板」，股名被切掉。
 - Claude 排配圖回的圖名以完整檔名比對，對不上時再比去掉副檔名、或「圖N」編號；有排段落卻全部對不上會記成失敗原因，不寫成「沒有句子適合配圖」。
 
 `auto-shot.js` 預設只將人工標註寫入正式配圖計畫；`--with-auto` 才納入自動段。`--no-annots` 也會保留自動段，用於對照組，須以 `--out` 指向獨立檔案。人工滑動段的 `titleY` 仍可來自 OCR 的 `topicBox`，不能承諾換引擎完全不影響成品。

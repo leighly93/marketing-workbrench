@@ -103,8 +103,14 @@ function pickCard({ imagePath, words, width, height, steps, page, note = '' }) {
   if (!reply) return { status: 'failed', error: `回覆不是預期的 JSON：${r.text.slice(0, 200)}` };
   // 股價卡（2026-11-12 使用者定案）：上下照 Claude（股名列～屬性列），左右整張寬；個股被點名一定要框漲跌幅
   const claudeCrop = reply.crop ? picker.unscaleBox(reply.crop, scale, width, height) : null;
-  const isStock = reply.stock || picker.looksLikeStockHeader(words || [], claudeCrop, width);
-  const stockRegion = isStock && claudeCrop ? picker.stockCrop(claudeCrop, width, words || []) : null;
+  // 頁首帶（股名代號列～可當沖列）裡的裁切也一律當股價卡（2026-11-13「CCL的聯茂」裁到標籤列、股名被切掉）
+  const bandCode = picker.stockHeaderBandCode(words || [], claudeCrop, width);
+  const isStock = reply.stock || picker.looksLikeStockHeader(words || [], claudeCrop, width) || !!bandCode;
+  // stockCrop 要從代號那列找起：Claude 的裁切在代號下面時，把上緣拉到代號上方再交給它
+  const anchorCrop = claudeCrop && bandCode && claudeCrop.y > bandCode.y - bandCode.h
+    ? { ...claudeCrop, y: Math.round(bandCode.y - bandCode.h), h: claudeCrop.y + claudeCrop.h - Math.round(bandCode.y - bandCode.h) }
+    : claudeCrop;
+  const stockRegion = isStock && anchorCrop ? picker.stockCrop(anchorCrop, width, words || []) : null;
   const autoChange = () => (stockRegion ? picker.changeCellIn(cands, stockRegion, PAD, width, height) : null);
   const out = steps.map((st) => {
     const one = reply.steps.get(st.id);
@@ -171,7 +177,8 @@ function planAssignments({ units, images, note = '' }) {
   if (!segments.length && raw.length) {
     return { status: 'failed', error: `Claude 排了 ${raw.length} 段，但圖名或子句編號都對不上：${JSON.stringify(raw[0]).slice(0, 160)}` };
   }
-  return { status: 'planned', segments, motions: planner.parseMotions(r.text, { units, segments }) };
+  // reply 留給呼叫端：補充字卡要等截圖段延長到句尾之後才知道哪裡空著（claude-shot-plan.js 的 parseFacts）
+  return { status: 'planned', segments, motions: planner.parseMotions(r.text, { units, segments }), reply: r.text };
 }
 
 module.exports = { pick, pickCard, planAssignments, enabled, ENGINE };

@@ -697,6 +697,16 @@ function countText(value: string, p: number): string {
     : v.toFixed(dec);
 }
 
+/**
+ * value 裡夾了不是數字的字（Claude 寫成「800多」「近800」「約4.5」）→ 拆開，只有數字用大字。
+ * 2026-11-13 使用者：「多被放大很奇怪，大小可能要跟億一樣」。前面的字（近、約）跟後面的字（多）都用單位那個大小。
+ */
+export function splitNumberValue(value: string): { lead: string; num: string; tail: string } {
+  const m = String(value).match(/[\d][\d,]*(?:\.\d+)?/);
+  if (!m || m.index == null) return { lead: '', num: String(value), tail: '' };
+  return { lead: value.slice(0, m.index), num: m[0], tail: value.slice(m.index + m[0].length) };
+}
+
 const NumberCard: React.FC<{ spec: NumberSpec; beats: number[] }> = ({ spec, beats }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -706,6 +716,7 @@ const NumberCard: React.FC<{ spec: NumberSpec; beats: number[] }> = ({ spec, bea
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
   const p = 1 - Math.pow(1 - k, 3);
   const items = (spec.items ?? []).slice(0, 2);
+  const { lead, num, tail } = splitNumberValue(spec.value);
   // 單位用半大的字，拿整串估寬會略估大一點，剛好當餘裕
   const numFont = fitFontSize(1080 - MC.pad * 2,
     [`${spec.prefix ?? ''}${spec.value}${spec.unit ?? ''}`], 200, 240);
@@ -721,8 +732,11 @@ const NumberCard: React.FC<{ spec: NumberSpec; beats: number[] }> = ({ spec, bea
         <Pop at={numAt}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, color: colorOf(spec.valueC),
             fontWeight: 900, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums', letterSpacing: -4 }}>
-            <span style={{ fontSize: numFont }}>{(spec.prefix ?? '') + countText(spec.value, p)}</span>
-            {spec.unit ? <span style={{ fontSize: Math.round(numFont * 0.45), letterSpacing: 0 }}>{spec.unit}</span> : null}
+            {lead ? <span style={{ fontSize: Math.round(numFont * 0.45), letterSpacing: 0 }}>{lead}</span> : null}
+            <span style={{ fontSize: numFont }}>{(spec.prefix ?? '') + countText(num, p)}</span>
+            {tail + (spec.unit ?? '') ? (
+              <span style={{ fontSize: Math.round(numFont * 0.45), letterSpacing: 0 }}>{tail + (spec.unit ?? '')}</span>
+            ) : null}
           </div>
         </Pop>
       </div>

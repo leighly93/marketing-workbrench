@@ -443,6 +443,7 @@ function clearWorkspaceInputs() {
   rmrf(path.join(pub, 'claude-annotations.json'));
   rmrf(path.join(pub, 'claude-motion.json'));
   rmrf(path.join(pub, 'claude-title.txt'));
+  rmrf(path.join(pub, 'claude-facts.json'));
   // 重新出片的 OCR 沿用檔同理（2026-09-18）。run.js 那邊本來就會逐張比對 md5、對不上不沿用，
   // 所以留著也不會誤用；但殘留檔本身就是坑（同一類的「撞名截圖用到上一支的尺寸」踩過），
   // 這支工作沒帶沿用檔就不該在 public 看到別人的。

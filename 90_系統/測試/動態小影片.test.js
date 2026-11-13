@@ -1241,3 +1241,15 @@ console.log(JSON.stringify({ type: 'result', result: n === 0 ? '好的，以下�
   assert.equal(spec.template, 'list');
   assert.match(fs.readFileSync(path.join(dir, 'prompt1'), 'utf8'), /上一版不是合格的參數/);
 });
+
+test('大數字卡：value 夾了「多」「近」「約」時只有數字放大，其餘跟單位同大小（2026-11-13「800多億」）', () => {
+  const src = fs.readFileSync(path.join(app, 'src/MotionClip/MotionClipComposition.tsx'), 'utf8');
+  const body = src.slice(src.indexOf('export function splitNumberValue'), src.indexOf('const NumberCard'));
+  const js = body.replace('export function', 'function').replace(/\(value: string\): \{[^}]*\}/, '(value)');
+  const split = new Function(`${js}; return splitNumberValue;`)();
+  assert.deepEqual(split('800多'), { lead: '', num: '800', tail: '多' });
+  assert.deepEqual(split('近2,000'), { lead: '近', num: '2,000', tail: '' });
+  assert.deepEqual(split('404.6'), { lead: '', num: '404.6', tail: '' });
+  assert.match(src, /countText\(num, p\)/);
+  assert.match(src, /\{tail \+ \(spec\.unit \?\? ''\)\}/);
+});

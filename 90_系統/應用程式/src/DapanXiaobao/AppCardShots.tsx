@@ -16,7 +16,7 @@ import type { DapanShot } from './dapan-timeline';
  * 大盤小報（橫式）APP 截圖段：浮動 UI 卡片（2026-11-12 使用者定案「像 skill 那樣呈現」）。
  *
  * 規格照 cmoney-ad-subtitles skill 的 references/app-card-segments.md，換算到橫式左側講者區（1178×1080）：
- *   - 背景：講者畫面本身模糊、壓暗、偏暖，中間偏上一團暖橘光暈，十幾顆很淡很小的金色四芒星慢慢閃
+ *   - 背景：講者畫面本身模糊、壓暗、偏暖，中間偏上一團暖橘光暈；不放金色星點（2026-11-12 使用者：「背景不要有閃閃亮亮的」）
  *   - 卡片：只放裁出來的那一塊 UI（region），圓角 26、細白邊、大片柔和陰影；不要標頭條（使用者選的）
  *   - 小標題：卡片上方，白色極粗黑體 72px（2026-11-12 使用者：「標題字太小，放大再放大但不要太超過」，原 60px），只加柔和陰影、不要底
  *   - 重點：金色發光圓角框（cell），框外不壓暗，0.22 秒淡入
@@ -167,28 +167,8 @@ const backOut = (x: number) => {
   return 1 + c3 * (t - 1) ** 3 + c1 * (t - 1) ** 2;
 };
 
-const SPARKS = Array.from({ length: 14 }, (_, i) => {
-  // 固定的偽亂數，每一格都一樣（分散式渲染不會抖）
-  const r = (k: number) => (Math.sin(i * 97.13 + k * 13.7) * 43758.5453) % 1;
-  const a = Math.abs;
-  return {
-    x: 60 + a(r(1)) * (ZONE_W - 120),
-    y: 150 + a(r(2)) * (ZONE_H - 300),
-    size: 10 + a(r(3)) * 9,
-    phase: a(r(4)) * Math.PI * 2,
-    speed: 1.6 + a(r(5)) * 1.6,
-  };
-});
-
-const Sparkle: React.FC<{ size: number }> = ({ size }) => (
-  <svg width={size} height={size} viewBox="0 0 20 20" style={{ display: 'block' }}>
-    <path d="M10 0 L11.4 8.6 L20 10 L11.4 11.4 L10 20 L8.6 11.4 L0 10 L8.6 8.6 Z" fill="rgb(255,236,180)" />
-  </svg>
-);
-
 const Background: React.FC<{ dur: number }> = ({ dur }) => {
   const f = useCurrentFrame();
-  const t = f / VIDEO_FPS;
   const opacity = interpolate(f, [0, T_FADE, dur - T_FADE, dur], [0, 1, 1, 0], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
@@ -206,20 +186,6 @@ const Background: React.FC<{ dur: number }> = ({ dur }) => {
       <AbsoluteFill
         style={{ background: 'radial-gradient(ellipse 55% 45% at 50% 36%, rgba(255,160,60,0.22), rgba(255,160,60,0) 70%)' }}
       />
-      {SPARKS.map((p, i) => (
-        <div
-          key={i}
-          style={{
-            position: 'absolute',
-            left: p.x,
-            top: p.y,
-            opacity: 0.12 + 0.22 * (0.5 + 0.5 * Math.sin(t * p.speed + p.phase)),
-            filter: 'drop-shadow(0 0 4px rgba(255,220,150,0.7))',
-          }}
-        >
-          <Sparkle size={p.size} />
-        </div>
-      ))}
     </AbsoluteFill>
   );
 };

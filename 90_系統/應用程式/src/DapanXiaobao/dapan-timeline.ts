@@ -46,7 +46,7 @@ const SCRIPT_CHAR_TIMES: ScriptCharTime[] = subtitles._scriptCharTimes ?? [];
 /** cleaned script 原文，跟 SCRIPT_CHAR_TIMES 同長度、同索引（correct-subtitles.js 第 8b 步寫入；舊 state 沒有 → ''）。 */
 const SCRIPT_TEXT: string = subtitles._scriptText ?? '';
 
-function resolveByCharIdx(
+export function resolveByCharIdx(
   startCharIdx: number,
   endCharIdx: number
 ): { start: number; end: number } | null {

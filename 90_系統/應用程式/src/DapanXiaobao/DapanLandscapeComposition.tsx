@@ -27,6 +27,7 @@ import { MOTION_RUNS } from '../MotionClip/motion-timeline';
 import videoMeta from '../video-meta.json';
 import { SerifSubtitles } from './SerifSubtitles';
 import { AppCardShots } from './AppCardShots';
+import { FactCards, type FactCard } from './FactCards';
 import { splitTitle, fitTitleSize, wrapTitleLines } from './title-layout';
 
 /**
@@ -187,6 +188,13 @@ export const DapanLandscapeComposition: React.FC<DapanLandscapeProps> = ({
       })}
         </>
       )}
+
+      {/* 補充數字字卡（2026-11-13）：講者畫面、字幕正上方；不壓進截圖段與動態（見 FactCards.tsx） */}
+      <FactCards
+        cards={((videoMeta as any).factCards ?? []) as FactCard[]}
+        blockers={[...DAPAN_SHOTS, ...MOTION_RUNS]}
+        centerX={PANEL_LEFT_X / 2}
+      />
 
       {/* 字幕改放到最上層（面板/日期/標題之後）並靠左 —— 見下方 LandscapeTitleCard 之後 */}
 

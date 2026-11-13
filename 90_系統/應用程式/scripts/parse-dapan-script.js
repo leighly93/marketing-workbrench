@@ -142,5 +142,15 @@ if (titleText) {
   console.log('ℹ️  script.txt 沒有標題段（=== 少於 2 個），video-meta.json.titleText 不變');
 }
 
+// ─── 補充字卡（2026-11-13）：Claude 排配圖寫的 public/claude-facts.json → video-meta.json.factCards ───
+// 每支都要重寫（沒有就清成 []），不然會帶到上一支的字卡；字元位置跟 _scriptCharTimes 同一套索引。
+let factCards = [];
+try {
+  const raw = JSON.parse(fs.readFileSync(path.join(ROOT, 'public', 'claude-facts.json'), 'utf-8'));
+  if (Array.isArray(raw)) factCards = raw;
+} catch (_) { /* 沒有字卡 */ }
+meta.factCards = factCards;
+if (factCards.length) console.log(`🧾 補充字卡 ${factCards.length} 張：${factCards.map((f) => f.items.map((it) => `${it.label} ${it.value}`).join('｜')).join('；')}`);
+
 fs.writeFileSync(VIDEO_META_PATH, JSON.stringify(meta, null, 2));
 console.log(`✅ 日期已寫入 video-meta.json.headerDate：${headerDate}`);

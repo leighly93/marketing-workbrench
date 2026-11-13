@@ -338,6 +338,20 @@ function stockCrop(crop, width, words = []) {
   return { x: 0, y: top, w: width, h: Math.max(1, bottom - top) };
 }
 
+/**
+ * Claude 的裁切落在個股頁的「頁首帶」（股名代號列～「可當沖」那列，分頁列以上）→ 也當股價卡。
+ * 2026-11-13 yg21：旁白「CCL的聯茂」，Claude 裁了標籤列、框「CCL銅箔基板」，股名被切掉（使用者：「沒有顯示出聯茂，股名被切掉了」）。
+ * 頁首帶裡除了股價區就是標籤／chip，單獨拿來當卡片都不對，一律換成標準股價卡（stockCrop）。
+ * 回傳頁首的代號詞（給 stockCrop 當錨點），不在頁首帶回 null。
+ */
+function stockHeaderBandCode(words, crop, width) {
+  if (!crop) return null;
+  const code = stockCodeWord(words, { x: 0, y: 0, w: width, h: width * 0.4 }, width);
+  if (!code) return null;
+  const mid = crop.y + crop.h / 2;
+  return mid < code.y + 13 * code.h ? code : null;
+}
+
 /** Claude 的裁切有包到股名代號那列 → 就是股價卡（不只靠它回 stock: true；它偶爾會漏） */
 function looksLikeStockHeader(words, crop, width) {
   if (!crop) return false;
@@ -426,5 +440,5 @@ function iou(a, b) {
 
 module.exports = {
   lastJsonObject,
-  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, buildCardPrompt, parseCardReply, expandChange, fitCrop, stockCrop, looksLikeStockHeader, changeCellIn, unscaleBox, unionBox, numbersIn, numberCheck, iou,
+  SYSTEM_PROMPT, rowsOf, candidates, buildPrompt, parseReply, buildCardPrompt, parseCardReply, expandChange, fitCrop, stockCrop, looksLikeStockHeader, stockHeaderBandCode, changeCellIn, unscaleBox, unionBox, numbersIn, numberCheck, iou,
 };
