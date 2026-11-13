@@ -17,16 +17,20 @@ import { type SerifTone, pickUnderlines, toneFor } from './serif-emphasis';
  * 大盤小報（橫式）明體字幕（2026-11-11 使用者定案，橫式預設使用）。
  *
  * 樣式來源：cmoney-ad-subtitles skill（同事「自動剪輯」系列）：
- *   思源宋體 Black、白字不描邊只加柔和陰影、重點詞直向漸層、
+ *   思源宋體 Black（2026-11-12 起改思源黑體 900，見 FONT_FAMILY）、白字不描邊只加柔和陰影、重點詞直向漸層、
  *   筆刷底線 0.12 秒後在 0.45 秒內由左往右畫出、字幕直接跳切、一次只出一行。
  * 大盤小報另外加了每句都有的半透明黑底框（使用者要求）。
  * 斷句與重點詞標記沿用 ../Subtitles.tsx（不另寫一套）；
  * 重點詞顏色與底線挑選規則在 ./serif-emphasis.ts。
  */
 
-const FONT_FAMILY = 'Noto Serif TC Black';
-// 完整字集轉 WOFF2（3.7MB）。不裁字：常用字表缺很多股票名用字（頎、錸、鈺、碁…）。
-const FONT_FILE = 'NotoSerifTC-Black.woff2';
+// 2026-11-12 使用者：「字幕字體改成粗黑體，明體有點難閱讀」→ 改用思源黑體（Noto Sans TC 可變字重）的 900。
+// 其他樣式（黑底框、重點詞漸層、筆刷底線、跳切）不變；元件名稱沿用 SerifSubtitles 以免牽動呼叫端。
+// 原本的明體檔 NotoSerifTC-Black.woff2 還留在 public/，要換回來改這三行即可。
+const FONT_FAMILY = 'Noto Sans TC Subtitle';
+// 完整字集（不裁字：常用字表缺很多股票名用字，頎、錸、鈺、碁…）。跟 src/fonts.ts 同一個檔。
+const FONT_FILE = 'NotoSansTC-VF.ttf';
+const FONT_WEIGHT = 900;
 
 const TONE_GRADIENT: Record<SerifTone, string> = {
   gold: 'linear-gradient(180deg, #FFF0AA 0%, #F7CD55 50%, #D69628 100%)',
@@ -43,7 +47,7 @@ const TONE_LINE: Record<SerifTone, [string, string, string]> = {
 function useSerifFont() {
   const [handle] = useState(() => delayRender(`load ${FONT_FAMILY}`));
   useEffect(() => {
-    const face = new FontFace(FONT_FAMILY, `url('${staticFile(FONT_FILE)}') format('woff2')`);
+    const face = new FontFace(FONT_FAMILY, `url('${staticFile(FONT_FILE)}') format('truetype')`, { weight: '100 900' });
     face
       .load()
       .then((f) => {
@@ -163,7 +167,8 @@ const SerifLine: React.FC<{
         bottom,
         transform: 'translateX(-50%)',
         whiteSpace: 'nowrap',
-        fontFamily: `"${FONT_FAMILY}", "Noto Serif TC", serif`,
+        fontFamily: `"${FONT_FAMILY}", "Noto Sans TC", sans-serif`,
+        fontWeight: FONT_WEIGHT,
         fontSize,
         lineHeight: 1.25,
         color: '#ffffff',

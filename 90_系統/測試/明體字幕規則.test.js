@@ -70,3 +70,11 @@ test('明體字型是完整 WOFF2 並附授權', () => {
     /SIL OPEN FONT LICENSE/,
   );
 });
+
+test('字幕字型 2026-11-12 起改思源黑體 900（使用者：明體難閱讀），用完整字集的可變字重檔', () => {
+  const src = fs.readFileSync(applicationPath(ROOT, 'src/DapanXiaobao/SerifSubtitles.tsx'), 'utf8');
+  assert.match(src, /const FONT_FILE = 'NotoSansTC-VF\.ttf'/);
+  assert.match(src, /const FONT_WEIGHT = 900/);
+  assert.match(src, /fontWeight: FONT_WEIGHT/);
+  assert.ok(fs.statSync(applicationPath(ROOT, 'public/NotoSansTC-VF.ttf')).size > 5 * 1024 * 1024, '完整字集');
+});
