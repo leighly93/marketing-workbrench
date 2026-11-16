@@ -49,7 +49,7 @@ test('prompt 範例的檔名用這支實際的第一張圖，不再寫死 shot1.
   const p = planner.buildPrompt({ units: UNITS, images: [{ file: 'shot1.png', label: '圖1（shot1.png，大盤 · 台灣指數）', ocr: '' }] });
   assert.match(p, /"image":"shot1\.png"/);
   assert.doesNotMatch(p, /shot1\.jpg/);
-  assert.match(p, /照抄上面括號裡的檔名/);
+  assert.match(p, /照抄上面的檔名/);
   assert.match(p, /圖1（shot1\.png，大盤 · 台灣指數）/);
 });
 

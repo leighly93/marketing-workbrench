@@ -240,7 +240,18 @@ function fitCrop(crop, cell, width, height, pad = 24) {
  * 一次問完整段：crop ＋ 每一句（U 編號）各自框哪裡。
  * @param steps [{ id: 'U12', text: '聯發科大漲9.88%' }]
  */
-function buildCardPrompt({ steps, page, listing, width, height, note = '' }) {
+/** 人工示範（比例座標）→ prompt 文字，座標換成這張圖送出去的尺寸 */
+function examplesText(examples, width, height) {
+  if (!examples || !examples.length) return '';
+  const px = (b) => (b ? `[${Math.round(b.x * width)}, ${Math.round(b.y * height)}, ${Math.round(b.w * width)}, ${Math.round(b.h * height)}]` : '（整張）');
+  return [
+    '剪輯師以前在**同一種頁面**（同版面、同長寬比）是這樣選的，座標已換算成這張圖，參考人的習慣：',
+    ...examples.map((e) => `- 旁白「${String(e.phrase).slice(0, 40)}」→ 卡片 ${px(e.region)}、金框 ${px(e.cell)}`),
+    '版面一樣、講的是同類內容時，卡片範圍與框的位置優先照人的習慣；這次旁白講的東西不同就以這次為準。股價卡規則仍然優先。',
+  ].join('\n');
+}
+
+function buildCardPrompt({ steps, page, listing, width, height, note = '', examples = [] }) {
   return [
     '這是一張 APP 截圖。影片會把講到的那一塊 UI 裁出來做成一張卡片，旁白一句一句講，金框跟著每一句移到它講的地方。',
     '',
@@ -270,6 +281,8 @@ function buildCardPrompt({ steps, page, listing, width, height, note = '' }) {
     '- 個股被點名（例「就連大哥台積電」「聯發科都撐不住」「欣興等 PCB 族群更是重災區」）算有講到它：框它的漲跌幅（點數＋百分比）。',
     '- 圖上沒有對應的東西（開場、評論、圖上沒有的項目）→ none: true。',
     '- 優先從編號挑（words／rows）；OCR 沒讀到的部分才用 box: [x, y, w, h] 補，兩者會合併。',
+    '',
+    examplesText(examples, width, height),
     '',
     ...(note ? [`剪輯師對這支片的指示（跟這張圖有關才照做）：${note}`, ''] : []),
     '只輸出 JSON：{"crop":[0,120,1206,300],"stock":false,"steps":[{"unit":"U12","words":["W7"],"rows":[],"box":null,"none":false}],"why":"一句話"}',

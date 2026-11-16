@@ -1798,7 +1798,8 @@ function recordCorrections(job, before, edits) {
   // 一筆都留不下來。`buildCounterfactual()` 在準備階段多跑了一次 `--no-annots`，
   // 這裡拿那份「AI 本來會怎麼配」來對照（2026-08-21 使用者：「要，而且要真的比對」）。
   // 對照組算失敗（檔案不在）就整段跳過 —— 寧可少記，不要記出假的比對。
-  try {
+  // 重新出片原封不動帶過來的標注：來源工作已經記過這些「人工標記」，不重複記（2026-11-13）
+  if (!annotsInheritedUnchanged(job)) try {
     const ann = JSON.parse(fs.readFileSync(
       jobPath(job.id, 'input', 'annotations.json'), 'utf-8')).shots || [];
     const cf = JSON.parse(fs.readFileSync(
@@ -2700,6 +2701,21 @@ function readMessages() {
  * ⚠️ 圖片的頁型／代號要從**這支工作的快照**讀（jobs/<id>/state），不能讀 ROOT ——
  *    按確認的當下 ROOT 可能已經被下一支工作佔用了。
  */
+/**
+ * 這支的標注是不是「重新出片原封不動帶過來的」（2026-11-13）。
+ * 重新出片會把來源工作的 annotations.json 複製過來；那批人工選法來源工作已經記過、學過了，
+ * 每重出一次再記一次，修正紀錄會重複（11/12～13 的 71 筆裡 68 筆是重複），記憶的次數也被灌水。
+ * 跟來源一字不差 → true（不記不學）；人在重出前改過、或不是重新出片 → false（照常）。
+ */
+function annotsInheritedUnchanged(job) {
+  if (!job || !job.redoOf) return false;
+  try {
+    const mine = fs.readFileSync(jobPath(job.id, 'input', 'annotations.json'), 'utf-8');
+    const theirs = fs.readFileSync(jobPath(job.redoOf, 'input', 'annotations.json'), 'utf-8');
+    return mine === theirs;
+  } catch (_) { return false; }
+}
+
 function learnFromEdits(job, edits) {
   try {
     const state = jobPath(job.id, 'state');
@@ -2724,7 +2740,8 @@ function learnFromEdits(job, edits) {
     // 就是唯一會進成品的東西，不學它等於整個記憶庫再也收不到料。
     // 按「標好了，直接出片」的工作更是完全沒有 edits，能學的全部在這裡。
     const seen = new Set(items.map((it) => `${it.src}@${it.startCharIdx}`));
-    try {
+    // 重新出片原封不動帶過來的標注，來源工作已經學過 → 不重學（只學這次真的動過的 edits）
+    if (!annotsInheritedUnchanged(job)) try {
       const ann = JSON.parse(fs.readFileSync(
         jobPath(job.id, 'input', 'annotations.json'), 'utf-8')).shots || [];
       for (const a of ann) {

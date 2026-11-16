@@ -559,6 +559,10 @@ function reuseAppImages(shots, pub) {
     const b = Object.keys(sources).sort();
     if (a.length !== b.length || a.some((k, i) => k !== b[i])) return false;
     if (a.some((k) => now[k] !== sources[k])) return false;
+    // 每一張都要真的有分析結果才沿用（2026-11-13 j2ps：舊工作事後補上傳的 shot12～14.jpg 從沒被分析過，
+    // 沿用後這 3 張不在分析檔裡，Claude 排配圖根本沒看到它們）
+    const analyzed = new Set(cache.images.map((im) => im && im.file));
+    if (a.some((k) => !analyzed.has(k))) return false;
 
     fsx.writeFileSync(resolve(PROJECT_DIR, "src", "app-images.generated.json"),
       JSON.stringify({ images: cache.images }, null, 2));

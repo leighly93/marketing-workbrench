@@ -242,3 +242,37 @@ test('卡片內推近：單張卡片太窄（< 700px）又有金框時，每句�
   assert.match(src, /glowOpacity=\{glowIn\}/, '金框等推完才淡入');
   assert.match(src, /if \(h2 >= crop\.h \* 0\.85\) return null;/, '推了也放大不了多少就不推');
 });
+
+test('分析檔裡沒有的截圖也要給 Claude 看（2026-11-13 j2ps：補上傳的 shot12～14.jpg 一張都沒用到）', (t) => {
+  const ws = workspace(t);
+  fs.writeFileSync(path.join(ws.pub, 'shot2.jpg'), PNG);          // 沒進分析檔
+  fs.writeFileSync(path.join(ws.pub, 'dapan-bgm.png'), PNG);      // 套版素材不算
+  const r = plan(ws);
+  assert.match(r.stdout, /分析檔裡沒有、照樣給 Claude 看的截圖：shot2\.jpg/);
+  const calls = fs.readFileSync(path.join(ws.dir, 'calls.log'), 'utf8').split('\n')[0];
+  assert.match(calls, /附了 2 張 APP 截圖/);
+  assert.match(calls, /依序是：shot1\.png、shot2\.jpg/);
+  assert.doesNotMatch(calls, /dapan-bgm/);
+});
+
+test('重新出片沿用 OCR：每一張都要有分析結果才沿用，不然重跑（少分析的圖不能被略過）', () => {
+  const run = fs.readFileSync(path.join(APP, 'run.js'), 'utf8');
+  const body = run.slice(run.indexOf('function reuseAppImages'), run.indexOf('沿用它的版面偵測結果'));
+  assert.match(body, /const analyzed = new Set\(cache\.images\.map/);
+  assert.match(body, /if \(a\.some\(\(k\) => !analyzed\.has\(k\)\)\) return false;/);
+});
+
+test('超過 9 張圖：照檔名數字順序排、標籤只寫檔名（2026-11-13「圖3（shot11.png）」被回成 shot3）', (t) => {
+  const ws = workspace(t);
+  for (const n of [2, 10, 11]) fs.writeFileSync(path.join(ws.pub, `shot${n}.png`), PNG);
+  const r = plan(ws);
+  assert.match(r.stdout, /Claude 排配圖/);
+  const first = fs.readFileSync(path.join(ws.dir, 'calls.log'), 'utf8').split('\n')[0];
+  assert.match(first, /依序是：shot1\.png、shot2\.png、shot10\.png、shot11\.png/);
+  assert.doesNotMatch(first, /圖\d+（shot/);
+});
+
+test('prompt：同內容有整頁截圖和精簡圖時優先用精簡的（2026-11-13 j2ps 營收表）', () => {
+  const p = planner.buildPrompt({ units: UNITS, images: [{ file: 'shot1.png', label: 'shot1.png', ocr: '' }] });
+  assert.match(p, /優先用精簡的那張/);
+});

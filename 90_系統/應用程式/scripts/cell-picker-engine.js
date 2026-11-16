@@ -90,13 +90,13 @@ function pick({ imagePath, words, width, height, phrase, page, withCrop = false 
  *   stock＝股價卡（裁切左右整張寬、沒框的句子自動框漲跌幅，source='auto-change'）
  * crop 一定包住所有句子的金框（cell-picker.js 的 fitCrop）。
  */
-function pickCard({ imagePath, words, width, height, steps, page, note = '' }) {
+function pickCard({ imagePath, words, width, height, steps, page, note = '', examples = [] }) {
   if (!enabled()) return { status: 'off' };
   if (ENGINE !== 'claude-cli') return { status: 'failed', error: `不認得的 CELL_PICKER：${ENGINE}` };
   const fit = fitSize(width, height);
   const scale = fit.scale;
   const cands = picker.candidates(words, scale);
-  const prompt = picker.buildCardPrompt({ steps, page, listing: cands.listing, width: fit.width, height: fit.height, note });
+  const prompt = picker.buildCardPrompt({ steps, page, listing: cands.listing, width: fit.width, height: fit.height, note, examples });
   const r = runClaude({ prompt, system: picker.SYSTEM_PROMPT, images: [{ path: imagePath, width, height }] });
   if (!r.ok) return { status: 'failed', error: r.error };
   const reply = picker.parseCardReply(r.text, cands, steps.map((x) => x.id));
@@ -158,9 +158,10 @@ function planAssignments({ units, images, note = '' }) {
   if (!units.length) return { status: 'failed', error: '稿件沒有子句' };
   const planner = require('./shot-planner');
   const { pageName } = require('./app-pages');
-  const listed = images.map((im, k) => {
+  const listed = images.map((im) => {
     const zh = pageName(im.page);
-    return { file: im.file, label: `圖${k + 1}（${im.file}${zh ? `，${zh}` : ''}）`, ocr: planner.ocrSummary(im.words) };
+    // 標籤只寫檔名：另外編「圖N」會跟 shotN 混淆（2026-11-13，「圖3（shot11.png）」被回成 shot3.png）
+    return { file: im.file, label: `${im.file}${zh ? `（${zh}）` : ''}`, ocr: planner.ocrSummary(im.words) };
   });
   const prompt = planner.buildPrompt({ units, images: listed, note });
   const r = runClaude({

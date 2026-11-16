@@ -75,14 +75,37 @@ function main() {
     const real = imageSize(file) || {};
     const size = pickImageSize(im, { imgW: real.width, imgH: real.height });
     // 分析檔是別張同名圖留下的（尺寸對不上）→ 圖照送，但 OCR 字不能用
-    images.push({ file: im.file, path: file, width: size.width, height: size.height, words: size.stale ? [] : (im.words || []), page: im.page });
+    images.push({ file: im.file, path: file, width: size.width, height: size.height, words: size.stale ? [] : (im.words || []),
+      page: size.stale ? 'unknown' : im.page, stockCode: size.stale ? null : im.stockCode });
   }
+  // 分析檔裡沒有的截圖（事後補上傳、或沿用了不完整的舊分析）也要給 Claude 看：圖照送，只是沒有 OCR 字。
+  // 2026-11-13 j2ps：shot12～14.jpg 不在分析檔裡，整理好的營收表一張都沒用到。
+  const TEMPLATE_ASSET = /^(dapan|focusstock|institution|midday|usstock)-|^(frame|logo)\.png$|^NotoSans|^NotoSerif/i;
+  const listed = new Set(images.map((im) => im.file));
+  let extra = [];
+  try {
+    extra = fs.readdirSync(PUBLIC).filter((f) => /\.(png|jpe?g)$/i.test(f) && !TEMPLATE_ASSET.test(f) && !listed.has(f));
+  } catch (_) {}
+  for (const f of extra.sort((x, y) => x.localeCompare(y, undefined, { numeric: true }))) {
+    const real = imageSize(path.join(PUBLIC, f));
+    if (!real) continue;
+    images.push({ file: f, path: path.join(PUBLIC, f), width: real.width, height: real.height, words: [], page: 'unknown' });
+  }
+  if (extra.length) console.log(`（分析檔裡沒有、照樣給 Claude 看的截圖：${extra.join('、')}）`);
+  // 照檔名的數字順序排（shot1、shot2…shot10），不照字串排（shot1、shot10、shot11、shot2…）。
+  // 2026-11-13 j2ps 14 張圖：清單寫「圖3（shot11.png）」，Claude 把「圖3」當成 shot3 回，整排錯位。
+  images.sort((x, y) => x.file.localeCompare(y.file, undefined, { numeric: true }));
   if (!images.length) done('Claude 排配圖：沒有截圖，照舊用人工標注');
 
   if (NOTE) console.log(`（這支有給 Claude 的指示：${NOTE.slice(0, 80)}${NOTE.length > 80 ? '…' : ''}）`);
   const plan = engine.planAssignments({ units, images, note: NOTE });
   if (plan.status !== 'planned') done(`Claude 排配圖：第一步失敗（${plan.error || plan.status}），照舊用人工標注`);
   if (!plan.segments.length) done('Claude 排配圖：Claude 判斷沒有句子適合配圖，照舊用人工標注');
+
+  // 人工示範（90_系統/資料/shot-memory.json 的 pagesMulti）：同一種頁面以前人怎麼裁、怎麼框，給 Claude 參考
+  const memory = require('./shot-memory');
+  const pagesMulti = memory.read(workspaceRoot(ROOT)).pagesMulti;
+  let exampled = 0;
 
   const shots = [];
   let boxed = 0;
@@ -91,7 +114,13 @@ function main() {
     const segUnits = units.filter((u) => u.startCharIdx >= seg.startCharIdx && u.endCharIdx <= seg.endCharIdx);
     const steps = segUnits.map((u) => ({ id: `U${u.i}`, text: u.text, startCharIdx: u.startCharIdx, endCharIdx: u.endCharIdx }));
     const r = steps.length
-      ? engine.pickCard({ imagePath: im.path, words: im.words, width: im.width, height: im.height, steps, page: im.page, note: NOTE })
+      ? engine.pickCard({ imagePath: im.path, words: im.words, width: im.width, height: im.height, steps, page: im.page, note: NOTE,
+        examples: (() => {
+          const ex = memory.examplesFor(pagesMulti, memory.memKeyOf({ page: im.page, width: im.width, height: im.height, stockCode: im.stockCode }),
+            steps.map((x) => x.text).join(''));
+          if (ex.length) exampled++;
+          return ex;
+        })() })
       : { status: 'failed', error: '這段沒有完整的子句' };
     const region = r.status === 'picked' ? r.crop : { x: 0, y: 0, w: im.width, h: im.height };
     const base = { src: seg.src, title: seg.title, region, imgW: im.width, imgH: im.height };
@@ -132,6 +161,7 @@ function main() {
   fs.writeFileSync(OUT, JSON.stringify({ by: 'claude', at: new Date().toISOString(), shots }, null, 2));
   const lines = shots.map((s) => `   ${s.src}「${s.title}」字 ${s.startCharIdx}–${s.endCharIdx}${s.cell ? '' : '（不框）'}`);
   const mlines = (plan.motions || []).map((m) => `   動態 字 ${m.startCharIdx}–${m.endCharIdx}（${m.why}）`);
+  if (exampled) console.log(`（${exampled} 張卡片附上了人工示範：同一種頁面以前剪輯師怎麼裁、怎麼框）`);
   const flines = facts.map((f) => `   字卡 字 ${f.startCharIdx}–${f.endCharIdx}：${f.items.map((it) => `${it.label} ${it.value}`).join('｜')}`);
   done(`Claude 排配圖：${plan.segments.length} 張卡片、${shots.length} 段金框位置（${boxed} 段有框）、`
     + `${(plan.motions || []).length} 段動態、${facts.length} 張補充字卡 → ${path.relative(ROOT, OUT)}\n${lines.concat(mlines, flines).join('\n')}`);

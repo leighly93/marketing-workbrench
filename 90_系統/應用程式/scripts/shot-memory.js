@@ -212,4 +212,23 @@ function pickForPhrase(pagesMulti, key, text) {
            total: list.reduce((a, e) => a + (e.hits || 0), 0) };
 }
 
-module.exports = { memKeyOf, mergeRuns, read, learn, pickForPhrase, FILE };
+/**
+ * 給 Claude 參考的人工示範（2026-11-13 使用者：「之前有做紀錄讓 OCR 看截圖人怎麼選怎麼用，那個現在有幫助嗎」→ 接上）。
+ * 同一種頁面（memKey）的多筆紀錄裡，挑旁白最像的最多 n 筆（分數同 pickForPhrase；都不像就挑被用最多次的）。
+ * 回 [{ phrase, cell, region, hits }]，座標是比例（0～1），呼叫端自己換算成圖的像素。
+ */
+function examplesFor(pagesMulti, key, text, n = 3) {
+  const list = (pagesMulti && key && pagesMulti[key]) || [];
+  if (!list.length) return [];
+  const cn = (t) => String(t).replace(/[^一-鿿]/g, '');
+  const grams = (t) => { const g = new Set(); const c = cn(t); for (let i = 0; i + 2 <= c.length; i++) g.add(c.slice(i, i + 2)); return g; };
+  const G = grams(text || '');
+  const ranked = list.filter((e) => e && e.cell && (e.phrases || []).length).map((e) => {
+    let sc = 0, bp = e.phrases[0];
+    for (const ph of e.phrases) { let x = 0; for (const g of grams(ph)) if (G.has(g)) x++; if (x > sc) { sc = x; bp = ph; } }
+    return { phrase: bp, cell: e.cell, region: e.region || null, hits: e.hits || 1, sc };
+  }).sort((a, b) => b.sc - a.sc || b.hits - a.hits);
+  return ranked.slice(0, n).map(({ sc, ...r }) => r);
+}
+
+module.exports = { memKeyOf, mergeRuns, read, learn, pickForPhrase, examplesFor, FILE };
