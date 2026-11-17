@@ -932,6 +932,7 @@ async function loadJob() {
         '也存進成品庫了（不會自動清）：　' + job.archived.join('　/　')));
     parts.push(card);
     parts.push(pronounceReportCard(job));
+    if (job.claudePlanned) parts.push(claudeReviewCard(job));
   }
 
   if (['done', 'failed'].includes(job.status)) parts.push(redoCard(job));
@@ -1033,6 +1034,115 @@ function redoCard(job) {
         }
       } }, '♻ 重新出片'),
       busyMsg));
+}
+
+/**
+ * 檢查配圖（2026-11-17 使用者定案）：Claude 排好就直接出片，沒人改過 → 修正紀錄與記憶庫都不長東西。
+ * 這裡讓看片的人逐段標「沒問題／配錯圖／框錯位置／不該放截圖／其他」，配錯圖、框錯位置可以直接拖出正確的框。
+ * 送出 → 伺服器寫進修正紀錄（Claude排錯）、拖過的正確框學進記憶庫；
+ * 「照修正重新出片」→ 改過的段落鎖住照人的，其他再交給 Claude 排（只說錯沒給答案的會自動寫成給 Claude 的指示）。
+ * 狀態放在 REVIEW（照工作 ID），頁面輪詢重畫也不會把還沒送出的標記洗掉。
+ */
+const REVIEW = {};
+const REVIEW_VERDICTS = [['ok', '👍 沒問題'], ['wrongImage', '配錯圖'], ['wrongBox', '框錯位置'], ['noShot', '不該放截圖'], ['other', '其他']];
+
+function claudeReviewCard(job) {
+  const card = el('div', { class: 'card' }, el('h2', {}, '檢查配圖　—　Claude 排的'),
+    el('div', { class: 'note', html:
+      '看完影片，覺得哪一段配得不對就標起來。<b>配錯圖</b>、<b>框錯位置</b>會打開框選編輯器，直接改成正確的；'
+      + '按<b>送出檢查</b>才會記錄（寫進修正紀錄，拖過的正確框會學起來，之後同一種頁面 Claude 會參考）。<br>'
+      + '送出後可以按<b>照修正重新出片</b>：改過的段落照你的，其他再交給 Claude 排，不會重新呼叫 HeyGen。' }));
+  const body = el('div', { style: 'margin-top:12px' }, el('div', { class: 'note' }, '讀取中…'));
+  card.append(body);
+  const st = REVIEW[job.id];
+  if (st && st.data) drawClaudeReview(job, body);
+  else {
+    api(`/api/jobs/${job.id}/claude-review`).then((data) => {
+      const items = {};
+      for (const it of (data.review && data.review.items) || []) items[it.i] = { ...it };
+      REVIEW[job.id] = { data, items, saved: !!data.review, msg: '' };
+      drawClaudeReview(job, body);
+    }).catch((e) => body.replaceChildren(el('div', { class: 'note' }, '讀不到這支的配圖計畫：' + e.message)));
+  }
+  return card;
+}
+
+function drawClaudeReview(job, body) {
+  const st = REVIEW[job.id];
+  const { rows, images } = st.data;
+  const list = rows.map((r) => {
+    const it = st.items[r.i];
+    const shown = it && it.verdict !== 'noShot' && it.verdict !== 'ok' && it.src
+      ? { src: it.src, region: it.region, cell: it.cell, imgW: it.imgW || r.imageWidth, imgH: it.imgH || r.imageHeight, _manual: true }
+      : { src: r.src, region: r.region, cell: r.cell, imgW: r.imageWidth, imgH: r.imageHeight };
+    const edit = (pickImage) => {
+      CHARS = st.data.chars || CHARS;
+      edCtx = { job, mode: 'review', drag: null, src: shown.src, mode2: 'cell',
+        region: shown.region ? { ...shown.region } : null, cell: shown.cell ? { ...shown.cell } : null,
+        arrow: null, arrowColor: ARROW_DEFAULT, from: r.startCharIdx, to: r.endCharIdx,
+        done: (res) => {
+          st.items[r.i] = { ...(st.items[r.i] || {}), i: r.i, ...res, verdict: (st.items[r.i] || {}).verdict || (pickImage ? 'wrongImage' : 'wrongBox') };
+          st.saved = false; drawClaudeReview(job, body);
+        } };
+      $('#edTitle').textContent = r.phrase || '這一段';
+      $('#edNote').textContent = pickImage ? '在上面的縮圖列選正確的截圖，需要的話再拖出黃框與顯示區域。' : '拖出正確的黃框與顯示區域。';
+      setEdArrow(null);
+      drawEdColors();
+      setEdMode('cell');
+      drawStrip(images);
+      loadEdImage(shown.src);
+      $('#edRangeWrap').hidden = true;   // 段落範圍沿用 Claude 排的，這裡不改
+      $('#ed').style.display = 'flex';
+    };
+    const setVerdict = (v) => {
+      st.items[r.i] = { ...(st.items[r.i] || {}), i: r.i, verdict: v };
+      if (v === 'ok' || v === 'noShot') { delete st.items[r.i].src; delete st.items[r.i].region; delete st.items[r.i].cell; }
+      st.saved = false;
+      drawClaudeReview(job, body);
+      if (v === 'wrongImage') edit(true);
+      if (v === 'wrongBox') edit(false);
+    };
+    const changed = it && it.src && (it.src !== r.src || JSON.stringify(it.cell || null) !== JSON.stringify(r.cell || null)
+      || JSON.stringify(it.region || null) !== JSON.stringify(r.region || null));
+    const noteIn = it && it.verdict !== 'ok' ? el('input', { type: 'text', value: it.note || '', maxlength: 300,
+      placeholder: '一句話說明（可不填）', style: 'width:100%;margin-top:6px;font-size:13.5px;padding:6px 8px;box-sizing:border-box',
+      oninput: (e) => { st.items[r.i].note = e.target.value; st.saved = false; } }) : null;
+    return el('div', { style: 'display:flex;gap:12px;padding:10px 0;border-top:1px solid var(--line)' },
+      preview(job, shown, () => edit(false)),
+      el('div', { style: 'flex:1;min-width:0' },
+        el('div', { style: 'font-size:14px;margin-bottom:6px' }, r.phrase || '—',
+          el('span', { style: 'color:var(--dim);font-size:12.5px;margin-left:8px' }, shown.src)),
+        el('div', { class: 'modes', style: 'flex-wrap:wrap' }, ...REVIEW_VERDICTS.map(([v, label]) =>
+          el('div', { class: it && it.verdict === v ? 'on' : '', style: 'flex:0 0 auto;padding:4px 10px;font-size:13px',
+            onclick: () => setVerdict(v) }, label))),
+        changed ? el('div', { style: 'margin-top:6px;font-size:12.5px;color:#c98a00' },
+          it.src !== r.src ? `已改成 ${it.src}${it.cell ? '＋新的黃框' : ''}` : '已改了框') : null,
+        noteIn));
+  });
+  const marked = Object.values(st.items).filter((x) => x.verdict && x.verdict !== 'ok').length;
+  const send = el('button', { class: 'go', onclick: async (e) => {
+    e.target.disabled = true;
+    try {
+      const r = await api(`/api/jobs/${job.id}/claude-review`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ by: ($('#owner') && $('#owner').value) || '', items: Object.values(st.items) }) });
+      st.saved = true;
+      st.msg = `已送出：新記 ${r.logged} 筆修正紀錄${r.learned ? `、${r.learned} 個正確框學起來了` : ''}。`;
+    } catch (err) { st.msg = '送出失敗：' + err.message; }
+    drawClaudeReview(job, body);
+  } }, '送出檢查');
+  const redo = st.saved && marked ? el('button', { class: 'ghost', style: 'margin-left:10px', onclick: async (e) => {
+    if (!confirm('照這次的修正重新出片？改過的段落照你的，其他再交給 Claude 排（不會重新呼叫 HeyGen）。')) return;
+    e.target.disabled = true;
+    try {
+      const r = await api(`/api/jobs/${job.id}/redo`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: '', useReview: true }) });
+      openJob = r.job.id; jobSig = null; go('job');
+    } catch (err) { e.target.disabled = false; alert('重新出片失敗：' + err.message); }
+  } }, '♻ 照修正重新出片') : null;
+  body.replaceChildren(...list,
+    el('div', { style: 'margin-top:14px;display:flex;align-items:center;flex-wrap:wrap;gap:6px' }, send, redo || '',
+      el('span', { style: 'margin-left:10px;font-size:12.5px;color:var(--dim)' },
+        st.msg || (marked ? `標了 ${marked} 段${st.saved ? '' : '，還沒送出'}` : '每一段都還沒標'))));
 }
 
 /** 重新出片複製完的確認關卡（新工作停在 draft，按了才真的排進佇列）。 */
@@ -2091,7 +2201,7 @@ window.addEventListener('resize', () => { if (edCtx) drawEdBox(); });
 $('#edClearRegion').onclick = () => { edCtx.region = null; drawEdBox(); };
 $('#edClearCell').onclick = () => { edCtx.cell = null; drawEdBox(); };
 $('#edClearArrow').onclick = () => { edCtx.arrow = null; drawEdBox(); };
-$('#edCancel').onclick = () => { $('#ed').style.display = 'none'; edCtx = null; };
+$('#edCancel').onclick = () => { $('#ed').style.display = 'none'; $('#edRangeWrap').hidden = false; edCtx = null; };
 
 function openEditor(job, pv, row, done) {
   const e = edits[row.i];
@@ -2114,6 +2224,14 @@ function openEditor(job, pv, row, done) {
 }
 
 $('#edOK').onclick = () => {
+  // 檢查配圖（2026-11-17）：只回傳圖與框，段落範圍沿用 Claude 排的
+  if (edCtx.mode === 'review') {
+    const { done } = edCtx;
+    const res = { src: edCtx.src, region: edCtx.region, cell: edCtx.cell, imgW: edCtx.natW, imgH: edCtx.natH };
+    $('#ed').style.display = 'none'; $('#edRangeWrap').hidden = false; edCtx = null;
+    done(res);
+    return;
+  }
   // 標注模式：存「哪一段子句範圍」，不是秒數（秒數要等語音轉字幕才存在）
   if (edCtx.mode === 'annot') {
     if (edCtx.from == null) return alert('還沒選範圍 —— 在下面的腳本上點一下或拖選');
@@ -2960,6 +3078,14 @@ async function loadFix() {
         ? `${r.from}　${r.autoCellText || ''} ${pair(r.autoCell, r.autoRegion, null)}`.trim()
         : blank;
       after = `${r.to}　${pair(r.manualCell, r.manualRegion, r.manualArrow)}`;
+    }
+    // 檢查配圖（2026-11-17）：Claude 排的 vs 人在成品頁改成什麼
+    if (r.type === 'Claude排錯') {
+      const pair = (cell, region) => [cell ? '黃框 ' + fmtCell(cell, r.size) : null,
+        region ? '區域 ' + fmtCell(region, r.size) : null].filter(Boolean).join('　') || '整張顯示';
+      before = `${r.from}　${pair(r.autoCell, r.autoRegion)}`;
+      after = r.manualCell || r.manualRegion || r.to !== r.from ? `${r.to}　${r.manualCell || r.manualRegion ? pair(r.manualCell, r.manualRegion) : ''}`.trim()
+        : `${r.kind}（沒給正確答案）`;
     }
     const reason = [...((r.reason && r.reason.tags) || []), (r.reason && r.reason.note) || '']
       .filter(Boolean).join('／');

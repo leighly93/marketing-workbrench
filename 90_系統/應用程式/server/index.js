@@ -36,6 +36,7 @@ const { spawn, execFileSync } = require('child_process');
 const SHOT_MEMORY = require('../scripts/shot-memory');
 const { resolveManualOverlaps } = require('../scripts/script-utils');
 const { imageSize, pickImageSize } = require('../scripts/image-size');
+const CLAUDE_REVIEW = require('../scripts/claude-review');   // 檢查 Claude 排的配圖（2026-11-17）
 const jobDedupe = require('../scripts/job-dedupe');   // 工作紀錄裡內容相同的檔只佔一份空間（2026-11-17）
 const { detach } = jobDedupe;
 // 2026-08-27：自動唸法檢查（scripts/check-pronunciation.js）不再由伺服器跑。
@@ -121,6 +122,8 @@ const REASON_TAGS = [
 // 為什麼要另外一份 —— corrections 原本只存在 jobs/<id>/job.json，前台按「刪除」就一起消失
 // （2026-08-18 實際狀況：19 支只剩 2 支留著）。這份進版控，換電腦、重裝、刪工作都不會丟。
 const CORRECTIONS_LOG = dataPath(WORKSPACE_ROOT, 'corrections.jsonl');
+// Claude 每支排的配圖計畫（2026-11-17）：只留在各自工作裡的話，刪工作就沒了、也沒辦法跨支查「這種頁面 Claude 通常怎麼排」
+const CLAUDE_PLANS_LOG = dataPath(WORKSPACE_ROOT, 'claude-plans.jsonl');
 
 // 同事的留言／唸法回報。同樣是 append-only、進版控 —— 理由同上，留言更不該跟著工作被清掉。
 // 「已讀／收錄」不是就地改，是再追加一行 { op:'status', id, status }，讀的時候摺疊起來。
@@ -441,6 +444,8 @@ function clearWorkspaceInputs() {
   rmrf(path.join(pub, 'claude-facts.json'));
   // 截圖原始檔名（2026-11-16 檔名提示）：別支的對照表留著，會把同名 shotN 配到不相干的句子
   rmrf(path.join(pub, SHOT_NAMES_FILE));
+  // 「照修正重新出片」鎖住的段落（2026-11-17）：別支的留著會把不相干的圖硬塞進這支
+  rmrf(path.join(pub, CLAUDE_FIXED_FILE));
   // 重新出片的 OCR 沿用檔同理（2026-09-18）。run.js 那邊本來就會逐張比對 md5、對不上不沿用，
   // 所以留著也不會誤用；但殘留檔本身就是坑（同一類的「撞名截圖用到上一支的尺寸」踩過），
   // 這支工作沒帶沿用檔就不該在 public 看到別人的。
@@ -903,6 +908,83 @@ function motionEntriesFor(job) {
 
 /** 重新出片時寫給 Claude 的指示（只影響那一支），放在工作 input/，跟著素材進 public/ */
 const CLAUDE_NOTE_FILE = 'claude-note.txt';
+/** 「照修正重新出片」：上一支檢查配圖時人改過的段落，鎖住照人的（claude-shot-plan.js 的 --fixed） */
+const CLAUDE_FIXED_FILE = 'claude-fixed.json';
+
+/**
+ * Claude 排的計畫寫進 claude-plans.jsonl；重新出片有寫指示的話，修正紀錄記一筆「Claude指示」
+ * （上一支怎麼排、指示寫什麼、這次怎麼排）。同一支只寫一次。失敗只寫 log。
+ */
+function logClaudePlan(job) {
+  if (!planByClaude(job) || job.claudePlanLoggedAt) return;
+  try {
+    const read = (id) => JSON.parse(fs.readFileSync(jobPath(id, 'state', 'public', 'claude-annotations.json'), 'utf-8')).shots || [];
+    const chars = (job.planView && job.planView.chars) || [];
+    const shots = CLAUDE_REVIEW.shotsSummary(read(job.id), chars);
+    let motions = [];
+    try { motions = JSON.parse(fs.readFileSync(jobPath(job.id, 'state', 'public', 'claude-motion.json'), 'utf-8')); } catch (_) {}
+    const at = nowISO();
+    ensureDir(path.dirname(CLAUDE_PLANS_LOG));
+    fs.appendFileSync(CLAUDE_PLANS_LOG, JSON.stringify({ at, job: job.id, template: job.template,
+      title: (job.title || '').replace(/\n/g, ' '), redoOf: job.redoOf || null, note: job.claudeNote || null,
+      fixed: !!job.claudeFixed, shots, motions }) + '\n');
+    job.claudePlanLoggedAt = at;
+    if (job.redoOf && (job.claudeNote || job.claudeFixed)) {
+      let before = [];
+      try {
+        const src = getJob(job.redoOf);
+        before = CLAUDE_REVIEW.shotsSummary(read(job.redoOf), (src && src.planView && src.planView.chars) || chars);
+      } catch (_) {}
+      appendCorrectionRows(job, [{
+        type: 'Claude指示', phrase: job.claudeNote || '（照檢查配圖的修正重出）',
+        from: before.map((x) => `${x.src}「${x.phrase.slice(0, 14)}」`).join('、') || '（上一支沒有 Claude 的計畫）',
+        to: shots.map((x) => `${x.src}「${x.phrase.slice(0, 14)}」`).join('、'),
+        redoOf: job.redoOf, note: job.claudeNote || null, before, after: shots,
+        autoWhy: `重新出片時給 Claude 的指示${job.claudeFixed ? '＋鎖住人工修正的段落' : ''}；前後兩次的排法都記下來`,
+      }]);
+    }
+  } catch (e) {
+    appendLog(job, `\n⚠️ Claude 計畫紀錄寫入失敗（不影響出片）：${e.message}\n`);
+  }
+}
+
+/** 追加修正紀錄（不受 appendCorrectionsLog「一支只寫一次」的限制，呼叫端自己去重） */
+function appendCorrectionRows(job, rows) {
+  if (!rows.length) return;
+  const at = nowISO();
+  ensureDir(path.dirname(CORRECTIONS_LOG));
+  fs.appendFileSync(CORRECTIONS_LOG, rows.map((d) => JSON.stringify({
+    at, job: job.id, template: job.template, by: d.by || job.owner || '',
+    title: (job.title || '').replace(/\n/g, ' '), ...d,
+  })).join('\n') + '\n');
+}
+
+/** 檢查配圖存檔：修正紀錄（新的才記）＋拖過的正確框學進記憶庫。回傳 { logged, learned } */
+function saveClaudeReview(job, items, by) {
+  const pv = job.planView || {};
+  const rows = pv.rows || [];
+  const clean = CLAUDE_REVIEW.normalizeItems(items, rows, pv.images || []);
+  const at = nowISO();
+  job.claudeReview = { at, by, items: clean };
+  const { rows: diffs, sigs } = CLAUDE_REVIEW.correctionRows(clean, rows, job.claudeReviewLogged || []);
+  appendCorrectionRows(job, diffs.map((d) => ({ ...d, by })));
+  job.claudeReviewLogged = [...(job.claudeReviewLogged || []), ...sigs];
+  let learned = 0;
+  const mem = CLAUDE_REVIEW.memoryItems(clean, rows);
+  if (mem.length) {
+    try {
+      const imgs = JSON.parse(fs.readFileSync(jobPath(job.id, 'state', 'src', 'app-images.generated.json'), 'utf-8')).images || [];
+      SHOT_MEMORY.learn(WORKSPACE_ROOT, mem, imgs, at);
+      learned = mem.length;
+    } catch (e) {
+      appendLog(job, `\n⚠️ 檢查配圖：記憶庫寫入失敗（修正紀錄照樣有記）：${e.message}\n`);
+    }
+  }
+  saveJob(job);
+  appendLog(job, `\n📝 檢查配圖（${by || '未署名'}）：${clean.filter((x) => x.verdict !== 'ok').length} 段標錯、`
+    + `新記 ${diffs.length} 筆修正紀錄、${learned} 個正確框學進記憶庫\n`);
+  return { logged: diffs.length, learned, review: job.claudeReview };
+}
 
 /**
  * 截圖原始檔名（2026-11-16 使用者定案）：上傳後一律改名 shotN，原始檔名記在 input/shot-names.json
@@ -2224,6 +2306,7 @@ async function doPrepare(job) {
     recordCorrections(job, job.planView, []);
     startClaudeCells(job, []);
     learnFromEdits(job, []);
+    logClaudePlan(job);
   } else {
     job.status = 'review';
   }
@@ -2800,7 +2883,7 @@ function learnFromEdits(job, edits) {
 // 是伺服器不送。所以按 F12 翻 Network 也翻不到（2026-08-21 使用者要求）。
 function publicJob(j, admin) {
   const { pid, pendingEdits, pendingEmphasis, autoPlan, ip, ...rest } = j;
-  const out = { ...rest, queuePosition: queuePosition(j) };
+  const out = { ...rest, queuePosition: queuePosition(j), claudePlanned: planByClaude(j) };
   if (admin && ip) out.ip = ip;
   return out;
 }
@@ -3137,7 +3220,16 @@ const server = http.createServer(async (req, res) => {
       // 給 Claude 的指示（2026-11-12 使用者定案：只影響這一支）。舊前台不帶 body ＝ 沒有指示。
       let redoBody = {};
       try { redoBody = JSON.parse((await readBody(req)).toString() || '{}'); } catch (_) {}
-      const claudeNote = typeof redoBody.note === 'string' ? redoBody.note.trim().slice(0, 600) : '';
+      let claudeNote = typeof redoBody.note === 'string' ? redoBody.note.trim().slice(0, 600) : '';
+      // 「照修正重新出片」（2026-11-17）：上一支檢查配圖的結果 → 鎖住的段落＋只說錯沒給答案的自動補成指示
+      let claudeFixed = null;
+      if (redoBody.useReview && src.claudeReview && src.planView) {
+        const rows = src.planView.rows || [];
+        const its = src.claudeReview.items || [];
+        claudeFixed = CLAUDE_REVIEW.fixedPlan(its, rows);
+        const extra = CLAUDE_REVIEW.autoNote(its, rows);
+        if (extra) claudeNote = [claudeNote, extra].filter(Boolean).join('\n').slice(0, 600);
+      }
       // 正在跑的不給重跑：它的製作快照這一刻正在被寫，複製過去的可能是半份。
       // detached 也算 —— 那是「伺服器重開過，但 run.js 還活著在背景跑」。
       if (['preparing', 'rendering', 'detached'].includes(src.status))
@@ -3210,6 +3302,10 @@ const server = http.createServer(async (req, res) => {
       rmrf(jobPath(job.id, 'input', CLAUDE_NOTE_FILE));
       if (claudeNote) fs.writeFileSync(jobPath(job.id, 'input', CLAUDE_NOTE_FILE), claudeNote + '\n');
       job.claudeNote = claudeNote || null;
+      rmrf(jobPath(job.id, 'input', CLAUDE_FIXED_FILE));
+      const hasFixed = claudeFixed && (claudeFixed.fixed.length || claudeFixed.hints.length || claudeFixed.noShot.length);
+      if (hasFixed) fs.writeFileSync(jobPath(job.id, 'input', CLAUDE_FIXED_FILE), JSON.stringify(claudeFixed, null, 2) + '\n');
+      job.claudeFixed = hasFixed ? { fixed: claudeFixed.fixed.length, hints: claudeFixed.hints.length, noShot: claudeFixed.noShot.length } : null;
       // 素材裡沒有 heygen.mp4（原本是 HeyGen 現生的）→ 從製作快照補一份進去。
       if (!fs.existsSync(jobPath(job.id, 'input', 'heygen.mp4'))) {
         fs.copyFileSync(heygenFrom, jobPath(job.id, 'input', 'heygen.mp4'));
@@ -3428,6 +3524,24 @@ const server = http.createServer(async (req, res) => {
       const mine = ['preparing', 'detached'].includes(job.status) && isRunJs(job.pid);
       const pages = pagesOf(mine ? ROOT : jobPath(job.id, 'state'));
       return send(res, 200, { pages });
+    }
+
+    // 檢查 Claude 排的配圖（2026-11-17）：GET 拿這支的計畫與上次的檢查；POST 存檢查結果
+    if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'claude-review') {
+      const job = getJob(seg[2]);
+      if (!job) return send(res, 404, { error: '找不到工作' });
+      if (!planByClaude(job) || !job.planView) return send(res, 400, { error: '這支的配圖不是 Claude 排的' });
+      if (req.method === 'GET') {
+        const pv = job.planView;
+        return send(res, 200, { rows: pv.rows || [], images: pv.images || [], chars: pv.chars || [], review: job.claudeReview || null });
+      }
+      if (req.method === 'POST') {
+        if (job.status !== 'done') return send(res, 400, { error: '出完片才能檢查' });
+        let body = {};
+        try { body = JSON.parse((await readBody(req)).toString() || '{}'); } catch (_) { return send(res, 400, { error: '格式不對' }); }
+        const by = typeof body.by === 'string' ? body.by.trim().slice(0, 40) : '';
+        return send(res, 200, saveClaudeReview(job, body.items, by));
+      }
     }
 
     if (seg[0] === 'api' && seg[1] === 'jobs' && seg[3] === 'log') {

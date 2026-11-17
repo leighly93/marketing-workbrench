@@ -50,6 +50,14 @@ const SHOT_NAMES = arg('shot-names', 'public/shot-names.json');
 const MANUAL_MOTION = arg('manual-motion', 'public/motion.json');
 // 重新出片時寫給 Claude 的指示（2026-11-12，只影響那一支）
 const NOTE = (() => { try { return fs.readFileSync(arg('note', 'public/claude-note.txt'), 'utf-8').trim(); } catch (_) { return ''; } })();
+// 「照修正重新出片」（2026-11-17）：上一支在成品頁檢查配圖時人改過的段落 —— 鎖住照人的
+//   { fixed: [{ startCharIdx, endCharIdx, src, region, cell, imgW, imgH }], hints: [{ startCharIdx, endCharIdx, src }], noShot: [{ startCharIdx, endCharIdx }] }
+const FIXED = (() => {
+  try {
+    const j = JSON.parse(fs.readFileSync(arg('fixed', 'public/claude-fixed.json'), 'utf-8'));
+    return { fixed: j.fixed || [], hints: j.hints || [], noShot: j.noShot || [] };
+  } catch (_) { return { fixed: [], hints: [], noShot: [] }; }
+})();
 
 function done(msg, code = 0) {
   console.log(msg);
@@ -138,12 +146,36 @@ function main() {
       + `${inOutlook ? '；⚠️ 落在結尾明日觀察動畫裡，動畫優先、這張不會出現' : ''}）`);
   }
   for (const n of notes) console.log(`（檔名提示：${n}）`);
+  // 人工修正鎖住的：只換了圖、沒畫框 → 跟檔名提示一樣處理（那張圖一定配在這幾句），蓋過檔名提示
+  const unitSpan = (r) => {
+    const from = units.findIndex((u) => u.endCharIdx >= r.startCharIdx);
+    let to = -1;
+    units.forEach((u, k) => { if (u.startCharIdx <= r.endCharIdx) to = k; });
+    return from >= 0 && to >= from ? { from, to } : null;
+  };
+  for (const h of FIXED.hints) {
+    const im = images.find((x) => x.file === h.src);
+    const span = unitSpan(h);
+    if (!im || !span) continue;
+    im.hint = { ...span, name: '人工修正', how: 'exact' };
+    console.log(`（人工修正：${h.src} 固定配在字 ${h.startCharIdx}–${h.endCharIdx}，框交給 Claude）`);
+  }
+  const fixedShots = FIXED.fixed.filter((f) => images.some((x) => x.file === f.src) && unitSpan(f));
+  if (fixedShots.length || FIXED.noShot.length) {
+    console.log(`（人工修正：${fixedShots.length} 段照人改的框鎖住、${FIXED.noShot.length} 段不放截圖）`);
+  }
 
   if (NOTE) console.log(`（這支有給 Claude 的指示：${NOTE.slice(0, 80)}${NOTE.length > 80 ? '…' : ''}）`);
   const plan = engine.planAssignments({ units, images, note: NOTE, outlook });
   if (plan.status !== 'planned') doneWithOutlook(`Claude 排配圖：第一步失敗（${plan.error || plan.status}），照舊用人工標注`);
   for (const d of plan.dropped || []) console.log(`（${d.src} 原本配在字 ${d.startCharIdx}–${d.endCharIdx}，落在結尾明日觀察動畫裡，拿掉）`);
-  if (!plan.segments.length) doneWithOutlook('Claude 排配圖：Claude 判斷沒有句子適合配圖，照舊用人工標注');
+  // 人工鎖住的段落與「不放截圖」的句子：Claude 排的讓開
+  for (const r of [...fixedShots, ...FIXED.noShot]) {
+    const { kept, dropped } = planner.clipSegments(plan.segments, r, units);
+    plan.segments = kept;
+    for (const d of dropped) console.log(`（${d.src} 原本配在字 ${d.startCharIdx}–${d.endCharIdx}，那裡有人工修正，拿掉）`);
+  }
+  if (!plan.segments.length && !fixedShots.length) doneWithOutlook('Claude 排配圖：Claude 判斷沒有句子適合配圖，照舊用人工標注');
 
   // 人工示範（90_系統/資料/shot-memory.json 的 pagesMulti）：同一種頁面以前人怎麼裁、怎麼框，給 Claude 參考
   const memory = require('./shot-memory');
@@ -188,6 +220,17 @@ function main() {
         _claude: { why: seg.why, cellSource: g.source, cellWhy: g.why } });
     }
   }
+
+  // 人工鎖住的段落原樣放進去（框、裁切照人的，不再問 Claude）
+  for (const f of fixedShots) {
+    const im = images.find((x) => x.file === f.src);
+    const region = f.region || { x: 0, y: 0, w: im.width, h: im.height };
+    shots.push({ src: f.src, title: '', region, imgW: im.width, imgH: im.height,
+      startCharIdx: f.startCharIdx, endCharIdx: f.endCharIdx, ...(f.cell ? { cell: f.cell } : {}),
+      _claude: { why: '人工修正（上一支檢查配圖時改的）', cellSource: 'manual-review' } });
+    if (f.cell) boxed++;
+  }
+  shots.sort((a, b) => a.startCharIdx - b.startCharIdx);
 
   // 一句話裡最後一張圖留到那句講完（shot-planner.js 的 extendToSentenceEnd）
   const finalShots = require('./shot-planner').extendToSentenceEnd(shots, units, plan.motions || []);
