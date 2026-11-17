@@ -977,7 +977,18 @@ function saveClaudeReview(job, items, by, extras) {
   const at = nowISO();
   job.claudeReview = { at, by, items: clean, extras: cleanExtras };
   const { rows: diffs, sigs } = CLAUDE_REVIEW.correctionRows(clean, rows, job.claudeReviewLogged || [], cleanExtras, chars);
-  appendCorrectionRows(job, diffs.map((d) => ({ ...d, by })));
+  // 記下頁型（2026-11-17 第三階段）：之後排同一種頁面時，拿這些當「以前排錯過」的教訓（scripts/claude-lessons.js）
+  let analyzed = [];
+  try { analyzed = JSON.parse(fs.readFileSync(jobPath(job.id, 'state', 'src', 'app-images.generated.json'), 'utf-8')).images || []; } catch (_) {}
+  const pageOf = (src) => {
+    const im = analyzed.find((x) => x.file === src);
+    return im ? { page: im.page || null, memKey: SHOT_MEMORY.memKeyOf(im) } : { page: null, memKey: null };
+  };
+  const withPage = diffs.map((d) => {
+    const a = pageOf(d.from); const b = pageOf(d.to);
+    return { ...d, by, page: a.page, memKey: a.memKey, toPage: b.page, toMemKey: b.memKey };
+  });
+  appendCorrectionRows(job, withPage);
   job.claudeReviewLogged = [...(job.claudeReviewLogged || []), ...sigs];
   let learned = 0;
   const mem = CLAUDE_REVIEW.memoryItems(clean, rows, cleanExtras, chars);

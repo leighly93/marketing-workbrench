@@ -35,7 +35,7 @@ function motionWindows(units) {
  *            有的話那幾句固定做成明日觀察動畫（2026-11-16），Claude 只挑開頭那段動態。
  *   images[].hint  檔名提示（shot-name-hints.js）：{ from, to } 同上，那張圖一定配那幾句。
  */
-function buildPrompt({ units, images, note = '', outlook = null }) {
+function buildPrompt({ units, images, note = '', outlook = null, lessons = [] }) {
   const win = motionWindows(units);
   const range = (list) => (list.length ? `U${list[0].i}～U${list[list.length - 1].i}` : '（無）');
   const span = (r) => (r.from === r.to ? `U${units[r.from].i}` : `U${units[r.from].i}～U${units[r.to].i}`);
@@ -78,6 +78,8 @@ function buildPrompt({ units, images, note = '', outlook = null }) {
     '8. 每張 1～2 項，每項 label 是主詞（2～6 字，例「外資賣超」「上漲家數」），value 是數字加單位（例「816億」「3.6倍」「-5.4%」），**數字一定要照旁白原文**，不能自己算或換單位。',
     '9. tone：漲、買超、增加 → "up"（紅）；跌、賣超、減少、虧損 → "down"（綠）；其他 → "gold"。from／to 指出那句話的子句範圍（1～3 句）。',
     '',
+    // 以前排錯被人改過的（2026-11-17 第三階段，scripts/claude-lessons.js）
+    ...(lessons.length ? [require('./claude-lessons').planLessonsText(lessons), ''] : []),
     ...(note ? [
       `剪輯師對這支片的指示（優先照做；但動態仍是開頭、結尾各一段，段落不能重疊，格式照下面）：${note}`,
       '',

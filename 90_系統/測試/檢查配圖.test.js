@@ -80,7 +80,7 @@ function claudeJob(root, id = '20261117-090000-cl01') {
   for (const f of IMAGES) write(workFile(root, id, 'input', f), '截圖');
   write(workFile(root, id, 'state', 'public', 'claude-annotations.json'), { by: 'claude', shots: [{ src: 'shot1.png', startCharIdx: 10, endCharIdx: 17 }] });
   write(workFile(root, id, 'state', 'public', 'heygen.mp4'), '講者影片');
-  write(workFile(root, id, 'state', 'src', 'app-images.generated.json'), { images: [] });
+  write(workFile(root, id, 'state', 'src', 'app-images.generated.json'), { images: IMAGES.map((f) => ({ file: f, width: 600, height: 400, page: 'sectorBars' })) });
   return id;
 }
 const 假子程序 = { spawn: () => ({ pid: 4242, unref() {}, on() {} }), execFileSync: () => '' };
@@ -103,6 +103,9 @@ test('API：送出檢查寫進修正紀錄；照修正重新出片帶 claude-fix
   assert.equal(sent.body.logged, 2);
   const log = fs.readFileSync(path.join(root, '90_系統', '資料', 'corrections.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.deepEqual(log.map((r) => [r.type, r.kind, r.by]), [['Claude排錯', '框錯位置', 'Ryan'], ['Claude排錯', '其他', 'Ryan']]);
+  // 第三階段：記下頁型，之後同一種頁面才找得到這些教訓
+  assert.equal(log[0].page, 'sectorBars');
+  assert.equal(log[0].memKey, 'sectorBars@1.50');
   // 重送一樣的不重記
   const again = await request('POST', `/api/jobs/${id}/claude-review`, { by: 'Ryan', items: sent.body.review.items });
   assert.equal(again.body.logged, 0);
@@ -127,7 +130,7 @@ test('API：不是 Claude 排的、或還沒出完片，不能檢查', async (t)
 
 // ── claude-shot-plan.js 讀 claude-fixed.json ──
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
-function planWith(t, fixed) {
+function planWith(t, fixed, lessons = []) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-fixed-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const pub = path.join(dir, 'public');
@@ -138,10 +141,12 @@ function planWith(t, fixed) {
   fs.writeFileSync(path.join(dir, 'images.json'), JSON.stringify({ images: [{ file: 'shot1.png', width: 1, height: 1, page: 'unknown',
     words: [{ t: '聯發科', x: 0, y: 0, w: 1, h: 1 }] }] }));
   fs.writeFileSync(path.join(dir, 'fixed.json'), JSON.stringify(fixed));
+  fs.writeFileSync(path.join(dir, 'corrections.jsonl'), lessons.map((r) => JSON.stringify(r)).join('\n'));
   const fake = path.join(dir, 'fake-claude.js');
   fs.writeFileSync(fake, `#!/usr/bin/env node
 const fs = require('fs');
 const input = fs.readFileSync(0, 'utf8');
+fs.appendFileSync(${JSON.stringify(path.join(dir, 'calls.log'))}, input + '\\n');
 const text = JSON.parse(input.trim().split('\\n')[0]).message.content.find((c) => c.type === 'text').text;
 const unit = (text.match(/U(\\d+)：聯發科/) || [])[1];
 const stepIds = [...text.matchAll(/^(U\\d+)：/gm)].map((m) => m[1]);
@@ -154,9 +159,11 @@ console.log(JSON.stringify({ type: 'result', is_error: false, result: reply }));
   const stdout = execFileSync(process.execPath, [path.join(APP, 'scripts/claude-shot-plan.js'),
     `--script=${path.join(pub, 'script.txt')}`, `--images=${path.join(dir, 'images.json')}`, `--public=${pub}`, `--out=${out}`,
     `--motion-out=${path.join(pub, 'claude-motion.json')}`, `--fixed=${path.join(dir, 'fixed.json')}`,
-    `--note=${path.join(dir, 'none.txt')}`, `--shot-names=${path.join(dir, 'none.json')}`, `--manual-motion=${path.join(dir, 'none.json')}`],
+    `--note=${path.join(dir, 'none.txt')}`, `--shot-names=${path.join(dir, 'none.json')}`, `--manual-motion=${path.join(dir, 'none.json')}`,
+    `--lessons=${path.join(dir, 'corrections.jsonl')}`],
   { encoding: 'utf8', env: { ...process.env, CLAUDE_BIN: fake, CELL_PICKER: 'claude-cli' } });
-  return { stdout, script, data: fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : null };
+  const calls = fs.existsSync(path.join(dir, 'calls.log')) ? fs.readFileSync(path.join(dir, 'calls.log'), 'utf8') : '';
+  return { stdout, script, calls, data: fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : null };
 }
 
 test('claude-shot-plan：人工鎖住的段落原樣放進去，Claude 排的照常', (t) => {
@@ -215,4 +222,63 @@ test('放錯句子：人在全文上改的位置要記下來、照修正重出�
   assert.deepEqual([bad[0].startCharIdx, bad[0].endCharIdx], [18, 23]);
   const src = fs.readFileSync(path.join(APP, 'server/public/app.js'), 'utf8');
   assert.match(src, /\['wrongPlace', '放錯句子'\]/);
+});
+
+// ── 第三階段：以前排錯的教訓給 Claude 看 ──
+const L = require(path.join(APP, 'scripts/claude-lessons'));
+const pageName = (p) => ({ sectorBars: '類股漲跌', indexChart: '大盤走勢' }[p] || '');
+const LESSON_ROWS = [
+  { at: '2026-11-17T03:00:00Z', type: 'Claude排錯', kind: '框錯位置', phrase: '類股重挫', from: 'shot2.png', to: 'shot2.png',
+    autoCell: { x: 180, y: 250, w: 100, h: 40 }, autoRegion: { x: 0, y: 0, w: 600, h: 200 },
+    manualCell: { x: 60, y: 60, w: 300, h: 100 }, manualRegion: { x: 0, y: 0, w: 600, h: 240 },
+    size: { w: 600, h: 400 }, page: 'sectorBars', memKey: 'sectorBars@1.50', toPage: 'sectorBars', toMemKey: 'sectorBars@1.50',
+    reason: { tags: ['框錯位置'], note: '要框綠色長條' } },
+  { at: '2026-11-17T02:00:00Z', type: 'Claude排錯', kind: '放錯句子', phrase: '外資賣超816億', manualPhrase: '今天台股暴跌',
+    from: 'shot1.png', to: 'shot1.png', page: 'indexChart', memKey: 'indexChart@0.46', reason: { tags: ['放錯句子'], note: '' } },
+  { at: '2026-11-17T01:00:00Z', type: 'Claude排錯', kind: '框錯位置', phrase: '只說錯', from: 'shot2.png', to: 'shot2.png',
+    autoCell: { x: 1, y: 1, w: 9, h: 9 }, manualCell: { x: 1, y: 1, w: 9, h: 9 }, size: { w: 600, h: 400 }, memKey: 'sectorBars@1.50' },
+  { at: '2026-11-17T00:00:00Z', type: '改框', phrase: '舊的人工修正' },
+];
+
+test('教訓：只讀「Claude排錯」、新的在前；排哪張圖配哪句用的那份不含框的問題', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lessons-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const f = path.join(dir, 'corrections.jsonl');
+  fs.writeFileSync(f, [...LESSON_ROWS].reverse().map((r) => JSON.stringify(r)).join('\n') + '\n壞掉的一行\n');
+  const rows = L.read(f);
+  assert.deepEqual(rows.map((r) => r.phrase), ['類股重挫', '外資賣超816億', '只說錯']);
+  assert.deepEqual(L.planLessons(rows, pageName), ['「大盤走勢」頁被放在「外資賣超816億」，應該放在「今天台股暴跌」']);
+  assert.deepEqual(L.read(path.join(dir, 'none.jsonl')), [], '沒有修正紀錄就沒有教訓');
+});
+
+test('教訓：框只給同一種頁面、沒給答案的不算；換算成這張圖的座標', () => {
+  const rows = LESSON_ROWS.filter((r) => r.type === 'Claude排錯');
+  const box = L.boxLessons(rows, 'sectorBars@1.50');
+  assert.equal(box.length, 1);
+  assert.equal(L.boxLessons(rows, 'indexChart@0.46').length, 0);
+  const text = L.boxLessonsText(box, 300, 200);
+  assert.match(text, /Claude 裁 \[0, 0, 300, 100\]、框 \[90, 125, 50, 20\] → 人改成 裁 \[0, 0, 300, 120\]、框 \[30, 30, 150, 50\]（要框綠色長條）/);
+  assert.equal(L.planLessonsText([]), '');
+  assert.equal(L.boxLessonsText([], 1, 1), '');
+});
+
+test('教訓有上限：排配圖只附最近 8 筆，不會讓提示越來越長', () => {
+  const many = Array.from({ length: 30 }, (_, k) => ({ type: 'Claude排錯', kind: '不該放截圖', phrase: `第${k}句`, page: 'sectorBars',
+    at: `2026-11-17T00:${String(k).padStart(2, '0')}:00Z` }));
+  const lines = L.planLessons(L.read.length ? many.sort((a, b) => b.at.localeCompare(a.at)) : many, pageName);
+  assert.equal(lines.length, L.PLAN_MAX);
+  assert.match(lines[0], /第29句/);
+});
+
+test('claude-shot-plan：有修正紀錄就把教訓附進兩個 prompt', (t) => {
+  const r = planWith(t, { fixed: [], hints: [], noShot: [] }, [
+    { at: '2026-11-17T03:00:00Z', type: 'Claude排錯', kind: '不該放截圖', phrase: '收在41661點', page: 'unknown' },
+    { at: '2026-11-17T02:00:00Z', type: 'Claude排錯', kind: '框錯位置', phrase: '聯發科', from: 'a.png', to: 'a.png',
+      autoCell: { x: 0, y: 0, w: 1, h: 1 }, manualCell: { x: 0, y: 0, w: 1, h: 1 }, manualRegion: { x: 0, y: 0, w: 1, h: 1 },
+      size: { w: 1, h: 1 }, memKey: 'unknown-other@1.00', reason: { note: '框整列' } },
+  ]);
+  assert.match(r.stdout, /附上 1 筆以前排錯的紀錄給 Claude 參考/);
+  assert.match(r.stdout, /1 張卡片附上了以前框錯被改過的紀錄/);
+  assert.match(r.calls, /以前 Claude 排錯、被剪輯師在成品頁改過的/);
+  assert.match(r.calls, /同一種頁面\*\*以前 Claude 框錯/);
 });

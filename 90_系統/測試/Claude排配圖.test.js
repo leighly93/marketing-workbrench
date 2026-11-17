@@ -151,7 +151,8 @@ function plan(ws, env = {}) {
   const out = path.join(ws.pub, 'claude-annotations.json');
   const stdout = execFileSync(process.execPath, [path.join(APP, 'scripts/claude-shot-plan.js'),
     `--script=${path.join(ws.pub, 'script.txt')}`, `--images=${path.join(ws.dir, 'images.json')}`,
-    `--public=${ws.pub}`, `--out=${out}`, `--motion-out=${path.join(ws.pub, 'claude-motion.json')}`],
+    `--public=${ws.pub}`, `--out=${out}`, `--motion-out=${path.join(ws.pub, 'claude-motion.json')}`,
+    `--lessons=${path.join(ws.dir, 'no-corrections.jsonl')}`],   // 不讀正式的修正紀錄
   { encoding: 'utf8', env: { ...process.env, CLAUDE_BIN: ws.fake, CELL_PICKER: 'claude-cli', ...env } });
   return { stdout, out, data: fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : null };
 }

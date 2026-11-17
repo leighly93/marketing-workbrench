@@ -27,7 +27,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { workspaceRoot } = require('../../paths');
+const { workspaceRoot, dataPath } = require('../../paths');
 
 const ROOT = path.resolve(__dirname, '..');
 try { require('dotenv').config({ path: path.join(workspaceRoot(ROOT), '.env'), quiet: true }); } catch (_) {}
@@ -47,6 +47,11 @@ const OUT = arg('out', 'public/claude-annotations.json');
 const MOTION_OUT = arg('motion-out', 'public/claude-motion.json');
 const FACTS_OUT = arg('facts-out', 'public/claude-facts.json');
 const SHOT_NAMES = arg('shot-names', 'public/shot-names.json');
+// 以前排錯的教訓來源（修正紀錄）；測試用 --lessons= 指到合成檔
+const LESSONS_FILE = (() => {
+  const hit = process.argv.find((a) => a.startsWith('--lessons='));
+  return hit ? path.resolve(hit.slice('--lessons='.length)) : dataPath(workspaceRoot(ROOT), 'corrections.jsonl');
+})();
 const MANUAL_MOTION = arg('manual-motion', 'public/motion.json');
 // 重新出片時寫給 Claude 的指示（2026-11-12，只影響那一支）
 const NOTE = (() => { try { return fs.readFileSync(arg('note', 'public/claude-note.txt'), 'utf-8').trim(); } catch (_) { return ''; } })();
@@ -166,7 +171,12 @@ function main() {
   }
 
   if (NOTE) console.log(`（這支有給 Claude 的指示：${NOTE.slice(0, 80)}${NOTE.length > 80 ? '…' : ''}）`);
-  const plan = engine.planAssignments({ units, images, note: NOTE, outlook });
+  // 以前排錯被人改過的（成品頁「檢查配圖」→ 修正紀錄的「Claude排錯」，2026-11-17 第三階段）
+  const LESSONS = require('./claude-lessons');
+  const lessonRows = LESSONS.read(LESSONS_FILE);
+  const planLessons = LESSONS.planLessons(lessonRows, require('./app-pages').pageName);
+  if (planLessons.length) console.log(`（附上 ${planLessons.length} 筆以前排錯的紀錄給 Claude 參考）`);
+  const plan = engine.planAssignments({ units, images, note: NOTE, outlook, lessons: planLessons });
   if (plan.status !== 'planned') doneWithOutlook(`Claude 排配圖：第一步失敗（${plan.error || plan.status}），照舊用人工標注`);
   for (const d of plan.dropped || []) console.log(`（${d.src} 原本配在字 ${d.startCharIdx}–${d.endCharIdx}，落在結尾明日觀察動畫裡，拿掉）`);
   // 人工鎖住的段落與「不放截圖」的句子：Claude 排的讓開
@@ -181,6 +191,7 @@ function main() {
   const memory = require('./shot-memory');
   const pagesMulti = memory.read(workspaceRoot(ROOT)).pagesMulti;
   let exampled = 0;
+  let lessoned = 0;
 
   const shots = [];
   let boxed = 0;
@@ -195,6 +206,11 @@ function main() {
             steps.map((x) => x.text).join(''));
           if (ex.length) exampled++;
           return ex;
+        })(),
+        lessons: (() => {
+          const ls = LESSONS.boxLessons(lessonRows, memory.memKeyOf({ page: im.page, width: im.width, height: im.height, stockCode: im.stockCode }));
+          if (ls.length) lessoned++;
+          return ls;
         })() })
       : { status: 'failed', error: '這段沒有完整的子句' };
     const region = r.status === 'picked' ? r.crop : { x: 0, y: 0, w: im.width, h: im.height };
@@ -250,6 +266,7 @@ function main() {
   const hinted = plan.segments.filter((s) => s.hinted).length;
   if (hinted) console.log(`（${hinted} 張照檔名提示配位置）`);
   if (exampled) console.log(`（${exampled} 張卡片附上了人工示範：同一種頁面以前剪輯師怎麼裁、怎麼框）`);
+  if (lessoned) console.log(`（${lessoned} 張卡片附上了以前框錯被改過的紀錄：同一種頁面）`);
   const flines = facts.map((f) => `   字卡 字 ${f.startCharIdx}–${f.endCharIdx}：${f.items.map((it) => `${it.label} ${it.value}`).join('｜')}`);
   done(`Claude 排配圖：${plan.segments.length} 張卡片、${shots.length} 段金框位置（${boxed} 段有框）、`
     + `${(plan.motions || []).length} 段動態、${facts.length} 張補充字卡 → ${path.relative(ROOT, OUT)}\n${lines.concat(mlines, flines).join('\n')}`);

@@ -90,13 +90,13 @@ function pick({ imagePath, words, width, height, phrase, page, withCrop = false 
  *   stock＝股價卡（裁切左右整張寬、沒框的句子自動框漲跌幅，source='auto-change'）
  * crop 一定包住所有句子的金框（cell-picker.js 的 fitCrop）。
  */
-function pickCard({ imagePath, words, width, height, steps, page, note = '', examples = [] }) {
+function pickCard({ imagePath, words, width, height, steps, page, note = '', examples = [], lessons = [] }) {
   if (!enabled()) return { status: 'off' };
   if (ENGINE !== 'claude-cli') return { status: 'failed', error: `不認得的 CELL_PICKER：${ENGINE}` };
   const fit = fitSize(width, height);
   const scale = fit.scale;
   const cands = picker.candidates(words, scale);
-  const prompt = picker.buildCardPrompt({ steps, page, listing: cands.listing, width: fit.width, height: fit.height, note, examples });
+  const prompt = picker.buildCardPrompt({ steps, page, listing: cands.listing, width: fit.width, height: fit.height, note, examples, lessons });
   const r = runClaude({ prompt, system: picker.SYSTEM_PROMPT, images: [{ path: imagePath, width, height }] });
   if (!r.ok) return { status: 'failed', error: r.error };
   const reply = picker.parseCardReply(r.text, cands, steps.map((x) => x.id));
@@ -151,7 +151,7 @@ function pickCard({ imagePath, words, width, height, steps, page, note = '', exa
  *   motions＝動態小影片的位置（開頭一段、結尾一段，不跟截圖段重疊）
  * 跟 pick() 同一個開關（CELL_PICKER=off 就不呼叫）。
  */
-function planAssignments({ units, images, note = '', outlook = null }) {
+function planAssignments({ units, images, note = '', outlook = null, lessons = [] }) {
   if (!enabled()) return { status: 'off' };
   if (ENGINE !== 'claude-cli') return { status: 'failed', error: `不認得的 CELL_PICKER：${ENGINE}` };
   if (!images.length) return { status: 'failed', error: '沒有截圖' };
@@ -163,7 +163,7 @@ function planAssignments({ units, images, note = '', outlook = null }) {
     // 標籤只寫檔名：另外編「圖N」會跟 shotN 混淆（2026-11-13，「圖3（shot11.png）」被回成 shot3.png）
     return { file: im.file, label: `${im.file}${zh ? `（${zh}）` : ''}`, ocr: planner.ocrSummary(im.words), hint: im.hint || null };
   });
-  const prompt = planner.buildPrompt({ units, images: listed, note, outlook });
+  const prompt = planner.buildPrompt({ units, images: listed, note, outlook, lessons });
   const r = runClaude({
     prompt,
     system: planner.SYSTEM_PROMPT,

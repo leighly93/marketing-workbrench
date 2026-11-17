@@ -47,7 +47,7 @@ test('接線：排配圖照頁面找示範傳給 pickCard；重新出片原封�
   const plan = fs.readFileSync(path.join(APP, 'scripts/claude-shot-plan.js'), 'utf8');
   assert.match(plan, /memory\.examplesFor\(pagesMulti, memory\.memKeyOf\(\{ page: im\.page/);
   const engine = fs.readFileSync(path.join(APP, 'scripts/cell-picker-engine.js'), 'utf8');
-  assert.match(engine, /buildCardPrompt\(\{[^)]*examples \}\)/);
+  assert.match(engine, /buildCardPrompt\(\{[^)]*examples[, }][^)]*\}\)/);
   const server = fs.readFileSync(path.join(APP, 'server/index.js'), 'utf8');
   assert.match(server, /function annotsInheritedUnchanged\(job\)/);
   assert.match(server, /if \(!annotsInheritedUnchanged\(job\)\) try \{\n      const ann = JSON\.parse/, 'learnFromEdits');
