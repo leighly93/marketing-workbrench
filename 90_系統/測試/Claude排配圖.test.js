@@ -280,3 +280,9 @@ test('prompt：同內容有整頁截圖和精簡圖時優先用精簡的（2026-
   const p = planner.buildPrompt({ units: UNITS, images: [{ file: 'shot1.png', label: 'shot1.png', ocr: '' }] });
   assert.match(p, /優先用精簡的那張/);
 });
+
+test('卡片裁切一定包住金框；框在圖外就不畫（2026-11-17 類股重挫：框落在裁切外，卡片底邊露出半個空框）', () => {
+  const src = fs.readFileSync(path.join(APP, 'src/DapanXiaobao/AppCardShots.tsx'), 'utf8');
+  assert.match(src, /for \(const c of merged\) c\.crop = coverCells\(c\);/, '渲染前撐大裁切');
+  assert.match(src, /width \* height < \(r - l\) \* \(b - t\) \* 0\.5\) return null;/, '可見不到一半的框不畫');
+});

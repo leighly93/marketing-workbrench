@@ -98,6 +98,7 @@ export function buildCardBlocks(shots: DapanShot[]): Block[] {
       merged.push(c);
     }
   }
+  for (const c of merged) c.crop = coverCells(c);
   const blocks: Block[] = [];
   for (const c of merged) {
     const last = blocks[blocks.length - 1];
@@ -111,6 +112,32 @@ export function buildCardBlocks(shots: DapanShot[]): Block[] {
     }
   }
   return blocks;
+}
+
+/**
+ * 卡片裁切一定包住每一句的金框（2026-11-17：類股重挫那張，框落在裁切外，只在卡片底邊露出半個空框）。
+ * 排配圖端的 fitCrop 已經會包，但人工框選、重新出片帶過來的舊標注不一定；這裡渲染前再保險一次：
+ * 框外加 24px 撐大裁切、夾在圖內。框整個在圖外（座標壞掉）就把那句的框拿掉。
+ */
+const CELL_PAD = 24;
+function coverCells(card: Card): ShotBox | null {
+  const W = card.imgW || 0;
+  const H = card.imgH || 0;
+  if (!card.crop || !W || !H) return card.crop;
+  let { x, y } = card.crop;
+  let x2 = x + card.crop.w;
+  let y2 = y + card.crop.h;
+  for (const st of card.steps) {
+    const c = st.cell;
+    if (!c) continue;
+    if (c.x >= W || c.y >= H || c.x + c.w <= 0 || c.y + c.h <= 0) { st.cell = undefined; continue; }
+    x = Math.min(x, c.x - CELL_PAD); y = Math.min(y, c.y - CELL_PAD);
+    x2 = Math.max(x2, c.x + c.w + CELL_PAD); y2 = Math.max(y2, c.y + c.h + CELL_PAD);
+  }
+  x = Math.max(0, Math.round(x)); y = Math.max(0, Math.round(y));
+  x2 = Math.min(W, Math.round(x2)); y2 = Math.min(H, Math.round(y2));
+  const out = { x, y, w: x2 - x, h: y2 - y };
+  return JSON.stringify(out) === JSON.stringify(card.crop) ? card.crop : out;
 }
 
 /** 卡片要顯示的範圍（原圖像素）與縮放後的大小 */
@@ -228,12 +255,18 @@ const MovingGlow: React.FC<{ steps: Step[]; cardStartSec: number; crop: ShotBox;
 }) => {
   const f = useCurrentFrame();
   const pad = 8;
-  const rectOf = (c?: ShotBox) => (c ? {
-    left: Math.max(0, (c.x - crop.x) * s - pad),
-    top: Math.max(0, (c.y - crop.y) * s - pad),
-    width: Math.min(w, c.w * s + pad * 2),
-    height: Math.min(h, c.h * s + pad * 2),
-  } : null);
+  // 框照卡片可見範圍裁掉超出的部分；可見不到一半（推近視窗外、或座標不對）就這句不畫，不留半個空框
+  const rectOf = (c?: ShotBox) => {
+    if (!c) return null;
+    const l = (c.x - crop.x) * s - pad;
+    const t = (c.y - crop.y) * s - pad;
+    const r = l + c.w * s + pad * 2;
+    const b = t + c.h * s + pad * 2;
+    const left = Math.max(0, l); const top = Math.max(0, t);
+    const width = Math.min(w, r) - left; const height = Math.min(h, b) - top;
+    if (width <= 0 || height <= 0 || width * height < (r - l) * (b - t) * 0.5) return null;
+    return { left, top, width, height };
+  };
   const T_MOVE = Math.round(0.25 * VIDEO_FPS);
   const at = (k: number) => secToFrame(steps[k].startSec) - secToFrame(cardStartSec);
   let k = 0;
