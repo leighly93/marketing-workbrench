@@ -151,7 +151,7 @@ function pickCard({ imagePath, words, width, height, steps, page, note = '', exa
  *   motions＝動態小影片的位置（開頭一段、結尾一段，不跟截圖段重疊）
  * 跟 pick() 同一個開關（CELL_PICKER=off 就不呼叫）。
  */
-function planAssignments({ units, images, note = '' }) {
+function planAssignments({ units, images, note = '', outlook = null }) {
   if (!enabled()) return { status: 'off' };
   if (ENGINE !== 'claude-cli') return { status: 'failed', error: `不認得的 CELL_PICKER：${ENGINE}` };
   if (!images.length) return { status: 'failed', error: '沒有截圖' };
@@ -161,9 +161,9 @@ function planAssignments({ units, images, note = '' }) {
   const listed = images.map((im) => {
     const zh = pageName(im.page);
     // 標籤只寫檔名：另外編「圖N」會跟 shotN 混淆（2026-11-13，「圖3（shot11.png）」被回成 shot3.png）
-    return { file: im.file, label: `${im.file}${zh ? `（${zh}）` : ''}`, ocr: planner.ocrSummary(im.words) };
+    return { file: im.file, label: `${im.file}${zh ? `（${zh}）` : ''}`, ocr: planner.ocrSummary(im.words), hint: im.hint || null };
   });
-  const prompt = planner.buildPrompt({ units, images: listed, note });
+  const prompt = planner.buildPrompt({ units, images: listed, note, outlook });
   const r = runClaude({
     prompt,
     system: planner.SYSTEM_PROMPT,
@@ -171,15 +171,20 @@ function planAssignments({ units, images, note = '' }) {
     timeoutMs: 240000,
   });
   if (!r.ok) return { status: 'failed', error: r.error };
-  const segments = planner.parseReply(r.text, { units, files: images.map((im) => im.file) });
-  if (!segments) return { status: 'failed', error: `回覆不是預期的 JSON：${r.text.slice(0, 200)}` };
+  const parsed = planner.parseReply(r.text, { units, files: images.map((im) => im.file) });
+  if (!parsed) return { status: 'failed', error: `回覆不是預期的 JSON：${r.text.slice(0, 200)}` };
+  // 檔名提示一定照做；明日觀察的範圍一定讓開（2026-11-16）。兩個都是程式定的，Claude 回什麼都一樣
+  const hints = images.filter((im) => im.hint).map((im) => ({ file: im.file, ...im.hint }));
+  const withHints = planner.applyHints(parsed, hints, units);
+  const outRange = outlook ? { startCharIdx: units[outlook.from].startCharIdx, endCharIdx: units[outlook.to].endCharIdx } : null;
+  const { kept: segments, dropped } = planner.clipSegments(withHints, outRange, units);
   // Claude 有排段落、卻一段都對不上（圖名或子句編號錯）≠「判斷沒有句子適合配圖」，要當失敗講清楚
   const raw = (require('./cell-picker').lastJsonObject(r.text) || {}).segments || [];
-  if (!segments.length && raw.length) {
+  if (!segments.length && raw.length && !dropped.length) {
     return { status: 'failed', error: `Claude 排了 ${raw.length} 段，但圖名或子句編號都對不上：${JSON.stringify(raw[0]).slice(0, 160)}` };
   }
   // reply 留給呼叫端：補充字卡要等截圖段延長到句尾之後才知道哪裡空著（claude-shot-plan.js 的 parseFacts）
-  return { status: 'planned', segments, motions: planner.parseMotions(r.text, { units, segments }), reply: r.text };
+  return { status: 'planned', segments, dropped, motions: planner.parseMotions(r.text, { units, segments, outlook }), reply: r.text };
 }
 
 module.exports = { pick, pickCard, planAssignments, enabled, ENGINE };

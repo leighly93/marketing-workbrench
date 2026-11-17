@@ -30,9 +30,16 @@ function motionWindows(units) {
   return { head: units.slice(0, Math.min(n, k)), tail: units.slice(Math.max(0, n - k)) };
 }
 
-function buildPrompt({ units, images, note = '' }) {
+/**
+ *   outlook  結尾「明天要看的事」（outlook.js 的 findOutlook）：{ from, to } 是 units 的陣列位置。
+ *            有的話那幾句固定做成明日觀察動畫（2026-11-16），Claude 只挑開頭那段動態。
+ *   images[].hint  檔名提示（shot-name-hints.js）：{ from, to } 同上，那張圖一定配那幾句。
+ */
+function buildPrompt({ units, images, note = '', outlook = null }) {
   const win = motionWindows(units);
   const range = (list) => (list.length ? `U${list[0].i}～U${list[list.length - 1].i}` : '（無）');
+  const span = (r) => (r.from === r.to ? `U${units[r.from].i}` : `U${units[r.from].i}～U${units[r.to].i}`);
+  const hinted = images.filter((im) => im.hint);
   return [
     `這支財經短影音附了 ${images.length} 張 APP 截圖（依序是：${images.map((im) => im.label).join('、')}）。`,
     '下面是旁白，切成子句、每句有編號 U：',
@@ -43,6 +50,15 @@ function buildPrompt({ units, images, note = '' }) {
     '',
     '"image" 請照抄上面的檔名（含副檔名，例「shot11.png」）；附圖的順序就是上面列的順序。',
     '',
+    ...(hinted.length ? [
+      '剪輯師用截圖的原始檔名指定了出現位置，**這幾張一定照指定的句子配**（可以往前後多配一兩句，但不能移走、也不能拿別張圖蓋掉）：',
+      hinted.map((im) => `${im.file}（原檔名「${im.hint.name}」）→ ${span(im.hint)}`).join('\n'),
+      '',
+    ] : []),
+    ...(outlook ? [
+      `${span(outlook)} 是結尾「明天要看的事」，已經固定做成明日觀察動畫（會蓋住整個畫面）：截圖、動態卡片、補充字卡都**不要**放在這幾句。`,
+      '',
+    ] : []),
     '請決定每張截圖要在旁白講到哪幾句時出現：',
     '1. 只有旁白**正在講圖上的內容**（圖上的數字、個股、指數、表格項目）才配圖；開場、結論、抽象評論、圖上沒有的東西不要配。',
     '2. 一段配 1～4 個連續子句。同一張圖**連續**講好幾項（例：「聯發科大漲、台達電漲停、日月光也強彈」）要合成**一段**，',
@@ -52,7 +68,9 @@ function buildPrompt({ units, images, note = '' }) {
     '4. title 是卡片上方的小標題，2～8 個字，點出這段在看什麼（例：「加權指數」「今日漲停」「台積電貢獻」「量能觀察」），不要整句旁白。',
     '',
     '另外選「動態卡片」（重點整理的動畫字卡，會蓋住整個畫面）的位置：',
-    `5. **剛好 2 段：開頭一段、結尾總結一段**，整支不要第 3 段。開頭那段只能在 ${range(win.head)} 裡挑，結尾那段只能在 ${range(win.tail)} 裡挑。`,
+    outlook
+      ? `5. **只要開頭 1 段**（結尾已經是明日觀察動畫），只能在 ${range(win.head)} 裡挑。`
+      : `5. **剛好 2 段：開頭一段、結尾總結一段**，整支不要第 3 段。開頭那段只能在 ${range(win.head)} 裡挑，結尾那段只能在 ${range(win.tail)} 裡挑。`,
     '6. 每段 2～6 個連續子句，挑適合整理成重點的句子（關鍵數字、結論、明天要注意的事），**不能跟上面的截圖段重疊**。',
     '',
     '另外選「補充字卡」（講者畫面上、字幕正上方跳出的小數字卡，例：「外資賣超 816億｜投信買超 88.7億」）：',
@@ -66,7 +84,8 @@ function buildPrompt({ units, images, note = '' }) {
     ] : []),
     // 範例的檔名用這支實際的第一張圖：寫死 shot1.jpg 時，素材是 .png 的那支 Claude 照抄 .jpg，整批對不上（2026-11-12 7eov）
     `只輸出 JSON：{"segments":[{"image":${JSON.stringify((images[0] && images[0].file) || 'shot1.png')},"from":"U3","to":"U4","title":"加權指數","why":"一句話"}],`
-      + '"motions":[{"from":"U0","to":"U2","why":"開頭"},{"from":"U40","to":"U43","why":"結尾總結"}],'
+      + (outlook ? '"motions":[{"from":"U0","to":"U2","why":"開頭"}],'
+        : '"motions":[{"from":"U0","to":"U2","why":"開頭"},{"from":"U40","to":"U43","why":"結尾總結"}],')
       + '"facts":[{"from":"U20","to":"U21","items":[{"label":"外資賣超","value":"816億","tone":"down"},{"label":"投信買超","value":"88.7億","tone":"up"}]}]}',
   ].join('\n');
 }
@@ -155,9 +174,10 @@ function mergeSameImage(segs, units) {
  * 動態卡片的位置：子句要存在、最多 8 句、不能跟截圖段或彼此重疊；超過 2 段只留最前與最後。
  * 回傳 [{ startCharIdx, endCharIdx, why }]，排不出來回空陣列。
  */
-function parseMotions(text, { units, segments }) {
+function parseMotions(text, { units, segments, outlook = null }) {
+  const fixed = outlook ? outlookMotion(outlook, units) : null;
   const o = lastJsonObject(text);
-  if (!o || !Array.isArray(o.motions)) return [];
+  if (!o || !Array.isArray(o.motions)) return fixed ? [fixed] : [];
   const order = new Map(units.map((u, k) => [`U${u.i}`, k]));
   const taken = (segments || []).map((s) => [s.startCharIdx, s.endCharIdx]);
   const overlaps = (a, b) => taken.some(([x, y]) => !(b < x || a > y));
@@ -178,6 +198,8 @@ function parseMotions(text, { units, segments }) {
   const win = motionWindows(units);
   const inWin = (m, list) => list.length > 0
     && m.startCharIdx >= list[0].startCharIdx && m.endCharIdx <= list[list.length - 1].endCharIdx;
+  // 明日觀察的位置是程式定的：Claude 排在那裡的動態一律讓開
+  if (fixed) taken.push([fixed.startCharIdx, fixed.endCharIdx]);
   for (const m of list) {
     if (overlaps(m.startCharIdx, m.endCharIdx)) continue;
     if (!inWin(m, win.head) && !inWin(m, win.tail)) continue;
@@ -185,8 +207,68 @@ function parseMotions(text, { units, segments }) {
     out.push(m);
   }
   const head = out.find((m) => inWin(m, win.head));
+  if (fixed) return [head, fixed].filter(Boolean);
   const tail = [...out].reverse().find((m) => inWin(m, win.tail) && m !== head);
   return [head, tail].filter(Boolean);
+}
+
+/**
+ * 明日觀察那段動態（claude-motion.json 的一筆）：kind 讓 render-motion 一定做成 outlook 卡片；
+ * markers 是旁白裡的序號（第一、第二…），count 有值＝明確的件數。
+ */
+function outlookMotion(outlook, units) {
+  return {
+    startCharIdx: units[outlook.from].startCharIdx,
+    endCharIdx: units[outlook.to].endCharIdx,
+    kind: 'outlook',
+    ...(outlook.markers && outlook.markers.length ? { markers: outlook.markers } : {}),
+    ...(outlook.count ? { count: outlook.count } : {}),
+    why: '結尾明日觀察（程式偵測）',
+  };
+}
+
+/**
+ * 截圖段讓開一個固定範圍（明日觀察）：整段在裡面的丟掉；只蓋到頭或尾的，裁到範圍外最近的子句。
+ * 回傳 { kept, dropped }，kept 照字元位置排序。
+ */
+function clipSegments(segments, range, units) {
+  if (!range) return { kept: segments.slice(), dropped: [] };
+  const a = range.startCharIdx; const b = range.endCharIdx;
+  const kept = []; const dropped = [];
+  for (const s of segments) {
+    if (s.endCharIdx < a || s.startCharIdx > b) { kept.push(s); continue; }
+    if (s.startCharIdx < a) {
+      const before = units.filter((u) => u.endCharIdx < a && u.startCharIdx >= s.startCharIdx);
+      if (before.length) { kept.push({ ...s, endCharIdx: before[before.length - 1].endCharIdx }); continue; }
+    } else if (s.endCharIdx > b) {
+      const after = units.filter((u) => u.startCharIdx > b && u.endCharIdx <= s.endCharIdx);
+      if (after.length) { kept.push({ ...s, startCharIdx: after[0].startCharIdx }); continue; }
+    }
+    dropped.push(s);
+  }
+  kept.sort((x, y) => x.startCharIdx - y.startCharIdx);
+  return { kept, dropped };
+}
+
+/**
+ * 檔名提示一定照做（2026-11-16 使用者：截圖檔名寫旁白的一小段原文＝這張圖在那裡出現）。
+ *   hints [{ file, from, to, name }]（from／to 是 units 的陣列位置）
+ * Claude 已經把那張圖配在包含提示句的位置 → 照它的（它可能多配了前後一兩句）；
+ * 否則用提示的句子新增一段，別張圖蓋到這幾句的就裁開或讓出。小標題沿用 Claude 給那張圖的，沒有就用檔名。
+ */
+function applyHints(segments, hints, units) {
+  let segs = segments.map((s) => ({ ...s }));
+  for (const h of hints || []) {
+    const a = units[h.from].startCharIdx; const b = units[h.to].endCharIdx;
+    const covers = segs.find((s) => s.src === h.file && s.startCharIdx <= a && s.endCharIdx >= b);
+    if (covers) continue;
+    const same = segs.find((s) => s.src === h.file);
+    const seg = { src: h.file, startCharIdx: a, endCharIdx: b,
+      title: (same && same.title) || String(h.name || '').slice(0, 8), why: `檔名指定（${h.name}）`, hinted: true };
+    const { kept } = clipSegments(segs, seg, units);
+    segs = kept.concat(seg).sort((x, y) => x.startCharIdx - y.startCharIdx);
+  }
+  return mergeSameImage(segs, units);
 }
 
 /**
@@ -262,4 +344,5 @@ function extendToSentenceEnd(shots, units, motions = []) {
   return sorted;
 }
 
-module.exports = { SYSTEM_PROMPT, ocrSummary, buildPrompt, parseReply, resolveImage, parseMotions, parseFacts, motionWindows, mergeSameImage, extendToSentenceEnd };
+module.exports = { SYSTEM_PROMPT, ocrSummary, buildPrompt, parseReply, resolveImage, parseMotions, parseFacts, motionWindows, mergeSameImage, extendToSentenceEnd,
+  outlookMotion, clipSegments, applyHints };

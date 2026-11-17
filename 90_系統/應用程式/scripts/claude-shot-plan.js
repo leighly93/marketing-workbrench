@@ -16,6 +16,10 @@
  * 用法：node scripts/claude-shot-plan.js [--script=public/script.txt] [--images=src/app-images.generated.json]
  *        [--public=public] [--out=public/claude-annotations.json] [--motion-out=public/claude-motion.json]
  *        [--note=public/claude-note.txt] [--facts-out=public/claude-facts.json]
+ * 結尾「明天要看的事」（2026-11-16，outlook.js）：程式找位置，寫進 claude-motion.json 的一筆（kind: 'outlook'）。
+ *   沒有截圖、或排配圖失敗時也照寫（只寫這一筆），除非這支有人工設的動態（public/motion.json）。
+ * 截圖檔名提示（2026-11-16，shot-name-hints.js）：public/shot-names.json 記著每張 shotN 的原始檔名，
+ *   對得到稿件的就一定配在那幾句。
  * 補充字卡（2026-11-13）寫在 public/claude-facts.json：[{ startCharIdx, endCharIdx, items:[{label,value,tone}] }]，
  * parse-dapan-script.js 把它寫進 video-meta.json.factCards，渲染端（FactCards.tsx）照字元位置換算時間。
  */
@@ -42,12 +46,19 @@ const PUBLIC = arg('public', 'public');
 const OUT = arg('out', 'public/claude-annotations.json');
 const MOTION_OUT = arg('motion-out', 'public/claude-motion.json');
 const FACTS_OUT = arg('facts-out', 'public/claude-facts.json');
+const SHOT_NAMES = arg('shot-names', 'public/shot-names.json');
+const MANUAL_MOTION = arg('manual-motion', 'public/motion.json');
 // 重新出片時寫給 Claude 的指示（2026-11-12，只影響那一支）
 const NOTE = (() => { try { return fs.readFileSync(arg('note', 'public/claude-note.txt'), 'utf-8').trim(); } catch (_) { return ''; } })();
 
 function done(msg, code = 0) {
   console.log(msg);
   process.exit(code);
+}
+
+/** 人工設的動態有幾段（public/motion.json）。有的話，排配圖沒成功時不寫明日觀察 —— run.js 會改吃 claude-motion.json、把人工的蓋掉 */
+function manualMotionCount() {
+  try { const j = JSON.parse(fs.readFileSync(MANUAL_MOTION, 'utf-8')); return Array.isArray(j) ? j.length : 0; } catch (_) { return 0; }
 }
 
 function main() {
@@ -65,6 +76,23 @@ function main() {
   } catch (e) {
     done(`Claude 排配圖：讀不到稿件子句（${e.message.slice(0, 120)}），照舊用人工標注`);
   }
+
+  // 結尾「明天要看的事」：程式找，不交給 Claude（2026-11-16）
+  const planner = require('./shot-planner');
+  const outlook = require('./outlook').findOutlook(units);
+  if (outlook) {
+    const said = units.slice(outlook.from, outlook.to + 1).map((u) => u.text).join('');
+    console.log(`（結尾明日觀察：U${units[outlook.from].i}～U${units[outlook.to].i}「${said.slice(0, 30)}${said.length > 30 ? '…' : ''}」`
+      + `${outlook.markers.length ? `，序號 ${outlook.markers.join('、')}` : ''}）`);
+  }
+  /** 排配圖沒排成時的退路：只寫明日觀察那一段（人工設過動態就不寫，見 manualMotionCount） */
+  const doneWithOutlook = (msg) => {
+    if (outlook && !manualMotionCount()) {
+      fs.writeFileSync(MOTION_OUT, JSON.stringify([planner.outlookMotion(outlook, units)], null, 2) + '\n');
+      msg += '；結尾明日觀察動畫照做';
+    }
+    done(msg);
+  };
 
   let analysis = { images: [] };
   try { analysis = JSON.parse(fs.readFileSync(IMAGES, 'utf-8')); } catch (_) {}
@@ -95,12 +123,27 @@ function main() {
   // 照檔名的數字順序排（shot1、shot2…shot10），不照字串排（shot1、shot10、shot11、shot2…）。
   // 2026-11-13 j2ps 14 張圖：清單寫「圖3（shot11.png）」，Claude 把「圖3」當成 shot3 回，整排錯位。
   images.sort((x, y) => x.file.localeCompare(y.file, undefined, { numeric: true }));
-  if (!images.length) done('Claude 排配圖：沒有截圖，照舊用人工標注');
+  if (!images.length) doneWithOutlook('Claude 排配圖：沒有截圖，照舊用人工標注');
+
+  // 截圖原始檔名提示（上傳時記在 shot-names.json）
+  let shotNames = {};
+  try { shotNames = JSON.parse(fs.readFileSync(SHOT_NAMES, 'utf-8')) || {}; } catch (_) {}
+  const present = Object.fromEntries(Object.entries(shotNames).filter(([f]) => images.some((im) => im.file === f)));
+  const { hints, notes } = require('./shot-name-hints').resolveHints(present, units);
+  for (const im of images) if (hints[im.file]) im.hint = hints[im.file];
+  for (const [f, h] of Object.entries(hints)) {
+    const where = h.from === h.to ? `U${units[h.from].i}` : `U${units[h.from].i}～U${units[h.to].i}`;
+    const inOutlook = outlook && h.to >= outlook.from && h.from <= outlook.to;
+    console.log(`（檔名提示：${f}「${h.name}」→ ${where}${h.how === 'fuzzy' ? '（字不完全一樣，取最像的那句）' : ''}`
+      + `${inOutlook ? '；⚠️ 落在結尾明日觀察動畫裡，動畫優先、這張不會出現' : ''}）`);
+  }
+  for (const n of notes) console.log(`（檔名提示：${n}）`);
 
   if (NOTE) console.log(`（這支有給 Claude 的指示：${NOTE.slice(0, 80)}${NOTE.length > 80 ? '…' : ''}）`);
-  const plan = engine.planAssignments({ units, images, note: NOTE });
-  if (plan.status !== 'planned') done(`Claude 排配圖：第一步失敗（${plan.error || plan.status}），照舊用人工標注`);
-  if (!plan.segments.length) done('Claude 排配圖：Claude 判斷沒有句子適合配圖，照舊用人工標注');
+  const plan = engine.planAssignments({ units, images, note: NOTE, outlook });
+  if (plan.status !== 'planned') doneWithOutlook(`Claude 排配圖：第一步失敗（${plan.error || plan.status}），照舊用人工標注`);
+  for (const d of plan.dropped || []) console.log(`（${d.src} 原本配在字 ${d.startCharIdx}–${d.endCharIdx}，落在結尾明日觀察動畫裡，拿掉）`);
+  if (!plan.segments.length) doneWithOutlook('Claude 排配圖：Claude 判斷沒有句子適合配圖，照舊用人工標注');
 
   // 人工示範（90_系統/資料/shot-memory.json 的 pagesMulti）：同一種頁面以前人怎麼裁、怎麼框，給 Claude 參考
   const memory = require('./shot-memory');
@@ -152,15 +195,17 @@ function main() {
   shots.push(...finalShots);
 
   if (plan.motions && plan.motions.length) {
-    fs.writeFileSync(MOTION_OUT, JSON.stringify(plan.motions.map((m) => ({ startCharIdx: m.startCharIdx, endCharIdx: m.endCharIdx })), null, 2) + '\n');
+    fs.writeFileSync(MOTION_OUT, JSON.stringify(plan.motions.map((m) => ({ startCharIdx: m.startCharIdx, endCharIdx: m.endCharIdx,
+      ...(m.kind ? { kind: m.kind } : {}), ...(m.markers ? { markers: m.markers } : {}), ...(m.count ? { count: m.count } : {}) })), null, 2) + '\n');
   }
   // 補充字卡：避開最終的截圖段（已延到句尾）與動態段
-  const planner = require('./shot-planner');
   const facts = planner.parseFacts(plan.reply || '', { units, taken: shots.concat(plan.motions || []) });
   if (facts.length) fs.writeFileSync(FACTS_OUT, JSON.stringify(facts, null, 2) + '\n');
   fs.writeFileSync(OUT, JSON.stringify({ by: 'claude', at: new Date().toISOString(), shots }, null, 2));
   const lines = shots.map((s) => `   ${s.src}「${s.title}」字 ${s.startCharIdx}–${s.endCharIdx}${s.cell ? '' : '（不框）'}`);
   const mlines = (plan.motions || []).map((m) => `   動態 字 ${m.startCharIdx}–${m.endCharIdx}（${m.why}）`);
+  const hinted = plan.segments.filter((s) => s.hinted).length;
+  if (hinted) console.log(`（${hinted} 張照檔名提示配位置）`);
   if (exampled) console.log(`（${exampled} 張卡片附上了人工示範：同一種頁面以前剪輯師怎麼裁、怎麼框）`);
   const flines = facts.map((f) => `   字卡 字 ${f.startCharIdx}–${f.endCharIdx}：${f.items.map((it) => `${it.label} ${it.value}`).join('｜')}`);
   done(`Claude 排配圖：${plan.segments.length} 張卡片、${shots.length} 段金框位置（${boxed} 段有框）、`

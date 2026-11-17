@@ -677,7 +677,9 @@ $('#submit').onclick = async () => {
       btn.textContent = `上傳 ${i + 1}/${ups.length}（${mb} MB）…`;
       // ⚠️ 一定要檢查結果。原本沒檢查 → 上傳失敗畫面照樣往下走，
       //    最後才丟一個看不懂的錯（2026-08-13）。
-      const r = await fetch(withKey(`/api/jobs/${jobId}/upload?name=${ups[i].name}`),
+      // orig：原始檔名，伺服器記在 shot-names.json 當出現位置的提示（2026-11-16）
+      const r = await fetch(withKey(`/api/jobs/${jobId}/upload?name=${ups[i].name}`
+        + (ups[i].name === 'heygen.mp4' ? '' : `&orig=${encodeURIComponent(ups[i].f.name)}`)),
         { method: 'POST', body: ups[i].f });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -1505,7 +1507,7 @@ async function uploadMoreShots(job, files, onDone) {
     const ext = /\.jpe?g$/i.test(f.name) ? '.jpg' : '.png';
     let r;
     try {
-      r = await fetch(withKey(`/api/jobs/${job.id}/upload?auto=1&ext=${encodeURIComponent(ext)}`),
+      r = await fetch(withKey(`/api/jobs/${job.id}/upload?auto=1&ext=${encodeURIComponent(ext)}&orig=${encodeURIComponent(f.name)}`),
         { method: 'POST', body: f });
     } catch (err) {
       if (msg()) msg().textContent = '';

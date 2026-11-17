@@ -444,6 +444,8 @@ function clearWorkspaceInputs() {
   rmrf(path.join(pub, 'claude-motion.json'));
   rmrf(path.join(pub, 'claude-title.txt'));
   rmrf(path.join(pub, 'claude-facts.json'));
+  // 截圖原始檔名（2026-11-16 檔名提示）：別支的對照表留著，會把同名 shotN 配到不相干的句子
+  rmrf(path.join(pub, SHOT_NAMES_FILE));
   // 重新出片的 OCR 沿用檔同理（2026-09-18）。run.js 那邊本來就會逐張比對 md5、對不上不沿用，
   // 所以留著也不會誤用；但殘留檔本身就是坑（同一類的「撞名截圖用到上一支的尺寸」踩過），
   // 這支工作沒帶沿用檔就不該在 public 看到別人的。
@@ -890,16 +892,35 @@ function claudePlanReason(job) {
  * 否則用前台設的（input/motion.json）。2026-11-12 使用者：動態也交給 Claude 決定，開頭結尾各一段。
  */
 function motionEntriesFor(job) {
+  const claude = () => normalizeMotion(JSON.parse(fs.readFileSync(jobPath(job.id, 'state', 'public', 'claude-motion.json'), 'utf-8')));
   if (planByClaude(job)) {
     try {
-      return normalizeMotion(JSON.parse(fs.readFileSync(jobPath(job.id, 'state', 'public', 'claude-motion.json'), 'utf-8')));
+      return claude();
     } catch (_) { /* 這支 Claude 沒排動態 → 用前台設的 */ }
   }
-  return readJobMotion(job);
+  const manual = readJobMotion(job);
+  if (manual.length) return manual;
+  // 沒有截圖（Claude 沒排配圖）但程式偵測到結尾明日觀察（2026-11-16）：claude-shot-plan 只寫了那一段
+  try { return claude().filter((m) => m.kind === 'outlook'); } catch (_) { return []; }
 }
 
 /** 重新出片時寫給 Claude 的指示（只影響那一支），放在工作 input/，跟著素材進 public/ */
 const CLAUDE_NOTE_FILE = 'claude-note.txt';
+
+/**
+ * 截圖原始檔名（2026-11-16 使用者定案）：上傳後一律改名 shotN，原始檔名記在 input/shot-names.json
+ * ｛ "shot3.png": "外資賣超816億.png" ｝，跟著 input/ 進 public/，claude-shot-plan 拿它當出現位置的提示。
+ */
+const SHOT_NAMES_FILE = 'shot-names.json';
+function recordShotName(job, name, orig) {
+  const o = String(orig || '').replace(/^.*[\\/]/, '').trim().slice(0, 120);
+  if (!o || !/^shot\d+\.(png|jpe?g)$/i.test(name)) return;
+  const f = jobPath(job.id, 'input', SHOT_NAMES_FILE);
+  let map = {};
+  try { map = JSON.parse(fs.readFileSync(f, 'utf-8')) || {}; } catch (_) {}
+  map[name] = o;
+  fs.writeFileSync(f, JSON.stringify(map, null, 2) + '\n');
+}
 
 function appendMissingAnnots(job, edits) {
   // 使用者定案「先不管人工的設定」：計畫是 Claude 排的，就不把標注頁的段落補回去
@@ -1055,6 +1076,10 @@ function normalizeMotion(raw) {
       endCharIdx: m.endCharIdx,
       ...(m.keyword ? { keyword: String(m.keyword).slice(0, 40) } : {}),
       ...(m.spec && typeof m.spec === 'object' ? { spec: m.spec } : {}),
+      // 結尾明日觀察（2026-11-16）：出片前重寫 motion.json 時一定要留著，不然 render-motion 會當成一般動態重做
+      ...(m.kind === 'outlook' ? { kind: 'outlook' } : {}),
+      ...(Array.isArray(m.markers) ? { markers: m.markers.filter((x) => typeof x === 'string').map((x) => x.slice(0, 8)).slice(0, 5) } : {}),
+      ...(Number.isInteger(m.count) && m.count > 0 && m.count <= 5 ? { count: m.count } : {}),
     }));
 }
 
@@ -3040,6 +3065,8 @@ const server = http.createServer(async (req, res) => {
         try { fs.unlinkSync(dest); } catch (_) {}
         return send(res, 400, { error: fix.error });
       }
+      // 原始檔名＝出現位置的提示（2026-11-16）。記錄失敗不影響上傳
+      try { recordShotName(job, name, url.searchParams.get('orig')); } catch (_) {}
       if (fix && fix.converted) {
         appendLog(job, `🖼  ${name}：偵測到 ${IMAGE_KIND_LABEL[fix.converted] || fix.converted}，`
           + `已用 ${fix.tool} 自動轉成 ${path.extname(dest).slice(1).toUpperCase()}`);

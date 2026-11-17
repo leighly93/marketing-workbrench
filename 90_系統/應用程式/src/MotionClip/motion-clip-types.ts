@@ -158,6 +158,27 @@ export type SectorSpec = Base & {
   tags?: string[];
 };
 
+/** 明日觀察的一項：重點（text）＋一行說明（note）。 */
+export type OutlookItem = ListItem & {
+  /** 一行說明，8～18 字（例「高於預期壓抑降息期待」）。只有「一點一個畫面」時顯示。 */
+  note?: string;
+};
+
+/**
+ * 明日觀察（2026-11-16 使用者定案）：結尾「明天要看幾件事」，位置由程式找（outlook.js）。
+ * 件數以旁白實際講到的為準；kicker／title 由程式依件數補（「明天要看|三件事」）。
+ * layout 由產線決定（render-motion 的 finishOutlook），不交給 Claude：
+ *   all    每項旁白都短 → 一二三同一個畫面，唸到哪一項它才進場（跟條列同一個樣子）
+ *   paged  有一項講得長 → 一點一個畫面（重點＋一行說明），唸到下一點才換頁，上方有進度
+ */
+export type OutlookSpec = Base & {
+  template: 'outlook';
+  /** 旁白講的時間：明天、下週…（最多 4 字） */
+  when?: string;
+  items: OutlookItem[];
+  layout?: 'all' | 'paged';
+};
+
 export type MotionClipSpec =
   | ContrastSpec | ListSpec | QuoteSpec | EventSpec | LevelSpec
-  | NumberSpec | RankSpec | SectorSpec;
+  | NumberSpec | RankSpec | SectorSpec | OutlookSpec;

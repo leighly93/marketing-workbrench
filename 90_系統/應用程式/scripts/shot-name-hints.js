@@ -1,0 +1,143 @@
+'use strict';
+
+/**
+ * 截圖原始檔名＝出現位置的提示（2026-11-16 使用者定案）—— 純邏輯，測試在 90_系統/測試/截圖檔名提示.test.js。
+ *
+ * 使用者：「圖片檔名改成腳本文字暗示要出現的位置」「檔名寫旁白裡連續的一小段原文就好，可以辨識就好」。
+ *   - 上傳後檔案一律改名 shotN（伺服器排編號），原始檔名另外記在 input/shot-names.json：
+ *     { "shot3.png": "外資賣超816億.png" }
+ *   - 這裡把原始檔名對到稿件的子句：標點、空白、全半形、大小寫都不計；
+ *     對不到原文就容許少量錯字（字元雙連的相似度），但要是唯一最像的那一段才算。
+ *   - 一個檔名要涵蓋好幾句：用「_」或「~」隔開頭尾兩段，例「聯發科大漲_日月光強彈.png」。
+ *   - 相機編號、螢幕截圖這類檔名本來就對不到任何一段，自然不算提示（照舊全自動）。
+ * units 是 auto-shot.js --sentences 的子句：[{ i, sid, text, startCharIdx, endCharIdx }]。
+ */
+
+/** 檔名主體：去副檔名、去「 (1)」「 拷貝」這類系統加的尾巴 */
+function stemOf(name) {
+  return String(name || '')
+    .replace(/^.*[\\/]/, '')
+    .replace(/\.[A-Za-z0-9]{2,5}$/, '')
+    .replace(/\s*(\(\d+\)|（\d+）|拷貝\s*\d*|副本\s*\d*|copy\s*\d*)$/i, '')
+    .trim();
+}
+
+/** 比對用的字：全形轉半形、小寫，只留中文、英文、數字 */
+function normalize(s) {
+  return String(s || '').normalize('NFKC').toLowerCase().replace(/[^\p{Script=Han}a-z0-9]/gu, '');
+}
+
+/** 看起來像不像人寫的提示：要有至少 2 個中文字，或 3 個以上英文字母；純數字（相機編號）不算 */
+function looksLikeHint(stem) {
+  // 系統自己取的名字：相機／螢幕截圖的前綴拿掉，剩下的是日期時間（數字、at、上午下午）就不是提示
+  const t = normalize(stem)
+    .replace(/^(img|dsc|pxl|screenshot|screen ?shot|螢幕截圖|螢幕快照|截圖|image|photo|shot|line|messenger)/, '')
+    .replace(/at|上午|下午|am|pm/g, '');
+  if (/^\d*$/.test(t)) return false;
+  return (t.match(/\p{Script=Han}/gu) || []).length >= 2 || (t.match(/[a-z]/g) || []).length >= 3;
+}
+
+/** 子句串成一條比對字串，記住每個字屬於哪個子句（units 的陣列位置） */
+function indexUnits(units) {
+  let all = '';
+  const owner = [];
+  units.forEach((u, k) => {
+    const t = normalize(u.text);
+    all += t;
+    for (let j = 0; j < t.length; j++) owner.push(k);
+  });
+  return { all, owner };
+}
+
+const bigrams = (s) => {
+  const out = new Map();
+  for (let i = 0; i + 1 < s.length; i++) {
+    const g = s.slice(i, i + 2);
+    out.set(g, (out.get(g) || 0) + 1);
+  }
+  return out;
+};
+function dice(a, b) {
+  const A = bigrams(a); const B = bigrams(b);
+  let hit = 0; let total = 0;
+  for (const v of A.values()) total += v;
+  for (const v of B.values()) total += v;
+  for (const [g, v] of A) hit += Math.min(v, B.get(g) || 0);
+  return total ? (2 * hit) / total : 0;
+}
+
+/** 模糊比對的門檻：雙連字有六成對得上；第二像的要差 0.1 以上，否則算不清楚是哪裡 */
+const FUZZY_MIN = 0.6;
+const FUZZY_GAP = 0.1;
+
+/**
+ * 一段提示字在稿件哪裡。回傳 { from, to, how } | { ambiguous: true } | null。
+ * from／to 是 units 的陣列位置。
+ */
+function locate(part, idx) {
+  const p = normalize(part);
+  if (p.length < 2) return null;
+  const hits = [];
+  for (let k = idx.all.indexOf(p); k >= 0; k = idx.all.indexOf(p, k + 1)) hits.push(k);
+  if (hits.length === 1) return { from: idx.owner[hits[0]], to: idx.owner[hits[0] + p.length - 1], how: 'exact' };
+  if (hits.length > 1) return { ambiguous: true };
+  if (p.length < 4) return null;
+  // 對不到原文：在稿件上滑一個同長的窗（±1 字），找雙連字最像的那一段
+  const scored = [];
+  for (const len of [p.length - 1, p.length, p.length + 1]) {
+    for (let k = 0; k + len <= idx.all.length; k++) scored.push({ k, len, s: dice(p, idx.all.slice(k, k + len)) });
+  }
+  scored.sort((a, b) => b.s - a.s);
+  const best = scored[0];
+  if (!best || best.s < FUZZY_MIN) return null;
+  // 跟最佳那段重疊的窗是同一個地方，不算競爭者
+  const rival = scored.find((x) => x.k + x.len <= best.k || x.k >= best.k + best.len);
+  if (rival && best.s - rival.s < FUZZY_GAP) return { ambiguous: true };
+  return { from: idx.owner[best.k], to: idx.owner[best.k + best.len - 1], how: 'fuzzy' };
+}
+
+/** 一個提示最多涵蓋幾個子句（跟 Claude 排配圖合併後的上限一樣） */
+const MAX_UNITS = 6;
+
+/**
+ * 原始檔名 → 提示位置。回傳 { from, to, name, how } 或 { skip: 原因 }。
+ *   name  檔名主體（給 Claude 看、也當沒有小標題時的備用）
+ */
+function hintFor(origName, units) {
+  const stem = stemOf(origName);
+  if (!looksLikeHint(stem)) return { skip: 'not-hint' };
+  const idx = indexUnits(units);
+  const whole = locate(stem, idx);
+  if (whole && !whole.ambiguous) return { from: whole.from, to: whole.to, name: stem, how: whole.how };
+  // 「頭_尾」：兩段各自找得到，就涵蓋從頭到尾
+  const parts = stem.split(/[_~～]+/).map((x) => x.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    const a = locate(parts[0], idx);
+    const b = locate(parts[parts.length - 1], idx);
+    if (a && b && !a.ambiguous && !b.ambiguous && b.to >= a.from && b.to - a.from < MAX_UNITS) {
+      return { from: a.from, to: b.to, name: stem, how: a.how === 'exact' && b.how === 'exact' ? 'exact' : 'fuzzy' };
+    }
+  }
+  if (whole && whole.ambiguous) return { skip: 'ambiguous', name: stem };
+  return { skip: 'not-found', name: stem };
+}
+
+/**
+ * 一整批：names＝{ shot3.png: '外資賣超816億.png' } → { hints: { shot3.png: {from,to,name,how} }, notes: [文字說明] }
+ * notes 給 log 用：看起來像提示、卻對不到或對到好幾處的檔名要講出來，剪輯師才知道要改檔名。
+ */
+function resolveHints(names, units) {
+  const hints = {};
+  const notes = [];
+  for (const [file, orig] of Object.entries(names || {})) {
+    const h = hintFor(orig, units);
+    if (h.skip === 'not-hint') continue;
+    if (h.skip === 'ambiguous') { notes.push(`${file}（${h.name}）在稿件裡出現不只一次，請多寫幾個字`); continue; }
+    if (h.skip) { notes.push(`${file}（${h.name}）在稿件裡找不到，照舊自動配`); continue; }
+    if (h.to - h.from + 1 > MAX_UNITS) { notes.push(`${file}（${h.name}）涵蓋太多句，照舊自動配`); continue; }
+    hints[file] = h;
+  }
+  return { hints, notes };
+}
+
+module.exports = { stemOf, normalize, looksLikeHint, locate, hintFor, resolveHints, indexUnits, dice };

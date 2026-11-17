@@ -214,7 +214,11 @@ test('給 Claude 的指示會進排配圖、卡片與動態卡片三份 prompt�
   assert.match(picker.buildCardPrompt({ steps: [{ id: 'U1', text: 'x' }], listing: '', width: 1, height: 1, note }),
     /剪輯師對這支片的指示/);
   const motion = fs.readFileSync(path.join(APP, 'scripts/motion-engine.js'), 'utf8');
-  assert.match(motion, /callClaude\(buildPrompt\(text, note\) \+ feedback\)/);
+  // 一般動態卡片與結尾明日觀察卡片（2026-11-16）兩份 prompt 都要帶到指示
+  assert.match(motion, /buildOutlookPrompt\(text, note, \{ markers, count \}\) : buildPrompt\(text, note\)\) \+ feedback/);
+  const motionEngine = require(path.join(APP, 'scripts/motion-engine'));
+  assert.match(motionEngine.buildPrompt('x', note), /剪輯師對這支片的指示/);
+  assert.match(motionEngine.buildOutlookPrompt('x', note), /剪輯師對這支片的指示/);
   const render = fs.readFileSync(path.join(APP, 'scripts/render-motion.js'), 'utf8');
   assert.match(render, /note: CLAUDE_NOTE/);
 });

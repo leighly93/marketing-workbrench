@@ -22,6 +22,8 @@ import {
   EXAMPLE_CONTRAST,
   EXAMPLE_LIST,
   EXAMPLE_NUMBER,
+  EXAMPLE_OUTLOOK_ALL,
+  EXAMPLE_OUTLOOK_PAGED,
   EXAMPLE_QUOTE,
   EXAMPLE_RANK,
   EXAMPLE_SECTOR,
@@ -169,6 +171,22 @@ export const RemotionRoot: React.FC = () => {
           width={1080}
           height={1920}
           defaultProps={{ spec, safeTop: 310, safeBottom: 1440 }}
+        />
+      ))}
+      {/* 2026-11-16 明日觀察：大盤小報動態只出橫式，所以用橫式尺寸看長相 */}
+      {([
+        ['MotionClipDemoOutlookPaged', EXAMPLE_OUTLOOK_PAGED],
+        ['MotionClipDemoOutlookAll', EXAMPLE_OUTLOOK_ALL],
+      ] as const).map(([id, spec]) => (
+        <Composition
+          key={id}
+          id={id}
+          component={MotionClip as React.FC<Record<string, unknown>>}
+          durationInFrames={VIDEO_FPS * 11}
+          fps={VIDEO_FPS}
+          width={1178}
+          height={1080}
+          defaultProps={{ spec, safeTop: 0, safeBottom: 918, noTailFade: true }}
         />
       ))}
     </>

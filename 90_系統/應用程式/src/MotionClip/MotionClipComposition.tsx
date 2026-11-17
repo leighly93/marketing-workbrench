@@ -16,6 +16,7 @@ import type {
   ListSpec,
   MotionClipSpec,
   NumberSpec,
+  OutlookSpec,
   QuoteSpec,
   RankSpec,
   SectorSpec,
@@ -833,6 +834,105 @@ const Bars: React.FC<{ spec: RankSpec | SectorSpec; beats: number[] }> = ({ spec
   );
 };
 
+// ── ⑨ 明日觀察：結尾「明天要看幾件事」（2026-11-16）────────────────
+// 排法由產線決定（spec.layout）：all＝同一個畫面（沿用條列的樣子）、paged＝一點一個畫面。
+const OutlookCard: React.FC<{ spec: OutlookSpec; beats: number[] }> = ({ spec, beats }) => {
+  if (spec.layout === 'all') {
+    return <Bullets spec={{ template: 'list', items: spec.items }} beats={beats} />;
+  }
+  return <OutlookPages spec={spec} beats={beats} />;
+};
+
+/** 一點一個畫面：唸到第 k 點時第 k 頁從右邊滑進來、上一頁往左淡出；上方的進度格跟著亮。 */
+const OutlookPages: React.FC<{ spec: OutlookSpec; beats: number[] }> = ({ spec, beats }) => {
+  const frame = useCurrentFrame();
+  const { fps, durationInFrames } = useVideoConfig();
+  const items = spec.items.slice(0, 5);
+  const n = items.length;
+  const starts = items.map((it, i) => itemAt(it, beats[2 + i] ?? 0, fps));
+  // 換頁的那一刻：下一頁開始時本頁開始退場
+  const IN = 0.35 * fps;
+  const OUT = 0.3 * fps;
+  let cur = 0;
+  for (let i = 0; i < n; i++) if (frame >= starts[i]) cur = i;
+  // 文字可用寬：設計寬 1080 − 左右 pad − 卡片 padding(44×2) − 外框(4×2)
+  const avail = 1080 - MC.pad * 2 - 88 - 8;
+  const textFont = fitFontSize(avail, items.map((i) => i.text), 88, ITEM_FONT_MAX);
+  const noteFont = 54;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 44 }}>
+      {n > 1 ? (
+        <Enter at={starts[0]} dy={0}>
+          <div style={{ display: 'flex', gap: 18 }}>
+            {items.map((_, i) => {
+              const on = interpolate(frame, [starts[i], starts[i] + IN], [0, 1],
+                { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+              const active = i === cur && frame >= starts[i];
+              return (
+                <div key={i} style={{
+                  flex: 1, height: 64, borderRadius: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 38, fontWeight: 900,
+                  background: active ? MC.yellow : `rgba(255,216,77,${0.12 + on * 0.18})`,
+                  color: active ? '#0e2f6e' : on > 0.5 ? MC.yellow : MC.muted,
+                  border: `3px solid rgba(255,216,77,${active ? 1 : 0.35})`,
+                }}>
+                  {i + 1}
+                </div>
+              );
+            })}
+          </div>
+        </Enter>
+      ) : null}
+      <div style={{ position: 'relative', height: 560 }}>
+        {items.map((it, i) => {
+          const start = starts[i];
+          const end = i + 1 < n ? starts[i + 1] : durationInFrames + OUT;
+          if (frame < start || frame > end + OUT) return null;
+          const pIn = interpolate(frame, [start, start + IN], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+          const pOut = interpolate(frame, [end, end + OUT], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+          const x = (1 - pIn) * 90 - pOut * 90;
+          return (
+            <div key={i} style={{
+              position: 'absolute', inset: 0, opacity: pIn * (1 - pOut), transform: `translateX(${x}px)`,
+              display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 34,
+              background: 'rgba(255,255,255,0.07)', border: '4px solid rgba(255,216,77,0.6)', borderRadius: 28,
+              padding: '40px 44px',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 26 }}>
+                <Pop at={start}>
+                  <div style={{
+                    width: 104, height: 104, borderRadius: 26, background: MC.yellow, color: '#0e2f6e',
+                    fontSize: 58, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    boxShadow: '0 6px 0 rgba(0,0,0,0.18)',
+                  }}>
+                    {i + 1}
+                  </div>
+                </Pop>
+                {n > 1 ? (
+                  <div style={{ fontSize: 40, fontWeight: 700, color: MC.blue, letterSpacing: 2 }}>
+                    {`第 ${i + 1} 件／共 ${n} 件`}
+                  </div>
+                ) : null}
+              </div>
+              <div style={{ fontSize: textFont, fontWeight: 900, color: MC.white, lineHeight: 1.2, letterSpacing: -1 }}>
+                {it.text}
+              </div>
+              {it.note ? (
+                <Enter at={start + 0.35 * fps} dy={12}>
+                  <div style={{ fontSize: noteFont, fontWeight: 700, color: '#d8e6ff', lineHeight: 1.35,
+                    borderLeft: `8px solid ${MC.yellow}`, paddingLeft: 24 }}>
+                    {it.note}
+                  </div>
+                </Enter>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 /** 依型別算「要幾拍」：kicker、title 各一拍，主體每項一拍，註腳一拍。 */
 function stepsOf(spec: MotionClipSpec): number {
   const head = 2;
@@ -849,7 +949,9 @@ function stepsOf(spec: MotionClipSpec): number {
               ? 1 + Math.min(2, (spec.items ?? []).length)
               : spec.template === 'rank' || spec.template === 'sector'
                 ? Math.min(5, spec.items.length) + 1
-                : Math.min(4, spec.lines.length);
+                : spec.template === 'outlook'
+                  ? Math.min(5, spec.items.length)
+                  : Math.min(4, spec.lines.length);
   return head + body + 1;
 }
 
@@ -887,6 +989,7 @@ export const MotionClip: React.FC<{
       {spec.template === 'level' ? <LevelCard spec={spec} beats={beats} /> : null}
       {spec.template === 'number' ? <NumberCard spec={spec} beats={beats} /> : null}
       {spec.template === 'rank' || spec.template === 'sector' ? <Bars spec={spec} beats={beats} /> : null}
+      {spec.template === 'outlook' ? <OutlookCard spec={spec} beats={beats} /> : null}
     </Shell>
   );
 };

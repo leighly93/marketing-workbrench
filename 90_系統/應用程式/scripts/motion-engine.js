@@ -14,7 +14,9 @@
  *   MOTION_ENGINE=api        → 保留，尚未實作（真要做時約 US$1.5／月 200 支）
  *
  * ── 介面（三個後端一致）────────────────────────────────────────
- *   plan({ text, manualSpec, note? }) → spec | null
+ *   plan({ text, manualSpec, note?, force?, markers?, count? }) → spec | null
+ *     force       'outlook'＝這段一定做成明日觀察卡片（結尾「明天要看的事」，2026-11-16，位置由 outlook.js 找）
+ *     markers     旁白裡的序號原文（第一、第二…），給 Claude 對齊每一項；count 有值＝件數一定要等於它
  *     note        重新出片時寫給 Claude 的指示（只影響那一支，public/claude-note.txt）
  *     text        那一段旁白的原文（cleaned script，跟 charIdx 同一套座標）
  *     manualSpec  前台貼的 spec；manual 後端只回傳它，其餘後端在生成失敗時拿它當退路
@@ -114,6 +116,36 @@ function buildPrompt(text, note = '') {
   ].join('\n');
 }
 
+/**
+ * 結尾「明天要看的事」專用（2026-11-16 使用者定案）：
+ *   件數以旁白**實際講到**的為準；每項＝重點＋一行說明（使用者：「只有一行也太少」）。
+ *   kicker／title 由程式依件數補（outlook.js 的 outlookHeading），所以這裡不要 Claude 給。
+ */
+function buildOutlookPrompt(text, note = '', { markers = [], count = null } = {}) {
+  return [
+    '這段財經旁白是影片結尾在講「明天（或接下來）要看的事」。把它做成一張明日觀察卡片的參數。',
+    '',
+    `旁白原文：「${text}」`,
+    '',
+    '規則：',
+    '1. template 固定是 "outlook"。',
+    '2. items 逐項列出旁白**實際講到**的每一件要看的事，照旁白順序。開頭說「三件事」卻只講了兩件，就只給兩項；',
+    '   只講了一件就只給一項。收尾的提醒（例「控制持股」「明天見」）不是要看的事，不要列。',
+    ...(markers.length ? [count
+      ? `   旁白用「${markers.join('、')}」標出了 ${count} 件事：items 就是 ${count} 項，第 k 項就是第 k 個序號後面講的事。`
+      : `   旁白用「${markers.join('、')}」分段，可以參考；但收尾提醒不算一項。`] : []),
+    '3. 每項 text 是重點，2～10 個字（例「美國CPI公布」「台積電法說」）；',
+    '   note 是一行說明，8～18 個字，濃縮旁白講的看點或影響（例「高於預期壓抑降息期待」），不要整句照抄、不要跟 text 重複。',
+    '   at 照抄這一項在旁白裡**開頭**的 4～8 個字（有序號的話從序號開始，例「第二，台積電」），產線用它對時間。',
+    '4. when 放旁白講的時間：明天、下週、週一…（最多 4 個字）。',
+    '5. 數字一律照原文，不能自己算、換單位或補別段的數字。',
+    '',
+    '只輸出 JSON，例：',
+    '{"template":"outlook","when":"明天","items":[{"text":"美國CPI公布","note":"高於預期恐壓抑降息期待","at":"第一，美國CPI"},{"text":"台積電法說","note":"展望定半導體方向","at":"第二，台積電"}]}',
+    ...(note ? ['', `剪輯師對這支片的指示（跟這段有關才照做；數字仍一律照原文、格式照上面）：${note}`] : []),
+  ].join('\n');
+}
+
 /** LLM 偶爾會加上 markdown 圍欄或前言，把第一個完整的 JSON 物件挖出來。 */
 function extractJson(raw) {
   const s = String(raw || '').trim();
@@ -136,9 +168,21 @@ function extractJson(raw) {
 function validate(spec) {
   if (!spec || typeof spec !== 'object') return null;
   const t = spec.template;
-  if (!['list', 'contrast', 'quote', 'event', 'level', 'number', 'rank', 'sector'].includes(t)) return null;
+  if (!['list', 'contrast', 'quote', 'event', 'level', 'number', 'rank', 'sector', 'outlook'].includes(t)) return null;
   const str = (v) => typeof v === 'string' && v.trim().length > 0;
 
+  if (t === 'outlook') {
+    // 明日觀察：1～5 項，每項 text 必填、note 可省（太長的說明不放，免得擠成三行）
+    const items = (Array.isArray(spec.items) ? spec.items : []).filter((x) => x && str(x.text)).map((x) => ({
+      text: x.text.trim(),
+      ...(str(x.note) && [...x.note.trim()].length <= 24 ? { note: x.note.trim() } : {}),
+      at: str(x.at) ? x.at.trim() : undefined,
+    }));
+    if (items.length < 1 || items.length > 5) return null;
+    // kicker／title 一律由程式補（outlookHeading），Claude 給的不採用 —— 件數要跟實際項目一致
+    const { kicker, title, ...rest } = spec;
+    return { ...rest, when: str(spec.when) ? spec.when.trim().slice(0, 4) : '明天', items };
+  }
   if (t === 'list') {
     const items = Array.isArray(spec.items) ? spec.items.filter((x) => x && str(x.text)) : [];
     // ⚠️ 一項也算數（2026-09-21 使用者：「只有一個沒關係！要出動態！」）。
@@ -210,7 +254,7 @@ function cardTexts(spec) {
     spec.when, spec.event, spec.level, spec.gap, spec.verdict, spec.label, spec.stamp];
   if (spec.value) out.push(`${spec.prefix || ''}${spec.value}${spec.unit || ''}`);
   for (const p of spec.positives || []) out.push(p);
-  for (const it of spec.items || []) out.push(it && it.text, it && it.value);
+  for (const it of spec.items || []) out.push(it && it.text, it && it.value, it && it.note);
   for (const tg of spec.tags || []) out.push(tg);
   for (const line of spec.lines || []) out.push(line.map((tk) => tk.t).join(''));
   return out.filter((s) => typeof s === 'string' && s.trim());
@@ -352,13 +396,14 @@ const ENGINES = {
 
   'claude-cli': {
     label: 'claude -p（訂閱，不需要 API key）',
-    plan({ text, manualSpec, note }) {
+    plan({ text, manualSpec, note, force, markers, count }) {
       if (!text || !text.trim()) return validate(manualSpec);
+      const outlook = force === 'outlook';
       // 內容檢查沒過就帶著問題重產一次（2026-10-08）。第二次還是不過就**不做這段**：
       // 財經影片上一個錯的數字比少一段動態嚴重得多。
       let feedback = '';
       for (let round = 1; round <= 2; round++) {
-        const out = callClaude(buildPrompt(text, note) + feedback);
+        const out = callClaude((outlook ? buildOutlookPrompt(text, note, { markers, count }) : buildPrompt(text, note)) + feedback);
         if (out === null) return validate(manualSpec);
         let result;
         try {
@@ -366,7 +411,9 @@ const ENGINES = {
         } catch (_) {
           result = out;
         }
-        const spec = validate(extractJson(result));
+        let spec = validate(extractJson(result));
+        // 指定要明日觀察卡片，回別種的當格式不合格
+        if (spec && outlook && spec.template !== 'outlook') spec = null;
         if (!spec) {
           // 2026-11-13 21uc：結尾總結那段偶發一次格式不合格就直接放棄，整支片少了收尾。
           // 同一段文字重問幾乎都會過 → 格式不合格也帶著提醒重產一次，第二次還不行才放棄。
@@ -379,6 +426,10 @@ const ENGINES = {
           return validate(manualSpec);
         }
         const problems = checkAgainstSource(spec, text);
+        // 旁白有明確序號（第一、第二…）時件數一定要對；重產一次還是不對就照 Claude 的（少一段動畫比件數差一項嚴重）
+        if (outlook && count && spec.items.length !== count && round < 2) {
+          problems.push(`旁白用「${(markers || []).join('、')}」講了 ${count} 件事，items 卻有 ${spec.items.length} 項`);
+        }
         if (problems.length === 0) return spec;
         console.error(`⚠️ 卡片內容跟原文對不上（第 ${round} 次）：${problems.join('；')}`);
         feedback = '\n\n上一版有這些問題，請修正後重給：\n' + problems.map((p) => `- ${p}`).join('\n');
@@ -408,7 +459,14 @@ function createEngine(name) {
 
 /** 產線唯一入口。回傳 null＝這段不做動態，呼叫端必須能接受。 */
 function plan(input, env = process.env) {
-  return createEngine(env.MOTION_ENGINE).plan(input || {});
+  const spec = createEngine(env.MOTION_ENGINE).plan(input || {});
+  return spec && spec.template === 'outlook' ? withOutlookHeading(spec) : spec;
 }
 
-module.exports = { plan, createEngine, validate, checkAgainstSource, cardTexts, extractJson, buildPrompt, describeFailure, ENGINES, MODELS };
+/** 明日觀察的 kicker／title：件數跟著實際項目數（2026-11-16 使用者：「以實際講到的為準」） */
+function withOutlookHeading(spec) {
+  return { ...spec, ...require('./outlook').outlookHeading(spec.when, spec.items.length) };
+}
+
+module.exports = { plan, createEngine, validate, checkAgainstSource, cardTexts, extractJson, buildPrompt, buildOutlookPrompt,
+  withOutlookHeading, describeFailure, ENGINES, MODELS };

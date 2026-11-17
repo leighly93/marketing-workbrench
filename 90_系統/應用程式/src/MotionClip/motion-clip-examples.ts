@@ -1,4 +1,4 @@
-import type { ContrastSpec, ListSpec, NumberSpec, QuoteSpec, RankSpec, SectorSpec } from './motion-clip-types';
+import type { ContrastSpec, ListSpec, NumberSpec, OutlookSpec, QuoteSpec, RankSpec, SectorSpec } from './motion-clip-types';
 
 /**
  * Studio 預覽用的範例參數（2026-09-16 使用者提供的真實稿件片段）。
@@ -71,3 +71,20 @@ export const EXAMPLE_SECTOR: SectorSpec = {
   ],
   tags: ['資金輪動？', '新主力題材？'],
 };
+
+// 2026-11-16 明日觀察：同一份內容，兩種排法各一支（Studio 看長相用）
+export const EXAMPLE_OUTLOOK_PAGED: OutlookSpec = {
+  template: 'outlook',
+  kicker: '明日觀察',
+  title: '明天要看|三件事',
+  when: '明天',
+  layout: 'paged',
+  items: [
+    { text: '美國CPI公布', note: '高於預期恐壓抑降息期待', atSec: 1.2 },
+    { text: '台積電法說', note: '展望決定半導體方向', atSec: 4.5 },
+    { text: '外資期貨空單', note: '空單續增要提防回檔', atSec: 8 },
+  ],
+};
+
+export const EXAMPLE_OUTLOOK_ALL: OutlookSpec = { ...EXAMPLE_OUTLOOK_PAGED, layout: 'all',
+  items: EXAMPLE_OUTLOOK_PAGED.items.map((it, i) => ({ ...it, atSec: 1.2 + i * 1.5 })) };

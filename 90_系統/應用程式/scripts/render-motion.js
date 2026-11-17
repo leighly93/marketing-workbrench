@@ -257,6 +257,29 @@ function heroFirst(spec) {
   return spec;
 }
 
+/**
+ * 明日觀察（2026-11-16）：
+ *   ① 旁白有明確序號（第一、第二…）且件數相同 → 每一項的 at 改用序號本身，比 Claude 抄的片段可靠。
+ *   ② 對時間（resolveItemTimes）。
+ *   ③ 排法由程式決定（outlook.js 的 outlookLayout）：每項旁白都短 → 'all' 同一個畫面；否則 'paged' 一點一頁。
+ *   ④ 一點一頁時，第一頁最晚 OUTLOOK_FIRST_SEC 秒就出來 —— 「明天要看三件事」這句講完前畫面只有標題太空。
+ */
+const OUTLOOK_FIRST_SEC = 1.2;
+function finishOutlook(planned, entry, range, subs, phrase) {
+  let spec = planned;
+  const markers = Array.isArray(entry.markers) ? entry.markers : [];
+  if (markers.length && markers.length === spec.items.length) {
+    spec = { ...spec, items: spec.items.map((it, k) => ({ ...it, at: markers[k] })) };
+  }
+  const layout = require('./outlook').outlookLayout(spec.items, phrase);
+  spec = resolveItemTimes({ ...spec, layout }, range, subs);
+  if (layout === 'paged' && spec.items.length && typeof spec.items[0].atSec === 'number') {
+    const first = Math.min(spec.items[0].atSec, OUTLOOK_FIRST_SEC);
+    spec = { ...spec, items: spec.items.map((it, k) => (k === 0 ? { ...it, atSec: Number(first.toFixed(3)) } : it)) };
+  }
+  return spec;
+}
+
 /** 檔名用的關鍵字：取原文前 10 字，剝掉標點與空白。 */
 function keywordOf(text) {
   const clean = String(text || '').replace(/[，。、！？「」『』（）()\[\]：；,.!?:;\s]/g, '');
@@ -328,7 +351,14 @@ function main() {
 
     // spec 一律問 engine：manual 後端直接回參數檔裡的 spec，claude-cli 後端讀原文產生。
     // 回 null＝這段不做動態（engine 已經把原因印出來了），跳過、繼續下一段。
-    const planned = motionEngine.plan({ text: phrase, manualSpec: entry.spec, note: CLAUDE_NOTE });
+    // 結尾明日觀察（kind: 'outlook'，2026-11-16）：一定做成 outlook 卡片；產不出來才退回一般的動態卡片
+    const isOutlook = entry.kind === 'outlook';
+    let planned = motionEngine.plan({ text: phrase, manualSpec: entry.spec, note: CLAUDE_NOTE,
+      ...(isOutlook ? { force: 'outlook', markers: entry.markers || [], count: entry.count || null } : {}) });
+    if (!planned && isOutlook) {
+      log(`   ⚠️ 明日觀察卡片產不出來，改做一般的動態卡片`);
+      planned = motionEngine.plan({ text: phrase, manualSpec: entry.spec, note: CLAUDE_NOTE });
+    }
     if (!planned) {
       // engine 名稱一定要印出來 —— 光說「產不出來」的話，
       // 「engine 選錯」跟「claude 這次回得不合格」看起來一模一樣。
@@ -336,7 +366,9 @@ function main() {
       log(`\n⏭  動態 ${n}：參數產不出來（後端＝${who}，原因見上一行），這段跳過`);
       return;
     }
-    const spec = resolveItemTimes(planned, range, subs);
+    const spec = planned.template === 'outlook'
+      ? finishOutlook(planned, entry, range, subs, phrase)
+      : resolveItemTimes(planned, range, subs);
     const kw = keywordOf(entry.keyword || phrase);
 
     log(`\n🎬 動態 ${n}：charIdx ${range.startCharIdx}–${range.endCharIdx}`
@@ -344,7 +376,7 @@ function main() {
       + (toEnd ? `　※ 做在結尾 → 延續到影片結束，不淡出回講者` : ''));
     log(`   原文：${phrase.slice(0, 40)}${phrase.length > 40 ? '…' : ''}`);
     // 卡片上實際會出現的字。以前只印條列的項目，金句／對照卡做錯時從 log 看不出寫了什麼（2026-10-08）
-    log(`   卡片（${spec.template}）：${motionEngine.cardTexts(spec).join('｜')}`);
+    log(`   卡片（${spec.template}${spec.layout ? `／${spec.layout === 'all' ? '同一個畫面' : '一點一個畫面'}` : ''}）：${motionEngine.cardTexts(spec).join('｜')}`);
     if (typeof spec.atSec === 'number') log(`   數字　→ 第 ${spec.atSec} 秒開始跳`);
     (spec.items || []).forEach((it, i) =>
       log(`   ${i + 1}. ${it.text}　→ 第 ${it.atSec} 秒進場${it._fallback ? '（等距，比對不到）' : ''}`));
@@ -388,4 +420,4 @@ if (require.main === module) {
 }
 
 // 純計算的部分獨立出來給測試用（不碰檔案系統、不呼叫 remotion）
-module.exports = { orientationsFor, TEMPLATE_MOTION, resolveRange, resolveItemTimes, heroFirst, keywordOf, ORIENTATIONS };
+module.exports = { orientationsFor, TEMPLATE_MOTION, resolveRange, resolveItemTimes, heroFirst, keywordOf, ORIENTATIONS, finishOutlook };
