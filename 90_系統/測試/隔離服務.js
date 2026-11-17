@@ -68,6 +68,7 @@ function loadServer(root, options = {}) {
     child_process: options.childProcess || new Proxy({}, { get: () => blocked }),
     '../scripts/shot-memory': localRequire('../scripts/shot-memory'),
     '../scripts/image-size': localRequire('../scripts/image-size'),
+    '../scripts/job-dedupe': localRequire('../scripts/job-dedupe'),
     '../scripts/script-utils': localRequire('../scripts/script-utils'),
     '../../paths': localRequire('../../paths'),
     '../../工作儲存': localRequire('../../工作儲存'),

@@ -14,6 +14,7 @@
     "parse-script": "node \"90_系統/執行.js\" parse-script",
     "correct-subtitles": "node \"90_系統/執行.js\" correct-subtitles",
     "list": "node \"90_系統/執行.js\" list",
+    "dedupe:jobs": "node \"90_系統/執行.js\" dedupe:jobs",
     "check-voices": "node \"90_系統/執行.js\" check-voices",
     "test:v3": "node \"90_系統/執行.js\" test:v3",
     "use-dapan-assets": "node \"90_系統/執行.js\" use-dapan-assets",

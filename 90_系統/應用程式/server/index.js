@@ -36,6 +36,8 @@ const { spawn, execFileSync } = require('child_process');
 const SHOT_MEMORY = require('../scripts/shot-memory');
 const { resolveManualOverlaps } = require('../scripts/script-utils');
 const { imageSize, pickImageSize } = require('../scripts/image-size');
+const jobDedupe = require('../scripts/job-dedupe');   // 工作紀錄裡內容相同的檔只佔一份空間（2026-11-17）
+const { detach } = jobDedupe;
 // 2026-08-27：自動唸法檢查（scripts/check-pronunciation.js）不再由伺服器跑。
 // 它算出來的東西大部分是錯的（兩份字幕的 words 會因為空字串而整段錯開；拼音又因為
 // nonZh:'consecutive' 把連續英數字併成一格而再錯開一次），而卡片同事也看得到，
@@ -255,6 +257,7 @@ function copyRecursive(from, to, skipNames) {
     }
   } else {
     ensureDir(path.dirname(to));
+    detach(to);
     fs.copyFileSync(from, to);
   }
 }
@@ -263,17 +266,9 @@ function rmrf(p) {
   try { fs.rmSync(p, { recursive: true, force: true }); } catch (_) {}
 }
 
+/** 目錄實際佔用：去重後共用同一份資料的路徑只算一次（scripts/job-dedupe.js） */
 function dirSize(p) {
-  let n = 0;
-  const walk = (d) => {
-    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-      const f = path.join(d, e.name);
-      if (e.isDirectory()) walk(f);
-      else n += fs.statSync(f).size;
-    }
-  };
-  try { walk(p); } catch (_) {}
-  return n;
+  return jobDedupe.diskBytes(p);
 }
 
 /** 本機在區網上的 IP，開機訊息要印給同事看 */
@@ -2091,6 +2086,7 @@ function tick() {
     .finally(() => {
       busy = false;
       try { backupJobArtifacts(job); } catch (_) {}   // 先備份再 prune，順序不能反
+      try { dedupeJobs(job); } catch (_) {}
       try { pruneOldJobs(); } catch (_) {}
       setTimeout(tick, 200);
     });
@@ -2328,6 +2324,7 @@ async function doRender(job) {
         appendLog(job, `   ✅ 收尾完成（源響度 ${m.input_i} LUFS／TP ${m.input_tp} dBTP → −14／−1.5）\n`);
       } catch (e) {
         appendLog(job, `   ⚠️ 收尾失敗，改用原始渲染檔（音量沒正規化）：${e.message}\n`);
+        detach(dest);
         fs.copyFileSync(from, dest);
       }
       job.outputs.push({ name, size, archive: path.relative(WORKSPACE_ROOT, dest) });
@@ -2591,11 +2588,13 @@ function publishLateUpload(job, name, dest) {
   try {
     if (job.status === 'preparing') {
       const to = path.join(ROOT, 'public', name);
+      detach(to);
       fs.copyFileSync(dest, to);
       copies.push('public/');
     }
     const snap = jobPath(job.id, 'state', 'public');
     if (fs.existsSync(snap)) {
+      detach(path.join(snap, name));
       fs.copyFileSync(dest, path.join(snap, name));
       copies.push('快照');
     }
@@ -3052,6 +3051,8 @@ const server = http.createServer(async (req, res) => {
       ensureDir(path.dirname(dest));
       // ⚠️ auto 模式要先把檔名佔起來。下面是 await（串流寫檔），一次選 3 張的話
       //    三個請求會在任何一個真正寫進去之前都算到同一個編號 → 互相覆蓋。
+      // 去重後 dest 可能跟備份共用同一份資料：先拆開再寫，不然重新上傳會連備份一起蓋掉
+      detach(dest);
       if (auto) fs.writeFileSync(dest, '');
       await new Promise((ok, bad) => {
         const ws = fs.createWriteStream(dest);
@@ -3638,6 +3639,7 @@ function backupJobArtifacts(job) {
     if (!fs.existsSync(from)) return;
     if (skipIfSameSize && fs.existsSync(to) && fs.statSync(to).size === fs.statSync(from).size) return;
     ensureDir(path.dirname(to));
+    detach(to);
     fs.copyFileSync(from, to);
   };
   try {
@@ -3653,6 +3655,19 @@ function backupJobArtifacts(job) {
     copy(path.join(src, 'log.txt'), path.join(dst, 'log.txt'), false);
   } catch (e) {
     try { appendLog(job, `\n⚠️ 工作備份失敗（不影響出片）：${e.message}\n`); } catch (_) {}
+  }
+}
+
+/**
+ * 每支片收尾：把這次新產生、跟既有檔案內容一模一樣的（HeyGen 原檔的兩份備份、快照裡的字型與片尾…）
+ * 併成同一份（scripts/job-dedupe.js）。路徑都還在，只是不重複佔空間；失敗只寫 log，不影響出片。
+ */
+function dedupeJobs(job) {
+  try {
+    const r = jobDedupe.dedupe(JOBS_DIR, { apply: true });
+    if (r.linked) appendLog(job, `\n🧹 去重：${r.linked} 個相同檔案併成同一份，省下 ${Math.round(r.savedBytes / 1048576)} MB\n`);
+  } catch (e) {
+    try { appendLog(job, `\n⚠️ 去重失敗（不影響出片）：${e.message}\n`); } catch (_) {}
   }
 }
 

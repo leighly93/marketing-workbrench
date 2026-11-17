@@ -13,6 +13,7 @@
     "parse-script": "node scripts/parse-script.js",
     "correct-subtitles": "node scripts/correct-subtitles.js",
     "list": "node scripts/list-articles.js",
+    "dedupe:jobs": "node scripts/job-dedupe.js",
     "check-voices": "node scripts/check-voices.js",
     "test:v3": "node scripts/test-v3-videos.js",
     "use-dapan-assets": "node scripts/use-dapan-assets.js",
