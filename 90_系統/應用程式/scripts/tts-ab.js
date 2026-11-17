@@ -22,6 +22,7 @@
 //   --pause  保留稿子裡的 `<#秒數#>` 停頓標記；**不加就整批剝掉**（＝同一份稿的對照組）
 //   --numfix 送 TTS 前把「年份」與「股號」轉成中文數字（只動送 TTS 的那份，字幕不受影響）
 //   --pause-scale=0.5  把稿子裡所有停頓秒數乘上這個倍率（配 --pause 用，調長短不必改稿）
+//   --speed=1.4  MiniMax 直接講快（voice_setting.speed 0.5～2；預設 1）
 //   --emotion= happy|sad|angry|fearful|disgusted|surprised|calm|fluent|whisper
 //              不送＝MiniMax 依文字自動挑（實測偏平；產線現在固定送 happy）
 //              ⚠️ whisper 在 speech-2.8 系列不支援，要配 --model=speech-2.6-hd 或 speech-02-hd
@@ -138,6 +139,9 @@ const DRY_RUN = process.argv.includes("--dry");
 //    要用的話單獨開一輪測，不要跟 emotion 混在一起。
 const EMOTIONS = ["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"];
 const EMOTION = arg("emotion", "");
+// --speed=1.4：讓 MiniMax 直接講快（voice_setting.speed，0.5～2），對照產線事後 ffmpeg 加速（2026-11-17）
+const SPEED = Number(arg("speed", "1")) || 1;
+if (SPEED < 0.5 || SPEED > 2) { console.error("❌ --speed 要在 0.5～2 之間"); process.exit(1); }
 if (EMOTION && !EMOTIONS.includes(EMOTION)) {
   console.error("❌ 不認得的 --emotion=" + EMOTION + "（合法值：" + EMOTIONS.join(" / ") + "；沒有 neutral／auto，送了會回 2013）");
   process.exit(1);
@@ -448,7 +452,7 @@ function buildPayload(text, opts) {
     model: MODEL,
     text,
     language_boost: "Chinese",
-    voice_setting: { voice_id: VOICE_ID, speed: 1.0, vol: 1.0, pitch: 0 },
+    voice_setting: { voice_id: VOICE_ID, speed: SPEED, vol: 1.0, pitch: 0 },
     audio_setting: { sample_rate: 32000, bitrate: 128000, format: "mp3", channel: 1 },
     output_format: "hex",
     stream: false,
@@ -527,7 +531,7 @@ async function tts(text, tag) {
   }
 
   const mixTag = MIX ? "mix-" + MIX.map((m) => m._key + m.weight).join("-") : VOICE_LABEL;
-  const name = [MODEL, mixTag, "text" + TEXT_KEY, USE_DICT ? "dict" : "nodict", USE_TN ? "tn" : "notn", USE_PAUSE ? "pause" + (PAUSE_SCALE !== 1 ? "x" + PAUSE_SCALE : "") : "nopause", USE_NUMFIX ? "numfix" : "nonumfix", EMOTION ? "emo-" + EMOTION : "emo-auto", KEEP_HYPHEN ? "hyphen" : "nohyphen", tag].join("_") + ".mp3";
+  const name = [MODEL, mixTag, "text" + TEXT_KEY, USE_DICT ? "dict" : "nodict", USE_TN ? "tn" : "notn", USE_PAUSE ? "pause" + (PAUSE_SCALE !== 1 ? "x" + PAUSE_SCALE : "") : "nopause", USE_NUMFIX ? "numfix" : "nonumfix", EMOTION ? "emo-" + EMOTION : "emo-auto", KEEP_HYPHEN ? "hyphen" : "nohyphen", ...(SPEED !== 1 ? ["speed" + SPEED] : []), tag].join("_") + ".mp3";
   const out = path.join(OUT_DIR, name);
   fs.writeFileSync(out, Buffer.from(data.data.audio, "hex"));
   const info = data.extra_info || {};

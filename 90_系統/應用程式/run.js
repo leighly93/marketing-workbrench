@@ -32,7 +32,7 @@ if (!["dapan", "midday", "usstock"].includes(TEMPLATE)) {
   console.error(`❌ 不認得的 --template=${TEMPLATE || "（未指定）"}（目前支援：dapan / midday / usstock）`);
   process.exit(1);
 }
-// 大盤小報／盤中焦點／美股焦點是「同一個模子」的三條固定主播產線：固定 avatar、125% 加速。
+// 大盤小報／盤中焦點／美股焦點是「同一個模子」的三條固定主播產線：固定 avatar、加速（大盤小報 140%、其他 125%，見 SPEED_FACTOR）。
 // 配音 2026-08-24 起走 MiniMax + HeyGen 音訊驅動對嘴（原本是 HeyGen 文字驅動，--heygen-voice 可退回）。
 // 大盤小報／盤中焦點在 2026-09-11 當天曾短暫改回 HeyGen 內建語音，同日又改回 MiniMax（換了新 clone 聲音），
 // 所以現在**三條線一致走 MiniMax**（見 HEYGEN_VOICE_ONLY_TEMPLATES，那個集合現在是空的）。
@@ -321,8 +321,8 @@ const HEYGEN_DUAL_VOICES = {
 
 // 大盤小報：固定單一 avatar（「每日固定主播」形式，不像投廣模板從池子隨機抽），
 // 2026-08-06 使用者定案。只在 TEMPLATE === "dapan" 時使用。
-const DAPAN_AVATAR = { id: "6f5b34c90d6b46a591256f67830944dd", gender: "female" }; // 2026-11-17 使用者更換（原 facb6557…；用過 77012ed5…／5bad6432…／484b6346…／cf57d300…／8032bdb6…／c2c2963b…）
-// ⚠️ 2026-11-17 這支 6f5b34c9… 還沒驗過下面「換 look 三件事」（比例／水平位置／頭頂 y）；出片後看 heygen.mp4 再決定要不要調版位。
+const DAPAN_AVATAR = { id: "f2fa9c8ec12f4654ae3c47d72c07b3b5", gender: "female" }; // 2026-11-17 使用者再換（同日先換過 6f5b34c9…；原 facb6557…；用過 77012ed5…／5bad6432…／484b6346…／cf57d300…／8032bdb6…／c2c2963b…）
+// ⚠️ 2026-11-17 這支 f2fa9c8e… 還沒驗過下面「換 look 三件事」（比例／水平位置／頭頂 y）；出片後看 heygen.mp4 再決定要不要調版位。
 // 2026-10-01 改用 77012ed5…：頭頂 y≈145，比 5bad6432…（≈157）高約 12px，構圖差距小，未重算版位。
 // 2026-09-16 換回 5bad6432… 的原因：484b6346… 的**構圖偏高**。三支的來源 heygen.mp4（都是
 // 1920×1080）量到的頭頂 y：5bad6432≈157、77012ed5≈145、484b6346≈103。版型沒有任何垂直位置參數
@@ -773,8 +773,13 @@ function cleanSegmentText(text) {
 
 // ── MiniMax T2A ───────────────────────────
 
+// MiniMax 直接講快（voice_setting.speed，0.5～2）。2026-11-17 使用者聽過 1.4／1.5／1.55 與事後 ffmpeg 140% 的對照後，
+// 大盤小報定案「MiniMax 直接講快 150%」：模型自己講快、斷句自然，HeyGen 拿到的已是快速音檔
+// （對嘴動作是正常速度、照較短長度收費），之後不再事後加速（見 stampSpedByMinimax）。其他版型維持原速＋事後 125%。
+const MINIMAX_TTS_SPEED = TEMPLATE === "dapan" ? 1.5 : 1.0;
+
 async function minimaxTTS(text, voiceId = MINIMAX_VOICE_ID) {
-  log(`呼叫 MiniMax T2A（${text.length} 字符、model: ${MINIMAX_MODEL}、voice: ${voiceId}、情緒: ${MINIMAX_EMOTION || "自動"}）`);
+  log(`呼叫 MiniMax T2A（${text.length} 字符、model: ${MINIMAX_MODEL}、voice: ${voiceId}、情緒: ${MINIMAX_EMOTION || "自動"}、語速: ${MINIMAX_TTS_SPEED}）`);
   const url = `https://api.minimax.io/v1/t2a_v2?GroupId=${MINIMAX_GROUP_ID}`;
   const payload = {
     model: MINIMAX_MODEL,
@@ -783,7 +788,7 @@ async function minimaxTTS(text, voiceId = MINIMAX_VOICE_ID) {
     language_boost: MINIMAX_LANGUAGE_BOOST,
     voice_setting: {
       voice_id: voiceId,
-      speed: 1.0,
+      speed: MINIMAX_TTS_SPEED,
       vol: 1.0,
       pitch: 0,
       // emotion 見 MINIMAX_EMOTION 的註解（2026-09-01 起送 happy；設成空值就退回「自動挑」）。
@@ -832,7 +837,10 @@ async function minimaxTTS(text, voiceId = MINIMAX_VOICE_ID) {
 // 點數又一毛沒省，那正是 8/19 當天踩到的）。**現在加速只有這一條路：ffmpeg。**
 // 哪天 HeyGen 修好想再試，先用 `node scripts/ab-endpoints.js --only=v3 --v3-speed=1.5 --go`
 // 確認秒數真的變短，再把欄位加回來 —— 不要憑推測。
-const SPEED_FACTOR = 1.25;
+// 大盤小報 2026-11-17 起由 MiniMax 直接講快 150%，那種影片會蓋上記號、這裡不再加速；
+// 140% 只給大盤小報「不是 MiniMax 配的」講者影片（--heygen-voice、手動放的影片、11/17 以前的舊工作重新出片）。
+// 其他版型維持 125%。
+const SPEED_FACTOR = TEMPLATE === "dapan" ? 1.4 : 1.25;
 let speedApplied = false;
 
 // 加速過的 mp4 會被蓋上這個記號（寫進容器的 comment tag）。
@@ -841,7 +849,8 @@ let speedApplied = false;
 // （斷句會被壓爛，2026-08-17 踩過同樣的複合加速）。以前靠人記得加 --no-speed，
 // 2026-08-21 把「用現成的講者影片」開放給所有同事之後，那個假設就不成立了 → 改成自己認得出來。
 // ⚠️ backups/ 裡的檔案**沒有**這個記號（backupJob 是在加速之前跑的），所以拿備份重跑會正常加速，
-//    這是對的 —— 那些是原速的原始檔。
+//    這是對的 —— 那些是原速的原始檔。例外：MiniMax 直接講快的影片（大盤小報）一下載就蓋記號，
+//    備份裡的也有，重跑不會再加速（它本來就是快的）。
 const SPED_TAG = "marketing-video:sped";
 
 /** 這支影片是不是我們自己加速過的？認不出來就當成沒有（維持原本會加速的行為）。 */
@@ -857,13 +866,25 @@ function alreadySpedUp(p) {
   }
 }
 
+/** MiniMax 已經直接講快的講者影片：蓋上記號（只寫 metadata、不重編），之後任何重跑都不會再加速 */
+function stampSpedByMinimax(p) {
+  if (MINIMAX_TTS_SPEED === 1) return;
+  const tmp = p.replace(/\.mp4$/, "_tag.mp4");
+  execSync(
+    `ffmpeg -y -loglevel error -i "${p}" -map 0 -c copy -metadata comment="${SPED_TAG}=minimax${MINIMAX_TTS_SPEED}" "${tmp}"`,
+    { cwd: PROJECT_DIR, stdio: "inherit" }
+  );
+  require("fs").renameSync(tmp, p);
+  log(`講者影片是 MiniMax 直接講快 ${Math.round(MINIMAX_TTS_SPEED * 100)}% 配的，已蓋上記號，不再事後加速`);
+}
+
 function speedUpHeygen(heygenPath, whoLabel) {
   if (speedApplied) {
     log(`⚠️ heygen.mp4 這一輪已經加速過了，略過「${whoLabel}」的重複加速（避免 compounding）`);
     return;
   }
   if (alreadySpedUp(heygenPath)) {
-    log(`⏩ 這支 heygen.mp4 之前就被加速過了（檔案裡有記號），略過「${whoLabel}」的加速 —— 不然會變 ${(SPEED_FACTOR * SPEED_FACTOR).toFixed(2)} 倍`);
+    log(`⏩ 這支 heygen.mp4 已經是快速版（之前加速過，或 MiniMax 直接講快；檔案裡有記號），略過「${whoLabel}」的加速`);
     speedApplied = true;
     return;
   }
@@ -1674,7 +1695,7 @@ async function main() {
   // 2026-08-17：原本這裡是 120%、而 generateHeygenVideo() 只擋 dapan，導致 institution／focusstock
   // 被連續加速兩次（1.25 × 1.2 ≒ 1.5 倍），講話斷句被壓爛。現統一成單次 125%。
   if (FIXED_ANCHOR_TEMPLATE && NO_SPEED) {
-    log("⏩ 已指定 --no-speed，跳過 125% 加速（保留原始速度）");
+    log(`⏩ 已指定 --no-speed，跳過 ${Math.round(SPEED_FACTOR * 100)}% 加速（保留原始速度）`);
   } else if (FIXED_ANCHOR_TEMPLATE) {
     speedUpHeygen(heygenPath, "固定主播版型");
   }
@@ -1870,6 +1891,8 @@ async function generateHeygenVideo(heygenPath) {
       videoUrl = await generateTextDrivenVideo(cleanedScript, DAPAN_AVATAR.id, DAPAN_HEYGEN_VOICE_ID, "marketing-auto-dapan");
     }
     await downloadVideo(videoUrl, heygenPath);
+    // MiniMax 已直接講快 → 蓋記號，main() 的統一加速會認得、略過（HeyGen 內建語音那條仍照 SPEED_FACTOR 事後加速）
+    if (FIXED_ANCHOR_USE_MINIMAX) stampSpedByMinimax(heygenPath);
   } else if (TEMPLATE === "midday") {
     // ── 盤中焦點單人 path：跟大盤小報同一套（預設 MiniMax 配音 + HeyGen 音訊驅動對嘴）──
     //    avatar 與聲音都是自己的（MiniMax、HeyGen 兩邊的聲音 2026-09-11 起都不再沿用大盤小報那一支）。
@@ -1941,7 +1964,7 @@ async function generateHeygenVideo(heygenPath) {
   //    所以 FIXED_ANCHOR_TEMPLATE 恆為 true、這段目前不會執行。保留守門語意，
   //    未來新增非固定主播版型時這裡就會重新生效。
   if (!FIXED_ANCHOR_TEMPLATE && NO_SPEED) {
-    log("⏩ 已指定 --no-speed，跳過 125% 加速（保留原始速度）");
+    log(`⏩ 已指定 --no-speed，跳過 ${Math.round(SPEED_FACTOR * 100)}% 加速（保留原始速度）`);
   } else if (!FIXED_ANCHOR_TEMPLATE) {
     speedUpHeygen(heygenPath, "非固定主播版型");
   }
