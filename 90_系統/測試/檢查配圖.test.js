@@ -173,3 +173,31 @@ test('claude-shot-plan：標「不該放截圖」的句子，Claude 排的拿掉
   assert.match(r.stdout, /那裡有人工修正，拿掉/);
   assert.equal(r.data, null, '這支只剩那一段，拿掉之後就沒有配圖');
 });
+
+test('計畫列補上那一段旁白與前後文（Claude 排的 _phrase 常是空的；編輯器要顯示放在哪句話）', () => {
+  const chars = [...'今天台股暴跌外資賣超816億類股重挫'].map((c, i) => ({ i, c }));
+  const [r] = R.withPhrases([{ i: 0, src: 'shot1.png', phrase: '', startCharIdx: 6, endCharIdx: 13 }], chars);
+  assert.equal(r.phrase, '外資賣超816億');
+  assert.equal(r.before, '今天台股暴跌');
+  assert.equal(r.after, '類股重挫');
+  const src = fs.readFileSync(path.join(APP, 'server/public/app.js'), 'utf8');
+  assert.match(src, /'這張圖放在這句話'/);
+});
+
+test('Claude 沒用到的截圖：指定位置的記成「漏用這張圖」、有框就鎖住、沒框當位置提示；用過的圖或亂給的位置不收', () => {
+  const chars = [...'今天台股暴跌外資賣超816億類股重挫台積電法說法說會'].map((c, i) => ({ i, c }));
+  const extras = R.normalizeExtras([
+    { src: 'shot4.png', verdict: 'missing', startCharIdx: 18, endCharIdx: 22, cell: { x: 1, y: 2, w: 30, h: 10 }, imgW: 600, imgH: 400 },
+    { src: 'shot1.png', verdict: 'missing', startCharIdx: 0, endCharIdx: 3 },          // Claude 用過了
+    { src: 'shot9.png', verdict: 'missing', startCharIdx: 0, endCharIdx: 3 },          // 不是這支的圖
+  ], IMAGES, ROWS, chars);
+  assert.deepEqual(extras.map((x) => x.src), ['shot4.png']);
+  assert.equal(R.normalizeExtras([{ src: 'shot4.png', verdict: 'missing', startCharIdx: 5, endCharIdx: 999 }], IMAGES, ROWS, chars).length, 0);
+  const c = R.correctionRows([], ROWS, [], extras, chars);
+  assert.deepEqual(c.rows.map((r) => [r.kind, r.phrase, r.to]), [['漏用這張圖', '台積電法說', 'shot4.png']]);
+  assert.equal(R.correctionRows([], ROWS, c.sigs, extras, chars).rows.length, 0, '重送不重記');
+  assert.deepEqual(R.memoryItems([], ROWS, extras, chars).map((m) => m.phrase), ['台積電法說']);
+  assert.deepEqual(R.fixedPlan([], ROWS, extras).fixed.map((f) => [f.src, f.startCharIdx]), [['shot4.png', 18]]);
+  const noBox = R.normalizeExtras([{ src: 'shot4.png', verdict: 'missing', startCharIdx: 18, endCharIdx: 22 }], IMAGES, ROWS, chars);
+  assert.deepEqual(R.fixedPlan([], ROWS, noBox).hints, [{ startCharIdx: 18, endCharIdx: 22, src: 'shot4.png' }]);
+});

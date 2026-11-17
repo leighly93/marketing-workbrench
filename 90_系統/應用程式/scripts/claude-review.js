@@ -29,6 +29,22 @@ function rowSummary(r) {
   };
 }
 
+/** 稿件字元（auto-shot --sentences 的 chars）→ 字元範圍的文字 */
+function textOf(chars, a, b) {
+  return !Array.isArray(chars) || !chars.length || a == null || b == null ? ''
+    : chars.slice(Math.min(a, b), Math.max(a, b) + 1).map((c) => c.c).join('');
+}
+
+/** 計畫列補上「那一段旁白」（Claude 排的計畫 _phrase 常是空的）；另外附前後文給編輯器顯示放在哪句話 */
+function withPhrases(rows, chars) {
+  return (rows || []).map((r) => ({
+    ...r,
+    phrase: r.phrase || textOf(chars, r.startCharIdx, r.endCharIdx),
+    before: textOf(chars, Math.max(0, r.startCharIdx - 18), r.startCharIdx - 1),
+    after: textOf(chars, r.endCharIdx + 1, r.endCharIdx + 18),
+  }));
+}
+
 /** claude-annotations.json 的 shots → 精簡版（字元範圍換成文字） */
 function shotsSummary(shots, chars) {
   const textOf = (a, b) => (!Array.isArray(chars) || !chars.length || a == null || b == null ? ''
@@ -67,6 +83,31 @@ function normalizeItems(items, rows, images) {
   return out;
 }
 
+/**
+ * 沒用到的截圖（2026-11-17 使用者：「包含我丟了但是沒用到的圖也要顯示在這邊」）。
+ *   verdict 'missing'＝應該要用，帶人選的位置（字元範圍）與可選的框；'unused'＝不用沒關係。
+ * 只收這支有、而且 Claude 沒用到的圖；位置要在稿件範圍內。
+ */
+function normalizeExtras(extras, images, rows, chars) {
+  const used = new Set((rows || []).map((r) => r.src));
+  const n = Array.isArray(chars) ? chars.length : 0;
+  const out = [];
+  const seen = new Set();
+  for (const x of Array.isArray(extras) ? extras : []) {
+    if (!x || !(images || []).includes(x.src) || used.has(x.src) || seen.has(x.src)) continue;
+    if (x.verdict !== 'missing' && x.verdict !== 'unused') continue;
+    seen.add(x.src);
+    const note = typeof x.note === 'string' ? x.note.trim().slice(0, 300) : '';
+    if (x.verdict === 'unused') { out.push({ src: x.src, verdict: 'unused', note }); continue; }
+    const a = Math.round(Number(x.startCharIdx)); const b = Math.round(Number(x.endCharIdx));
+    if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b < a || (n && b >= n)) continue;
+    out.push({ src: x.src, verdict: 'missing', note, startCharIdx: a, endCharIdx: b,
+      region: box(x.region), cell: box(x.cell),
+      imgW: Number(x.imgW) > 0 ? Math.round(x.imgW) : null, imgH: Number(x.imgH) > 0 ? Math.round(x.imgH) : null });
+  }
+  return out;
+}
+
 /** 這一項跟 Claude 原本的有沒有實質不同（有改圖或改框才算「人給了正確答案」） */
 function hasFix(it, row) {
   return it.src !== row.src || JSON.stringify(it.cell) !== JSON.stringify(box(row.cell))
@@ -79,10 +120,22 @@ const sig = (it) => JSON.stringify([it.i, it.verdict, it.note, it.src, it.region
  * 修正紀錄的列（type「Claude排錯」）。logged＝這支已經寫過的簽章，同一個判斷重送不重記。
  * 回傳 { rows, sigs }
  */
-function correctionRows(items, rows, logged = []) {
+function correctionRows(items, rows, logged = [], extras = [], chars = []) {
   const done = new Set(logged);
   const out = [];
   const sigs = [];
+  for (const x of extras) {
+    if (x.verdict !== 'missing') continue;
+    const s = JSON.stringify(['extra', x.src, x.startCharIdx, x.endCharIdx, x.note, x.region, x.cell]);
+    if (done.has(s)) continue;
+    out.push({
+      type: 'Claude排錯', kind: '漏用這張圖', phrase: textOf(chars, x.startCharIdx, x.endCharIdx),
+      from: '（Claude 沒用到）', to: x.src, autoCell: null, autoRegion: null,
+      manualCell: x.cell, manualRegion: x.region, size: x.imgW && x.imgH ? { w: x.imgW, h: x.imgH } : null,
+      autoWhy: 'Claude 沒用到這張圖；人指定放在這句', reason: { tags: ['漏用這張圖'], note: x.note || '' },
+    });
+    sigs.push(s);
+  }
   for (const it of items) {
     if (it.verdict === 'ok') continue;
     const s = sig(it);
@@ -109,15 +162,18 @@ function correctionRows(items, rows, logged = []) {
 }
 
 /** 要學進記憶庫的：有框、有改過的（跟 learnFromEdits 給 shot-memory.learn 的同一個形狀） */
-function memoryItems(items, rows) {
-  return items
+function memoryItems(items, rows, extras = [], chars = []) {
+  const fromExtras = extras.filter((x) => x.verdict === 'missing' && x.cell).map((x) => ({
+    src: x.src, cell: x.cell, region: x.region, imgW: x.imgW, imgH: x.imgH,
+    phrase: textOf(chars, x.startCharIdx, x.endCharIdx), startCharIdx: x.startCharIdx }));
+  return fromExtras.concat(items
     .filter((it) => (it.verdict === 'wrongImage' || it.verdict === 'wrongBox' || it.verdict === 'other')
       && it.cell && hasFix(it, rows.find((r) => r.i === it.i)))
     .map((it) => {
       const row = rows.find((r) => r.i === it.i);
       return { src: it.src, cell: it.cell, region: it.region, imgW: it.imgW, imgH: it.imgH,
         phrase: row.phrase || '', startCharIdx: row.startCharIdx };
-    });
+    }));
 }
 
 /**
@@ -126,8 +182,14 @@ function memoryItems(items, rows) {
  *   hints   只換了圖、沒畫框：那張圖一定配在這幾句（框交給 Claude）
  *   noShot  這幾句不放截圖
  */
-function fixedPlan(items, rows) {
+function fixedPlan(items, rows, extras = []) {
   const fixed = []; const hints = []; const noShot = [];
+  for (const x of extras) {
+    if (x.verdict !== 'missing') continue;
+    const range = { startCharIdx: x.startCharIdx, endCharIdx: x.endCharIdx };
+    if (x.cell || x.region) fixed.push({ ...range, src: x.src, region: x.region, cell: x.cell, imgW: x.imgW, imgH: x.imgH });
+    else hints.push({ ...range, src: x.src });
+  }
   for (const it of items) {
     if (it.verdict === 'ok') continue;
     const row = rows.find((r) => r.i === it.i);
@@ -156,4 +218,4 @@ function autoNote(items, rows) {
   return lines.join('；');
 }
 
-module.exports = { VERDICTS, rowSummary, shotsSummary, normalizeItems, correctionRows, memoryItems, fixedPlan, autoNote, hasFix };
+module.exports = { VERDICTS, textOf, withPhrases, rowSummary, shotsSummary, normalizeItems, normalizeExtras, correctionRows, memoryItems, fixedPlan, autoNote, hasFix };

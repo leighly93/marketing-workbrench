@@ -739,10 +739,13 @@ function charTimes() {
  * 取子句清單。切法與字元對位一律交給 auto-shot.js 算（--sentences），
  * 伺服器不自己實作第二套 —— 兩套遲早會漂走。
  */
-function scriptUnits(scriptPath) {
+function scriptUnits(scriptPath, imagesPath) {
   if (!fs.existsSync(scriptPath)) return { units: [], chars: [] };
   try {
-    const out = execFileSync('node', ['scripts/auto-shot.js', '--sentences', `--script=${scriptPath}`],
+    // imagesPath：auto-shot 沒有圖片分析檔會直接結束；共用工作區的那份可能是別支或空的，檢查配圖改帶這支自己快照裡的
+    const args = ['scripts/auto-shot.js', '--sentences', `--script=${scriptPath}`];
+    if (imagesPath && fs.existsSync(imagesPath)) args.push(`--images=${imagesPath}`);
+    const out = execFileSync('node', args,
       { cwd: ROOT, encoding: 'utf-8', timeout: 20000, maxBuffer: 8 * 1024 * 1024 });
     const j = JSON.parse(out);
     return { units: j.units || [], chars: j.chars || [] };
@@ -919,7 +922,7 @@ function logClaudePlan(job) {
   if (!planByClaude(job) || job.claudePlanLoggedAt) return;
   try {
     const read = (id) => JSON.parse(fs.readFileSync(jobPath(id, 'state', 'public', 'claude-annotations.json'), 'utf-8')).shots || [];
-    const chars = (job.planView && job.planView.chars) || [];
+    const chars = scriptUnits(jobPath(job.id, 'input', 'script.txt'), jobPath(job.id, 'state', 'src', 'app-images.generated.json')).chars;
     const shots = CLAUDE_REVIEW.shotsSummary(read(job.id), chars);
     let motions = [];
     try { motions = JSON.parse(fs.readFileSync(jobPath(job.id, 'state', 'public', 'claude-motion.json'), 'utf-8')); } catch (_) {}
@@ -933,7 +936,7 @@ function logClaudePlan(job) {
       let before = [];
       try {
         const src = getJob(job.redoOf);
-        before = CLAUDE_REVIEW.shotsSummary(read(job.redoOf), (src && src.planView && src.planView.chars) || chars);
+        before = CLAUDE_REVIEW.shotsSummary(read(job.redoOf), chars);   // 重新出片不能改稿，字元位置相同
       } catch (_) {}
       appendCorrectionRows(job, [{
         type: 'Claude指示', phrase: job.claudeNote || '（照檢查配圖的修正重出）',
@@ -948,6 +951,13 @@ function logClaudePlan(job) {
   }
 }
 
+/** 檢查配圖用的計畫列：補上那一段旁白與前後文（planView 沒有稿件字元，從稿件切一次） */
+function reviewRows(job) {
+  const pv = job.planView || {};
+  const { chars, units } = scriptUnits(jobPath(job.id, 'input', 'script.txt'), jobPath(job.id, 'state', 'src', 'app-images.generated.json'));
+  return { rows: CLAUDE_REVIEW.withPhrases(pv.rows || [], chars), chars, units, images: pv.images || [] };
+}
+
 /** 追加修正紀錄（不受 appendCorrectionsLog「一支只寫一次」的限制，呼叫端自己去重） */
 function appendCorrectionRows(job, rows) {
   if (!rows.length) return;
@@ -960,17 +970,17 @@ function appendCorrectionRows(job, rows) {
 }
 
 /** 檢查配圖存檔：修正紀錄（新的才記）＋拖過的正確框學進記憶庫。回傳 { logged, learned } */
-function saveClaudeReview(job, items, by) {
-  const pv = job.planView || {};
-  const rows = pv.rows || [];
-  const clean = CLAUDE_REVIEW.normalizeItems(items, rows, pv.images || []);
+function saveClaudeReview(job, items, by, extras) {
+  const { rows, images, chars } = reviewRows(job);
+  const clean = CLAUDE_REVIEW.normalizeItems(items, rows, images);
+  const cleanExtras = CLAUDE_REVIEW.normalizeExtras(extras, images, rows, chars);
   const at = nowISO();
-  job.claudeReview = { at, by, items: clean };
-  const { rows: diffs, sigs } = CLAUDE_REVIEW.correctionRows(clean, rows, job.claudeReviewLogged || []);
+  job.claudeReview = { at, by, items: clean, extras: cleanExtras };
+  const { rows: diffs, sigs } = CLAUDE_REVIEW.correctionRows(clean, rows, job.claudeReviewLogged || [], cleanExtras, chars);
   appendCorrectionRows(job, diffs.map((d) => ({ ...d, by })));
   job.claudeReviewLogged = [...(job.claudeReviewLogged || []), ...sigs];
   let learned = 0;
-  const mem = CLAUDE_REVIEW.memoryItems(clean, rows);
+  const mem = CLAUDE_REVIEW.memoryItems(clean, rows, cleanExtras, chars);
   if (mem.length) {
     try {
       const imgs = JSON.parse(fs.readFileSync(jobPath(job.id, 'state', 'src', 'app-images.generated.json'), 'utf-8')).images || [];
@@ -982,6 +992,7 @@ function saveClaudeReview(job, items, by) {
   }
   saveJob(job);
   appendLog(job, `\n📝 檢查配圖（${by || '未署名'}）：${clean.filter((x) => x.verdict !== 'ok').length} 段標錯、`
+    + `${cleanExtras.filter((x) => x.verdict === 'missing').length} 張漏用的圖指定了位置、`
     + `新記 ${diffs.length} 筆修正紀錄、${learned} 個正確框學進記憶庫\n`);
   return { logged: diffs.length, learned, review: job.claudeReview };
 }
@@ -3224,9 +3235,9 @@ const server = http.createServer(async (req, res) => {
       // 「照修正重新出片」（2026-11-17）：上一支檢查配圖的結果 → 鎖住的段落＋只說錯沒給答案的自動補成指示
       let claudeFixed = null;
       if (redoBody.useReview && src.claudeReview && src.planView) {
-        const rows = src.planView.rows || [];
+        const { rows } = reviewRows(src);
         const its = src.claudeReview.items || [];
-        claudeFixed = CLAUDE_REVIEW.fixedPlan(its, rows);
+        claudeFixed = CLAUDE_REVIEW.fixedPlan(its, rows, src.claudeReview.extras || []);
         const extra = CLAUDE_REVIEW.autoNote(its, rows);
         if (extra) claudeNote = [claudeNote, extra].filter(Boolean).join('\n').slice(0, 600);
       }
@@ -3532,15 +3543,15 @@ const server = http.createServer(async (req, res) => {
       if (!job) return send(res, 404, { error: '找不到工作' });
       if (!planByClaude(job) || !job.planView) return send(res, 400, { error: '這支的配圖不是 Claude 排的' });
       if (req.method === 'GET') {
-        const pv = job.planView;
-        return send(res, 200, { rows: pv.rows || [], images: pv.images || [], chars: pv.chars || [], review: job.claudeReview || null });
+        const { rows, images, chars, units } = reviewRows(job);
+        return send(res, 200, { rows, images, chars, units, review: job.claudeReview || null });
       }
       if (req.method === 'POST') {
         if (job.status !== 'done') return send(res, 400, { error: '出完片才能檢查' });
         let body = {};
         try { body = JSON.parse((await readBody(req)).toString() || '{}'); } catch (_) { return send(res, 400, { error: '格式不對' }); }
         const by = typeof body.by === 'string' ? body.by.trim().slice(0, 40) : '';
-        return send(res, 200, saveClaudeReview(job, body.items, by));
+        return send(res, 200, saveClaudeReview(job, body.items, by, body.extras));
       }
     }
 
