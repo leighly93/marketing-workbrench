@@ -394,8 +394,8 @@ const USSTOCK_HEYGEN_VOICE_ID = "";
 //    對照素材留在 90_系統/暫存/產線輸出/tts-ab/，檔名帶 newA／newB。
 //    重跑：node scripts/tts-ab.js --voice-id=<id> --text-file=<稿子> --dict --emotion=happy --trad-only
 const MINIMAX_FIXED_ANCHOR_VOICES = {
-  dapan: "moss_audio_f85dc873-ada4-11f1-a626-8a59b47fb1f9",      // 大盤小報（2026-10-07 使用者指定，與盤中焦點同一支；原 b47d71d2…，更早 e9e9da93…）
-  // ⚠️ 大盤小報與盤中焦點目前是**同一支 MiniMax 聲音**（使用者指定，不是複製貼上的失誤）；兩行各寫字面值、不互相引用。
+  dapan: "moss_audio_3a75102e-54db-11f1-981b-8a143315d498",      // 大盤小報（2026-11-17 使用者指定：網頁試聽這支沒捲舌感，與美股焦點同一支；原 f85dc873…，更早 b47d71d2…、e9e9da93…）
+  // ⚠️ 大盤小報與美股焦點目前是**同一支 MiniMax 聲音**（使用者指定，不是複製貼上的失誤）；盤中焦點仍是 f85dc873…。各寫字面值、不互相引用。
   midday: "moss_audio_f85dc873-ada4-11f1-a626-8a59b47fb1f9",      // 盤中焦點（2026-09-11 換，原本與大盤小報共用 e9e9da93…）
   usstock: "moss_audio_3a75102e-54db-11f1-981b-8a143315d498",     // 美股焦點（2026-09-15 使用者提供）
   // ⚠️ 美股焦點與焦點股日報目前是**同一支 MiniMax 聲音**（使用者指定，不是複製貼上的失誤）。
