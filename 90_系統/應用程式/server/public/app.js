@@ -1044,7 +1044,7 @@ function redoCard(job) {
  * 狀態放在 REVIEW（照工作 ID），頁面輪詢重畫也不會把還沒送出的標記洗掉。
  */
 const REVIEW = {};
-const REVIEW_VERDICTS = [['ok', '👍 沒問題'], ['wrongImage', '配錯圖'], ['wrongBox', '框錯位置'], ['noShot', '不該放截圖'], ['other', '其他']];
+const REVIEW_VERDICTS = [['ok', '👍 沒問題'], ['wrongPlace', '放錯句子'], ['wrongImage', '配錯圖'], ['wrongBox', '框錯位置'], ['noShot', '不該放截圖'], ['other', '其他']];
 
 function claudeReviewCard(job) {
   const card = el('div', { class: 'card' }, el('h2', {}, '檢查配圖　—　Claude 排的'),
@@ -1077,29 +1077,34 @@ function drawClaudeReview(job, body) {
     const shown = it && it.verdict !== 'noShot' && it.verdict !== 'ok' && it.src
       ? { src: it.src, region: it.region, cell: it.cell, imgW: it.imgW || r.imageWidth, imgH: it.imgH || r.imageHeight, _manual: true }
       : { src: r.src, region: r.region, cell: r.cell, imgW: r.imageWidth, imgH: r.imageHeight };
-    const edit = (pickImage) => {
+    const cur = it && it.startCharIdx != null ? it : r;   // 人改過位置就用改過的
+    const edit = (mode) => {
+      // 全文＋可拖選（2026-11-17 使用者：「應該要顯示全文才對，這樣我要改說他正確位置才有機會」）
+      CHARS = st.data.chars || []; UNITS = st.data.units || [];
       edCtx = { job, mode: 'review', drag: null, src: shown.src, mode2: 'cell',
         region: shown.region ? { ...shown.region } : null, cell: shown.cell ? { ...shown.cell } : null,
-        arrow: null, arrowColor: ARROW_DEFAULT, from: r.startCharIdx, to: r.endCharIdx,
+        arrow: null, arrowColor: ARROW_DEFAULT, from: cur.startCharIdx, to: cur.endCharIdx,
+        reviewUsed: rows.filter((x) => x.i !== r.i).map((x) => ({ src: x.src, lo: x.startCharIdx, hi: x.endCharIdx })),
         done: (res) => {
-          st.items[r.i] = { ...(st.items[r.i] || {}), i: r.i, ...res, verdict: (st.items[r.i] || {}).verdict || (pickImage ? 'wrongImage' : 'wrongBox') };
+          const moved = res.startCharIdx !== r.startCharIdx || res.endCharIdx !== r.endCharIdx;
+          const prev = (st.items[r.i] || {}).verdict;
+          const verdict = prev && prev !== 'ok' ? prev
+            : mode === 'image' ? 'wrongImage' : mode === 'place' || (moved && mode !== 'box') ? 'wrongPlace' : 'wrongBox';
+          st.items[r.i] = { ...(st.items[r.i] || {}), i: r.i, ...res, verdict };
           st.saved = false; drawClaudeReview(job, body);
         } };
       $('#edTitle').textContent = r.phrase || '這一段';
-      $('#edNote').textContent = pickImage ? '在上面的縮圖列選正確的截圖，需要的話再拖出黃框與顯示區域。' : '拖出正確的黃框與顯示區域。';
-      // 放在哪句話（2026-11-17 使用者要求）：前後文淡色、這一段標黃底
-      $('#edReviewSay').replaceChildren(el('div', { style: 'font-size:12.5px;color:var(--dim);margin-bottom:4px' }, '這張圖放在這句話'),
-        el('div', { style: 'font-size:15px;line-height:1.7' },
-          el('span', { style: 'color:var(--dim)' }, r.before ? '…' + r.before : ''),
-          el('mark', { style: 'background:#ffe58a;padding:1px 2px;border-radius:3px' }, r.phrase || '（讀不到這段旁白）'),
-          el('span', { style: 'color:var(--dim)' }, r.after ? r.after + '…' : '')));
-      $('#edReviewSay').hidden = false;
+      $('#edNote').textContent = {
+        image: '在上面的縮圖列選正確的截圖，需要的話再拖出黃框與顯示區域。',
+        place: '下面是全文，選中的是 Claude 放的位置。點一下選一句、或按住拖選正確的位置。',
+      }[mode] || '拖出正確的黃框與顯示區域；位置不對也可以在下面的全文重新選。';
       setEdArrow(null);
       drawEdColors();
       setEdMode('cell');
       drawStrip(images);
       loadEdImage(shown.src);
-      $('#edRangeWrap').hidden = true;   // 段落範圍沿用 Claude 排的，這裡不改
+      $('#edRangeWrap').hidden = false;
+      drawRange();
       $('#ed').style.display = 'flex';
     };
     const setVerdict = (v) => {
@@ -1107,16 +1112,19 @@ function drawClaudeReview(job, body) {
       if (v === 'ok' || v === 'noShot') { delete st.items[r.i].src; delete st.items[r.i].region; delete st.items[r.i].cell; }
       st.saved = false;
       drawClaudeReview(job, body);
-      if (v === 'wrongImage') edit(true);
-      if (v === 'wrongBox') edit(false);
+      if (v === 'wrongImage') edit('image');
+      if (v === 'wrongBox') edit('box');
+      if (v === 'wrongPlace') edit('place');
     };
     const changed = it && it.src && (it.src !== r.src || JSON.stringify(it.cell || null) !== JSON.stringify(r.cell || null)
       || JSON.stringify(it.region || null) !== JSON.stringify(r.region || null));
+    const movedTo = it && it.startCharIdx != null && (it.startCharIdx !== r.startCharIdx || it.endCharIdx !== r.endCharIdx)
+      ? (st.data.chars || []).slice(it.startCharIdx, it.endCharIdx + 1).map((c) => c.c).join('') : null;
     const noteIn = it && it.verdict !== 'ok' ? el('input', { type: 'text', value: it.note || '', maxlength: 300,
       placeholder: '一句話說明（可不填）', style: 'width:100%;margin-top:6px;font-size:13.5px;padding:6px 8px;box-sizing:border-box',
       oninput: (e) => { st.items[r.i].note = e.target.value; st.saved = false; } }) : null;
     return el('div', { style: 'display:flex;gap:12px;padding:10px 0;border-top:1px solid var(--line)' },
-      preview(job, shown, () => edit(false)),
+      preview(job, shown, () => edit('box')),
       el('div', { style: 'flex:1;min-width:0' },
         el('div', { style: 'font-size:14px;margin-bottom:6px' }, r.phrase || '—',
           el('span', { style: 'color:var(--dim);font-size:12.5px;margin-left:8px' }, shown.src)),
@@ -1125,6 +1133,7 @@ function drawClaudeReview(job, body) {
             onclick: () => setVerdict(v) }, label))),
         changed ? el('div', { style: 'margin-top:6px;font-size:12.5px;color:#c98a00' },
           it.src !== r.src ? `已改成 ${it.src}${it.cell ? '＋新的黃框' : ''}` : '已改了框') : null,
+        movedTo != null ? el('div', { style: 'margin-top:4px;font-size:12.5px;color:#c98a00' }, `位置改到「${movedTo}」`) : null,
         noteIn));
   });
   // Claude 沒用到的截圖（2026-11-17 使用者：「包含我丟了但是沒用到的圖也要顯示在這邊」）
@@ -2253,7 +2262,7 @@ window.addEventListener('resize', () => { if (edCtx) drawEdBox(); });
 $('#edClearRegion').onclick = () => { edCtx.region = null; drawEdBox(); };
 $('#edClearCell').onclick = () => { edCtx.cell = null; drawEdBox(); };
 $('#edClearArrow').onclick = () => { edCtx.arrow = null; drawEdBox(); };
-$('#edCancel').onclick = () => { $('#ed').style.display = 'none'; $('#edRangeWrap').hidden = false; $('#edReviewSay').hidden = true; edCtx = null; };
+$('#edCancel').onclick = () => { $('#ed').style.display = 'none'; $('#edRangeWrap').hidden = false; edCtx = null; };
 
 function openEditor(job, pv, row, done) {
   const e = edits[row.i];
@@ -2288,8 +2297,10 @@ $('#edOK').onclick = () => {
   }
   if (edCtx.mode === 'review') {
     const { done } = edCtx;
-    const res = { src: edCtx.src, region: edCtx.region, cell: edCtx.cell, imgW: edCtx.natW, imgH: edCtx.natH };
-    $('#ed').style.display = 'none'; $('#edRangeWrap').hidden = false; $('#edReviewSay').hidden = true; edCtx = null;
+    if (edCtx.from == null) return alert('還沒選位置 —— 在下面的全文上點一下或拖選');
+    const res = { src: edCtx.src, region: edCtx.region, cell: edCtx.cell, imgW: edCtx.natW, imgH: edCtx.natH,
+      startCharIdx: Math.min(edCtx.from, edCtx.to), endCharIdx: Math.max(edCtx.from, edCtx.to) };
+    $('#ed').style.display = 'none'; $('#edRangeWrap').hidden = false; edCtx = null;
     done(res);
     return;
   }
@@ -2741,7 +2752,7 @@ function usedRanges() {
     out.push({ src: src || '（未選圖）', lo: Math.min(lo, hi), hi: Math.max(lo, hi),
       mine: !!src && src === edCtx.src, auto: !!auto });
   };
-  if (edCtx.mode === 'reviewAdd') {
+  if (edCtx.mode === 'reviewAdd' || edCtx.mode === 'review') {
     // 檢查配圖：Claude 已經排的段落當成已佔用（藍底線），提示選的位置會跟哪張圖重疊
     for (const u of edCtx.reviewUsed || []) push(u.src, u.lo, u.hi, true);
   } else if (edCtx.mode === 'annot') {
@@ -3151,8 +3162,8 @@ async function loadFix() {
       before = missing ? r.from : `${r.from}　${pair(r.autoCell, r.autoRegion)}`;
       const same = r.to === r.from && JSON.stringify([r.manualCell, r.manualRegion]) === JSON.stringify([r.autoCell, r.autoRegion]);
       after = r.kind === '不該放截圖' ? r.to
-        : same ? `${r.kind}（沒給正確答案）`
-          : `${r.to}　${missing && !r.manualCell && !r.manualRegion ? '（框交給 Claude）' : pair(r.manualCell, r.manualRegion)}`;
+        : same && !r.manualPhrase ? `${r.kind}（沒給正確答案）`
+          : `${r.manualPhrase ? `改放在「${r.manualPhrase}」　` : ''}${r.to}　${missing && !r.manualCell && !r.manualRegion ? '（框交給 Claude）' : pair(r.manualCell, r.manualRegion)}`;
     }
     const reason = [...((r.reason && r.reason.tags) || []), (r.reason && r.reason.note) || '']
       .filter(Boolean).join('／');

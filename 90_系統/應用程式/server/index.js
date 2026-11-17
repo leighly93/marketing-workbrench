@@ -972,7 +972,7 @@ function appendCorrectionRows(job, rows) {
 /** 檢查配圖存檔：修正紀錄（新的才記）＋拖過的正確框學進記憶庫。回傳 { logged, learned } */
 function saveClaudeReview(job, items, by, extras) {
   const { rows, images, chars } = reviewRows(job);
-  const clean = CLAUDE_REVIEW.normalizeItems(items, rows, images);
+  const clean = CLAUDE_REVIEW.normalizeItems(items, rows, images, chars);
   const cleanExtras = CLAUDE_REVIEW.normalizeExtras(extras, images, rows, chars);
   const at = nowISO();
   job.claudeReview = { at, by, items: clean, extras: cleanExtras };

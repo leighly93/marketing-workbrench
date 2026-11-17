@@ -12,6 +12,7 @@
 
 const VERDICTS = {
   ok: '沒問題',
+  wrongPlace: '放錯句子',
   wrongImage: '配錯圖',
   wrongBox: '框錯位置',
   noShot: '不該放截圖',
@@ -60,7 +61,8 @@ function shotsSummary(shots, chars) {
  * 前台送來的檢查結果 → 乾淨的 items（丟掉不認得的 verdict、對不到列的 i、壞掉的框）。
  * rows：planView.rows；images：可以換的圖（planView.images）
  */
-function normalizeItems(items, rows, images) {
+function normalizeItems(items, rows, images, chars) {
+  const n = Array.isArray(chars) ? chars.length : 0;
   const out = [];
   for (const it of Array.isArray(items) ? items : []) {
     if (!it || !Object.hasOwn(VERDICTS, it.verdict)) continue;
@@ -78,6 +80,8 @@ function normalizeItems(items, rows, images) {
       cell: edited ? box(it.cell) : box(row.cell),
       imgW: Number(it.imgW) > 0 ? Math.round(it.imgW) : row.imageWidth || null,
       imgH: Number(it.imgH) > 0 ? Math.round(it.imgH) : row.imageHeight || null,
+      // 人改過的位置（2026-11-17「放錯句子」）：不合理的範圍一律回到 Claude 原本的
+      ...rangeOf(it, row, n),
     });
   }
   return out;
@@ -108,13 +112,21 @@ function normalizeExtras(extras, images, rows, chars) {
   return out;
 }
 
-/** 這一項跟 Claude 原本的有沒有實質不同（有改圖或改框才算「人給了正確答案」） */
+function rangeOf(it, row, n) {
+  const a = Math.round(Number(it.startCharIdx)); const b = Math.round(Number(it.endCharIdx));
+  const ok = it.startCharIdx != null && it.endCharIdx != null && Number.isFinite(a) && Number.isFinite(b) && a >= 0 && b >= a && (!n || b < n);
+  return ok ? { startCharIdx: a, endCharIdx: b } : { startCharIdx: row.startCharIdx, endCharIdx: row.endCharIdx };
+}
+
+const moved = (it, row) => it.startCharIdx !== row.startCharIdx || it.endCharIdx !== row.endCharIdx;
+
+/** 這一項跟 Claude 原本的有沒有實質不同（有改圖、改框或改位置才算「人給了正確答案」） */
 function hasFix(it, row) {
-  return it.src !== row.src || JSON.stringify(it.cell) !== JSON.stringify(box(row.cell))
+  return moved(it, row) || it.src !== row.src || JSON.stringify(it.cell) !== JSON.stringify(box(row.cell))
     || JSON.stringify(it.region) !== JSON.stringify(box(row.region));
 }
 
-const sig = (it) => JSON.stringify([it.i, it.verdict, it.note, it.src, it.region, it.cell]);
+const sig = (it) => JSON.stringify([it.i, it.verdict, it.note, it.src, it.region, it.cell, it.startCharIdx, it.endCharIdx]);
 
 /**
  * 修正紀錄的列（type「Claude排錯」）。logged＝這支已經寫過的簽章，同一個判斷重送不重記。
@@ -142,7 +154,10 @@ function correctionRows(items, rows, logged = [], extras = [], chars = []) {
     if (done.has(s)) continue;
     const row = rows.find((r) => r.i === it.i);
     const fixed = hasFix(it, row);
+    const mv = moved(it, row);
     out.push({
+      ...(mv ? { manualPhrase: textOf(chars, it.startCharIdx, it.endCharIdx), manualRange: [it.startCharIdx, it.endCharIdx],
+        autoRange: [row.startCharIdx, row.endCharIdx] } : {}),
       type: 'Claude排錯',
       kind: VERDICTS[it.verdict],
       phrase: row.phrase || '',
@@ -152,7 +167,7 @@ function correctionRows(items, rows, logged = [], extras = [], chars = []) {
       manualCell: it.verdict === 'noShot' ? null : it.cell,
       manualRegion: it.verdict === 'noShot' ? null : it.region,
       size: row.imageWidth && row.imageHeight ? { w: row.imageWidth, h: row.imageHeight } : null,
-      autoWhy: `Claude 排的；人標「${VERDICTS[it.verdict]}」`
+      autoWhy: `Claude 排的；人標「${VERDICTS[it.verdict]}」` + (mv ? '，位置改到別句' : '')
         + (it.verdict !== 'noShot' && it.verdict !== 'other' && !fixed ? '（沒給正確答案）' : ''),
       reason: it.note ? { tags: [VERDICTS[it.verdict]], note: it.note } : { tags: [VERDICTS[it.verdict]], note: '' },
     });
@@ -167,12 +182,12 @@ function memoryItems(items, rows, extras = [], chars = []) {
     src: x.src, cell: x.cell, region: x.region, imgW: x.imgW, imgH: x.imgH,
     phrase: textOf(chars, x.startCharIdx, x.endCharIdx), startCharIdx: x.startCharIdx }));
   return fromExtras.concat(items
-    .filter((it) => (it.verdict === 'wrongImage' || it.verdict === 'wrongBox' || it.verdict === 'other')
+    .filter((it) => (it.verdict === 'wrongImage' || it.verdict === 'wrongBox' || it.verdict === 'wrongPlace' || it.verdict === 'other')
       && it.cell && hasFix(it, rows.find((r) => r.i === it.i)))
     .map((it) => {
       const row = rows.find((r) => r.i === it.i);
       return { src: it.src, cell: it.cell, region: it.region, imgW: it.imgW, imgH: it.imgH,
-        phrase: row.phrase || '', startCharIdx: row.startCharIdx };
+        phrase: moved(it, row) ? textOf(chars, it.startCharIdx, it.endCharIdx) : row.phrase || '', startCharIdx: it.startCharIdx };
     }));
 }
 
@@ -193,8 +208,8 @@ function fixedPlan(items, rows, extras = []) {
   for (const it of items) {
     if (it.verdict === 'ok') continue;
     const row = rows.find((r) => r.i === it.i);
-    const range = { startCharIdx: row.startCharIdx, endCharIdx: row.endCharIdx };
-    if (it.verdict === 'noShot') { noShot.push(range); continue; }
+    if (it.verdict === 'noShot') { noShot.push({ startCharIdx: row.startCharIdx, endCharIdx: row.endCharIdx }); continue; }
+    const range = { startCharIdx: it.startCharIdx, endCharIdx: it.endCharIdx };
     if (!hasFix(it, row)) continue;          // 只說錯、沒給答案 → 交給 Claude 重排（指示另外寫）
     if (it.cell || it.region) {
       fixed.push({ ...range, src: it.src, region: it.region, cell: it.cell, imgW: it.imgW, imgH: it.imgH });

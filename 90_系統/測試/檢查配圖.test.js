@@ -181,7 +181,8 @@ test('計畫列補上那一段旁白與前後文（Claude 排的 _phrase 常是�
   assert.equal(r.before, '今天台股暴跌');
   assert.equal(r.after, '類股重挫');
   const src = fs.readFileSync(path.join(APP, 'server/public/app.js'), 'utf8');
-  assert.match(src, /'這張圖放在這句話'/);
+  // 編輯器顯示全文、可拖選改位置（2026-11-17 使用者：「應該要顯示全文才對」）
+  assert.match(src, /mode: 'review', drag: null[\s\S]*?\$\('#edRangeWrap'\)\.hidden = false;\n\s+drawRange\(\);/);
 });
 
 test('Claude 沒用到的截圖：指定位置的記成「漏用這張圖」、有框就鎖住、沒框當位置提示；用過的圖或亂給的位置不收', () => {
@@ -200,4 +201,18 @@ test('Claude 沒用到的截圖：指定位置的記成「漏用這張圖」、�
   assert.deepEqual(R.fixedPlan([], ROWS, extras).fixed.map((f) => [f.src, f.startCharIdx]), [['shot4.png', 18]]);
   const noBox = R.normalizeExtras([{ src: 'shot4.png', verdict: 'missing', startCharIdx: 18, endCharIdx: 22 }], IMAGES, ROWS, chars);
   assert.deepEqual(R.fixedPlan([], ROWS, noBox).hints, [{ startCharIdx: 18, endCharIdx: 22, src: 'shot4.png' }]);
+});
+
+test('放錯句子：人在全文上改的位置要記下來、照修正重出時鎖在新位置；亂給的範圍回到原本的', () => {
+  const chars = [...'今天台股暴跌外資賣超816億類股重挫台積電法說法說會'].map((c, i) => ({ i, c }));
+  const items = R.normalizeItems([{ i: 1, verdict: 'wrongPlace', startCharIdx: 0, endCharIdx: 5 }], ROWS, IMAGES, chars);
+  assert.deepEqual([items[0].startCharIdx, items[0].endCharIdx], [0, 5]);
+  const c = R.correctionRows(items, ROWS, [], [], chars);
+  assert.equal(c.rows[0].kind, '放錯句子');
+  assert.equal(c.rows[0].manualPhrase, '今天台股暴跌');
+  assert.deepEqual(R.fixedPlan(items, ROWS).fixed.map((f) => [f.src, f.startCharIdx, f.endCharIdx]), [['shot2.png', 0, 5]]);
+  const bad = R.normalizeItems([{ i: 1, verdict: 'wrongPlace', startCharIdx: 5, endCharIdx: 999 }], ROWS, IMAGES, chars);
+  assert.deepEqual([bad[0].startCharIdx, bad[0].endCharIdx], [18, 23]);
+  const src = fs.readFileSync(path.join(APP, 'server/public/app.js'), 'utf8');
+  assert.match(src, /\['wrongPlace', '放錯句子'\]/);
 });
