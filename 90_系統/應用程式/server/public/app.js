@@ -168,14 +168,14 @@ let TPLS = {}, ADMIN = false, tpl = null, view = 'new', openJob = null;
 // 配音語氣（2026-09-14）：[值, 按鈕文字]。**值要跟 server/index.js 的 EMOTIONS 白名單一字不差**，
 // 由 90_系統/測試/配音語氣.test.js 綁住 —— 這裡多塞一個 whisper 之類的值，
 // 不是「多一個選項」，是讓選到的人整支出片直接失敗（speech-2.8 不支援，API 回 2013）。
-// 第一個是預設。
-const EMOTIONS = [['fluent', '流暢'], ['happy', '開心']];
+// 第一個是預設（2026-11-17 起「平穩」calm：新聲音用 fluent 聽起來有笑意）。
+const EMOTIONS = [['calm', '平穩'], ['fluent', '流暢'], ['happy', '開心']];
 let emotion = EMOTIONS[0][0];
 
 // 出片卡片裡兩組並排的小選項各自的說明（2026-09-14）。
 // 講者影片那組操作的是 #skipGenerate 這個藏起來的 checkbox —— 它仍然是狀態來源。
-const EMOTION_TIP = '講漲勢、好消息用「開心」；重挫、壞消息用「流暢」（平穩）。'
-  + '<b>不選擇預設就是流暢。</b>';
+const EMOTION_TIP = '講漲勢、好消息可以用「開心」；想輕快一點用「流暢」。'
+  + '<b>不選擇預設就是平穩。</b>';
 const EMOTION_TIP_OFF = '用現成的講者影片不會重新配音 —— 這支的語氣就是那支影片原本的。';
 const HEYGEN_MODES = [
   [false, '重新生成', '會呼叫 HeyGen 生成一支新的講者影片。'],

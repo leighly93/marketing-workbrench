@@ -591,7 +591,9 @@ function archivePath(job, outName) {
 // 擋下整支工作不如用預設把片出完（使用者定案：「server 收到非 happy/fluent 一律當 fluent」）。
 // 第一個是預設值：舊工作的 job.json 沒有這個欄位，重跑時也會拿到它。
 // ⚠️ 值要跟 server/public/app.js 的 EMOTIONS 一致，由 90_系統/測試/配音語氣.test.js 綁住。
-const EMOTIONS = ['fluent', 'happy'];
+// 2026-11-17：加開 calm（平穩）並改成預設。使用者聽大盤小報新聲音 fluent「有點在笑的感覺」，
+// calm 試聽後定案「前台情緒選單加一個 calm，預設 calm」（所有版型）。
+const EMOTIONS = ['calm', 'fluent', 'happy'];
 const normalizeEmotion = (v) => (EMOTIONS.includes(v) ? v : EMOTIONS[0]);
 
 // ── 執行 run.js ───────────────────────────

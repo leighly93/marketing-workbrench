@@ -26,11 +26,13 @@ test('建立工作時語氣只收白名單的值，其餘一律當預設的流�
 
   assert.equal(await 建立('happy'), 'happy', '選了開心卻沒存下來');
   assert.equal(await 建立('fluent'), 'fluent');
-  assert.equal(await 建立('whisper'), 'fluent',
+  assert.equal(await 建立('calm'), 'calm');
+  // 2026-11-17 起預設 calm（新聲音 fluent 有笑意）
+  assert.equal(await 建立('whisper'), 'calm',
     'whisper 進到 job 裡就會在配音那一步整支失敗（speech-2.8 不支援），必須擋在建立時');
-  assert.equal(await 建立('sad'), 'fluent', '九個合法值不代表前台開放，白名單以外一律當預設');
-  assert.equal(await 建立(''), 'fluent', '空字串＝不送 emotion 欄位，那是「自動挑」，不是這裡的選項');
-  assert.equal(await 建立(undefined), 'fluent',
+  assert.equal(await 建立('sad'), 'calm', '九個合法值不代表前台開放，白名單以外一律當預設');
+  assert.equal(await 建立(''), 'calm', '空字串＝不送 emotion 欄位，那是「自動挑」，不是這裡的選項');
+  assert.equal(await 建立(undefined), 'calm',
     '沒帶欄位＝舊工作重跑的情況，要拿到預設值而不是 undefined（run.js 會收到 --emotion=undefined）');
 });
 
@@ -51,5 +53,5 @@ test('前台的語氣按鈕與伺服器白名單是同一組值', () => {
     + '前台多出來的值會被伺服器默默換成預設（同事選了沒作用），少的那個則是白開放。');
   assert.equal(伺服器.includes('whisper'), false,
     'whisper 配 speech-2.8 會讓整支出片失敗（API 回 2013），不能出現在前台開放的清單裡');
-  assert.equal(伺服器[0], 'fluent', '第一個是預設值 —— 2026-09-14 使用者定案預設走流暢');
+  assert.equal(伺服器[0], 'calm', '第一個是預設值 —— 2026-11-17 使用者定案預設走平穩（calm）');
 });

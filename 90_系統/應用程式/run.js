@@ -116,6 +116,7 @@ const MINIMAX_LANGUAGE_BOOST = "Chinese";
 // 使用者聽完 institution 那支說「聲音可以，但有可能在有一點點情緒嗎？」，
 // 接著 A/B 聽 happy 與 fluent →「fluent 斷句可以就是有點平」「happy 這情緒還行，比較下會偏好這個」。
 //
+// 2026-11-17：前台加開 calm 並改成預設（新聲音 fluent 聽起來有笑意）；這裡的 CLI 預設仍是 fluent。
 // 2026-09-14 定案改成**前台選、預設 fluent**。起因是 happy 拿去講重挫不合適
 // （使用者：「講股市有時候是重挫的內容 Happy 不適合」）。當天拿真實重挫稿
 // （工作 20260911-161722-wai2，大盤小報、下跌 755 點）配 dapan 聲音、產線參數全套，
