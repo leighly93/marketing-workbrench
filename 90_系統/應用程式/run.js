@@ -32,7 +32,7 @@ if (!["dapan", "midday", "usstock"].includes(TEMPLATE)) {
   console.error(`❌ 不認得的 --template=${TEMPLATE || "（未指定）"}（目前支援：dapan / midday / usstock）`);
   process.exit(1);
 }
-// 大盤小報／盤中焦點／美股焦點是「同一個模子」的三條固定主播產線：固定 avatar、加速（大盤小報 140%、其他 125%，見 SPEED_FACTOR）。
+// 大盤小報／盤中焦點／美股焦點是「同一個模子」的三條固定主播產線：固定 avatar、加速（大盤小報 130%、其他 125%，見 SPEED_FACTOR）。
 // 配音 2026-08-24 起走 MiniMax + HeyGen 音訊驅動對嘴（原本是 HeyGen 文字驅動，--heygen-voice 可退回）。
 // 大盤小報／盤中焦點在 2026-09-11 當天曾短暫改回 HeyGen 內建語音，同日又改回 MiniMax（換了新 clone 聲音），
 // 所以現在**三條線一致走 MiniMax**（見 HEYGEN_VOICE_ONLY_TEMPLATES，那個集合現在是空的）。
@@ -774,10 +774,11 @@ function cleanSegmentText(text) {
 
 // ── MiniMax T2A ───────────────────────────
 
-// MiniMax 直接講快（voice_setting.speed，0.5～2）。2026-11-17 使用者聽過 1.4／1.5／1.55 與事後 ffmpeg 140% 的對照後，
-// 大盤小報定案「MiniMax 直接講快 150%」：模型自己講快、斷句自然，HeyGen 拿到的已是快速音檔
-// （對嘴動作是正常速度、照較短長度收費），之後不再事後加速（見 stampSpedByMinimax）。其他版型維持原速＋事後 125%。
-const MINIMAX_TTS_SPEED = TEMPLATE === "dapan" ? 1.5 : 1.0;
+// MiniMax 直接講快（voice_setting.speed，0.5～2）。2026-11-17 上午大盤小報曾改成 MiniMax 直接講快 150%、不再事後加速，
+// 同日下午使用者要求改回事後加速：所有版型都是 MiniMax 原速配音＋事後 ffmpeg 加速（大盤小報 130%、其他 125%）。
+// 保留這個常數與 stampSpedByMinimax：日後若再改成「MiniMax 直接講快」，設成非 1 就會自動蓋記號、略過事後加速。
+// 當天用 150% 出過的講者影片已蓋記號，拿去重跑不會再被加速。
+const MINIMAX_TTS_SPEED = 1.0;
 
 async function minimaxTTS(text, voiceId = MINIMAX_VOICE_ID) {
   log(`呼叫 MiniMax T2A（${text.length} 字符、model: ${MINIMAX_MODEL}、voice: ${voiceId}、情緒: ${MINIMAX_EMOTION || "自動"}、語速: ${MINIMAX_TTS_SPEED}）`);
@@ -838,10 +839,8 @@ async function minimaxTTS(text, voiceId = MINIMAX_VOICE_ID) {
 // 點數又一毛沒省，那正是 8/19 當天踩到的）。**現在加速只有這一條路：ffmpeg。**
 // 哪天 HeyGen 修好想再試，先用 `node scripts/ab-endpoints.js --only=v3 --v3-speed=1.5 --go`
 // 確認秒數真的變短，再把欄位加回來 —— 不要憑推測。
-// 大盤小報 2026-11-17 起由 MiniMax 直接講快 150%，那種影片會蓋上記號、這裡不再加速；
-// 140% 只給大盤小報「不是 MiniMax 配的」講者影片（--heygen-voice、手動放的影片、11/17 以前的舊工作重新出片）。
-// 其他版型維持 125%。
-const SPEED_FACTOR = TEMPLATE === "dapan" ? 1.4 : 1.25;
+// 2026-11-17 大盤小報曾短暫改成 MiniMax 講快 150%／非 MiniMax 影片 140%，同日改成：大盤小報事後 130%，其他版型 125%。
+const SPEED_FACTOR = TEMPLATE === "dapan" ? 1.3 : 1.25;
 let speedApplied = false;
 
 // 加速過的 mp4 會被蓋上這個記號（寫進容器的 comment tag）。
