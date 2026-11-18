@@ -10,6 +10,9 @@
  *     對不到原文就容許少量錯字（字元雙連的相似度），但要是唯一最像的那一段才算。
  *   - 一個檔名要涵蓋好幾句：用「_」或「~」隔開頭尾兩段，例「聯發科大漲_日月光強彈.png」。
  *   - 相機編號、螢幕截圖這類檔名本來就對不到任何一段，自然不算提示（照舊全自動）。
+ *   - 好幾張圖寫同一段＋結尾編號（2026-11-17「包含創意、欣興、奇鋐1／2／3」）：編號是出場順序，
+ *     那段話照順序切給這幾張（splitShared），每張一小段 → 連續短圖會上下疊起來、依序出現。
+ *     以前三張都對到同一段，後一張蓋掉前一張，只剩一張。
  * units 是 auto-shot.js --sentences 的子句：[{ i, sid, text, startCharIdx, endCharIdx }]。
  */
 
@@ -103,11 +106,24 @@ const MAX_UNITS = 6;
  * 原始檔名 → 提示位置。回傳 { from, to, name, how } 或 { skip: 原因 }。
  *   name  檔名主體（給 Claude 看、也當沒有小標題時的備用）
  */
+/** 檔名結尾的出場編號：「…奇鋐3」「…奇鋐_3」「…奇鋐(3)」→ { base, seq: 3 } */
+function splitSeq(stem) {
+  const m = String(stem).match(/^(.*?)[\s_\-－—#]*[(（]?(\d{1,2})[)）]?$/);
+  return m && m[1] && looksLikeHint(m[1]) ? { base: m[1], seq: Number(m[2]) } : null;
+}
+
 function hintFor(origName, units) {
   const stem = stemOf(origName);
   if (!looksLikeHint(stem)) return { skip: 'not-hint' };
   const idx = indexUnits(units);
   const whole = locate(stem, idx);
+  if (whole && !whole.ambiguous && whole.how === 'exact') return { from: whole.from, to: whole.to, name: stem, how: 'exact' };
+  // 整個檔名對不準時，看是不是「原文＋出場編號」—— 去掉編號後對得到，就記下編號
+  const sq = splitSeq(stem);
+  if (sq) {
+    const b = locate(sq.base, idx);
+    if (b && !b.ambiguous) return { from: b.from, to: b.to, name: stem, how: b.how, seq: sq.seq };
+  }
   if (whole && !whole.ambiguous) return { from: whole.from, to: whole.to, name: stem, how: whole.how };
   // 「頭_尾」：兩段各自找得到，就涵蓋從頭到尾
   const parts = stem.split(/[_~～]+/).map((x) => x.trim()).filter(Boolean);
@@ -137,7 +153,44 @@ function resolveHints(names, units) {
     if (h.to - h.from + 1 > MAX_UNITS) { notes.push(`${file}（${h.name}）涵蓋太多句，照舊自動配`); continue; }
     hints[file] = h;
   }
-  return { hints, notes };
+  return { hints: splitShared(hints, units), notes };
 }
 
-module.exports = { stemOf, normalize, looksLikeHint, locate, hintFor, resolveHints, indexUnits, dice };
+/**
+ * 好幾張圖指到同一段話：照出場編號（沒有編號照 shotN 順序）把那段切給它們。
+ *   句子夠分 → 一張分幾個子句；不夠分 → 照字數平均切（startCharIdx／endCharIdx）。
+ * 切過的提示帶 order（第幾張／共幾張），applyHints 一律照切好的位置放，不沿用 Claude 配的較大範圍。
+ */
+function splitShared(hints, units) {
+  const groups = new Map();
+  for (const [file, h] of Object.entries(hints)) {
+    const key = `${h.from}-${h.to}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(file);
+  }
+  const out = { ...hints };
+  for (const files of groups.values()) {
+    if (files.length < 2) continue;
+    files.sort((a, b) => ((hints[a].seq ?? 1e9) - (hints[b].seq ?? 1e9)) || a.localeCompare(b, undefined, { numeric: true }));
+    const { from, to } = hints[files[0]];
+    const m = to - from + 1;
+    const k = files.length;
+    const a0 = units[from].startCharIdx;
+    const b0 = units[to].endCharIdx;
+    files.forEach((f, j) => {
+      const part = { ...hints[f], order: [j + 1, k], group: `${from}-${to}` };
+      if (m >= k) {
+        part.from = from + Math.floor((j * m) / k);
+        part.to = from + Math.floor(((j + 1) * m) / k) - 1;
+      } else {
+        part.startCharIdx = a0 + Math.floor((j * (b0 - a0 + 1)) / k);
+        part.endCharIdx = a0 + Math.floor(((j + 1) * (b0 - a0 + 1)) / k) - 1;
+        // 子句還是記整段（給 Claude 看的提示用），實際位置看字元
+      }
+      out[f] = part;
+    });
+  }
+  return out;
+}
+
+module.exports = { stemOf, normalize, looksLikeHint, locate, hintFor, resolveHints, splitShared, splitSeq, indexUnits, dice };

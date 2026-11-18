@@ -16,10 +16,11 @@
 
 // ── 觸發句 ───────────────────────────────────────────────
 const WHEN = '(?:明天|明日|下週|下周|下禮拜|下星期|接下來|下個交易日|週一|周一|節後|連假後|開紅盤)';
-const WATCH = '(?:要看|看|觀察|注意|留意|關注|關心|追蹤|焦點|重點|看點|催化|事件)';
+// 2026-11-17 加「盯」：「明天要盯緊的三個訊號」整段沒被認出來
+const WATCH = '(?:要看|看|盯|觀察|注意|留意|關注|關心|追蹤|焦點|重點|看點|催化|事件)';
 const NUM = '(?:[一二兩三四五六七八九十]|\\d+)';
-// 「三件事」「兩個重點」「三大觀察」「四項」——「三大法人」「兩點半」這種不是件數，所以名詞要指名
-const COUNTED = `${NUM}\\s*(?:件事?|個(?:重點|焦點|看點|觀察點?|事件|變數|關鍵|地方|方向)|大(?:重點|焦點|看點|觀察|事件|變數|關鍵)|項|點(?:要|值得|可以|觀察|注意|關注))`;
+// 「三件事」「兩個重點」「三大觀察」「三個訊號」「四項」——「三大法人」「兩點半」這種不是件數，所以名詞要指名
+const COUNTED = `${NUM}\\s*(?:件事?|個(?:重點|焦點|看點|觀察點?|事件|變數|關鍵|地方|方向|訊號|信號|指標|關卡)|大(?:重點|焦點|看點|觀察|事件|變數|關鍵|訊號|信號|指標|關卡)|項|點(?:要|值得|可以|觀察|注意|關注))`;
 /** 有件數的說法：「明天有三件事要注意」「接下來觀察兩個重點」 */
 const STRONG = new RegExp(`${WHEN}[^。！？!?]{0,16}?${COUNTED}`);
 /** 沒講件數：「明天觀察誰在撐」「明天最大的催化事件是…」 */
@@ -29,6 +30,9 @@ const SIGNOFF = /(明天見|下次見|下週見|下周見|我們下|掰掰|拜�
 
 /** 觸發句只在後 40% 找；沒講件數的觸發句還要離結尾 14 個子句以內，免得把中段的「明天觀察」當成結尾 */
 const TAIL_FROM = 0.6;
+/** 有講件數的觸發句（「明天要盯緊的三個訊號」「明天要看三件事」）不限位置，在哪一段都做（2026-11-17 使用者定案；
+ *  當天那支每一點都講很長，觸發句落在 34／60，不在後 40%）。沒講件數的照舊只在結尾找。 */
+const STRONG_TAIL_FROM = 0;
 const WEAK_MAX_UNITS = 14;
 /** 動畫最多涵蓋幾個子句：太長通常是後面還接了別的內容，切在那句講完的地方 */
 const MAX_UNITS = 16;
@@ -64,7 +68,7 @@ function unitAtOffset(at, off) {
 }
 
 /**
- * 找結尾「明天要看的事」。回傳 { from, to, markers, count, strong } | null。
+ * 找「明天要看的事」（有講件數的不限位置，沒講件數的只在結尾）。回傳 { from, to, markers, count, strong } | null。
  *   from／to   units 的陣列位置（含）
  *   markers    旁白裡的序號原文（例 ['第一','第二','第三']），兩個以上才給；它就是件數
  */
@@ -73,19 +77,19 @@ function findOutlook(units) {
   if (n < 2) return null;
   const { all, at } = joinUnits(units);
   const tailStart = Math.floor(n * TAIL_FROM);
-  const scan = (re) => {
+  const scan = (re, from = tailStart) => {
     const g = new RegExp(re.source, 'g');
     const hits = [];
     let m;
     while ((m = g.exec(all))) {
       const k = unitAtOffset(at, m.index);
-      // 後 40%，或離結尾 MAX_UNITS 個子句以內（短稿的結尾段本身就可能佔掉一半）
-      if (k >= tailStart || n - k <= MAX_UNITS) hits.push(k);
+      // 後 40%（有件數的放寬到後半），或離結尾 MAX_UNITS 個子句以內（短稿的結尾段本身就可能佔掉一半）
+      if (k >= from || n - k <= MAX_UNITS) hits.push(k);
       g.lastIndex = m.index + 1;
     }
     return hits;
   };
-  const strong = scan(STRONG);
+  const strong = scan(STRONG, Math.floor(n * STRONG_TAIL_FROM));
   let from = null;
   if (strong.length) from = strong[0];
   else {
@@ -96,14 +100,28 @@ function findOutlook(units) {
   // 觸發句跟前面的話在同一個子句裡的時候，從觸發字所在的子句開始就好（不往前拉整句）
   let to = n - 1;
   while (to > from && SIGNOFF.test(units[to].text)) to--;
-  if (to - from + 1 > MAX_UNITS) {
-    // 切在第 MAX_UNITS 個子句所屬那一句講完的地方，不切在句子中間
-    const sid = units[from + MAX_UNITS - 1].sid;
-    to = from + MAX_UNITS - 1;
-    while (to + 1 < n && units[to + 1].sid === sid) to++;
+  const fullTo = to;
+  const sentenceEnd = (k) => { while (k + 1 <= fullTo && units[k + 1].sid === units[k].sid) k++; return k; };
+  // 序號先在「到結尾」的整段找，免得長度上限把第三點切掉
+  const full = joinUnits(units.slice(from, fullTo + 1));
+  const { markers, strict } = findMarkers(full.all);
+  // 有「第一、第二、第三」時，最後一點講到哪：序號那一句再加下一句（2026-11-17「第三，外資會不會停止賣超。明天是期貨結算日…」）
+  const lastItemEnd = () => {
+    const last = from + unitAtOffset(full.at, full.all.lastIndexOf(markers[markers.length - 1]));
+    let end = sentenceEnd(last);
+    if (end + 1 <= fullTo) end = sentenceEnd(end + 1);
+    return end;
+  };
+  const hasItems = strict && markers.length >= 2;
+  if (from < tailStart && n - from > MAX_UNITS) {
+    // 不在結尾（觸發句在中段）：後面還有別的內容，有序號就停在最後一點講完；沒序號就照長度上限
+    to = hasItems ? lastItemEnd() : Math.min(to, sentenceEnd(from + MAX_UNITS - 1));
+  } else if (to - from + 1 > MAX_UNITS) {
+    // 切在第 MAX_UNITS 個子句所屬那一句講完的地方，不切在句子中間；
+    // 有序號就至少講完最後一點，後面的操作建議（「操作上…」）不算
+    to = sentenceEnd(from + MAX_UNITS - 1);
+    if (hasItems) to = Math.max(to, lastItemEnd());
   }
-  const range = units.slice(from, to + 1);
-  const { markers, strict } = findMarkers(joinUnits(range).all);
   return {
     from, to,
     startCharIdx: units[from].startCharIdx,

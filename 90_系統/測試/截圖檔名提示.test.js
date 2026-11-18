@@ -65,3 +65,40 @@ test('applyHints：Claude 已經配對了就照它的；配錯地方就搬到提
 });
 
 function pick(h) { return [h.from, h.to, h.how]; }
+
+test('同一段話＋結尾編號（2026-11-17「包含創意、欣興、奇鋐1／2／3」）：照編號切給每張，疊起來依序出現', () => {
+  const U = [
+    { i: 0, sid: 0, text: '其中44檔連續兩天跌停，', startCharIdx: 0, endCharIdx: 10 },
+    { i: 1, sid: 0, text: '包含創意、', startCharIdx: 11, endCharIdx: 15 },
+    { i: 2, sid: 0, text: '欣興、', startCharIdx: 16, endCharIdx: 18 },
+    { i: 3, sid: 0, text: '奇鋐。', startCharIdx: 19, endCharIdx: 21 },
+  ];
+  const { hints: h, notes } = hints.resolveHints({
+    'shot2.jpg': '包含創意、欣興、奇鋐3.jpg', 'shot3.jpg': '包含創意、欣興、奇鋐1.jpg', 'shot4.jpg': '包含創意、欣興、奇鋐2.jpg',
+  }, U);
+  assert.deepEqual(notes, []);
+  // 去掉編號後是原文 → exact；編號就是出場順序，不是 shotN 的順序
+  assert.deepEqual([h['shot3.jpg'].from, h['shot4.jpg'].from, h['shot2.jpg'].from], [1, 2, 3]);
+  assert.equal(h['shot3.jpg'].how, 'exact');
+  assert.deepEqual(h['shot2.jpg'].order, [3, 3]);
+
+  // Claude 把其中一張配在整段：照切好的位置放，三張都留下、共用 Claude 的小標題
+  const claude = [{ src: 'shot2.jpg', startCharIdx: 11, endCharIdx: 21, title: '連兩天跌停' }];
+  const segs = planner.applyHints(claude, Object.entries(h).map(([file, x]) => ({ file, ...x })), U);
+  assert.deepEqual(segs.map((s) => [s.src, s.startCharIdx, s.endCharIdx, s.title]), [
+    ['shot3.jpg', 11, 15, '連兩天跌停'], ['shot4.jpg', 16, 18, '連兩天跌停'], ['shot2.jpg', 19, 21, '連兩天跌停'],
+  ]);
+});
+
+test('同一段話的子句不夠分：照字數平均切；本身就以數字結尾的原文不當成編號', () => {
+  const U = [
+    { i: 0, sid: 0, text: '今天大盤重挫', startCharIdx: 0, endCharIdx: 5 },
+    { i: 1, sid: 0, text: '創意欣興奇鋐都跌停', startCharIdx: 6, endCharIdx: 14 },
+  ];
+  const { hints: h } = hints.resolveHints({ 'a.png': '創意欣興奇鋐都跌停2.png', 'b.png': '創意欣興奇鋐都跌停1.png', 'c.png': '創意欣興奇鋐都跌停3.png' }, U);
+  assert.deepEqual(['b.png', 'a.png', 'c.png'].map((f) => [h[f].startCharIdx, h[f].endCharIdx]), [[6, 8], [9, 11], [12, 14]]);
+  // 「收在41,661點」以數字結尾也照整段比對，不會被拆成「收在41,66」＋編號 1
+  const one = hints.hintFor('收在41661.png', UNITS);
+  assert.equal(one.seq, undefined);
+  assert.deepEqual(pick(one), [1, 1, 'exact']);
+});

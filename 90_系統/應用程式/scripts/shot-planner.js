@@ -52,11 +52,12 @@ function buildPrompt({ units, images, note = '', outlook = null, lessons = [] })
     '',
     ...(hinted.length ? [
       '剪輯師用截圖的原始檔名指定了出現位置，**這幾張一定照指定的句子配**（可以往前後多配一兩句，但不能移走、也不能拿別張圖蓋掉）：',
-      hinted.map((im) => `${im.file}（原檔名「${im.hint.name}」）→ ${span(im.hint)}`).join('\n'),
+      hinted.map((im) => `${im.file}（原檔名「${im.hint.name}」）→ ${span(im.hint)}`
+        + (im.hint.order ? `（同一段話的第 ${im.hint.order[0]}／${im.hint.order[1]} 張，照順序接著出現，不要合併成一段）` : '')).join('\n'),
       '',
     ] : []),
     ...(outlook ? [
-      `${span(outlook)} 是結尾「明天要看的事」，已經固定做成明日觀察動畫（會蓋住整個畫面）：截圖、動態卡片、補充字卡都**不要**放在這幾句。`,
+      `${span(outlook)} 是「明天要看的事」，已經固定做成明日觀察動畫（會蓋住整個畫面）：截圖、動態卡片、補充字卡都**不要**放在這幾句。`,
       '',
     ] : []),
     '請決定每張截圖要在旁白講到哪幾句時出現：',
@@ -260,13 +261,25 @@ function clipSegments(segments, range, units) {
  */
 function applyHints(segments, hints, units) {
   let segs = segments.map((s) => ({ ...s }));
+  // 同一段切給好幾張的（h.group）：共用一個小標題，疊起來時才有一個總標題（取 Claude 給這組任一張、或蓋到那段的標題）
+  const groupTitle = {};
   for (const h of hints || []) {
-    const a = units[h.from].startCharIdx; const b = units[h.to].endCharIdx;
-    const covers = segs.find((s) => s.src === h.file && s.startCharIdx <= a && s.endCharIdx >= b);
+    if (!h.group || groupTitle[h.group]) continue;
+    const mates = (hints || []).filter((x) => x.group === h.group).map((x) => x.file);
+    const [g0, g1] = h.group.split('-').map(Number);
+    const a = units[g0].startCharIdx; const b = units[g1].endCharIdx;
+    const hit = segs.find((s) => s.title && mates.includes(s.src))
+      || segs.find((s) => s.title && s.startCharIdx <= b && s.endCharIdx >= a);
+    if (hit) groupTitle[h.group] = hit.title;
+  }
+  for (const h of hints || []) {
+    const a = h.startCharIdx ?? units[h.from].startCharIdx; const b = h.endCharIdx ?? units[h.to].endCharIdx;
+    // 同一段切給好幾張的（h.order）一定照切好的位置，Claude 配得比較大也不沿用，否則會蓋到下一張
+    const covers = !h.order && segs.find((s) => s.src === h.file && s.startCharIdx <= a && s.endCharIdx >= b);
     if (covers) continue;
     const same = segs.find((s) => s.src === h.file);
     const seg = { src: h.file, startCharIdx: a, endCharIdx: b,
-      title: (same && same.title) || String(h.name || '').slice(0, 8), why: `檔名指定（${h.name}）`, hinted: true };
+      title: (h.group && groupTitle[h.group]) || (same && same.title) || String(h.name || '').slice(0, 8).replace(/[、，,。；;：:\s]+$/, ''), why: `檔名指定（${h.name}）`, hinted: true };
     const { kept } = clipSegments(segs, seg, units);
     segs = kept.concat(seg).sort((x, y) => x.startCharIdx - y.startCharIdx);
   }

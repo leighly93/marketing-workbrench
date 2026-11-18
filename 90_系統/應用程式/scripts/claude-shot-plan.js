@@ -147,7 +147,8 @@ function main() {
   for (const [f, h] of Object.entries(hints)) {
     const where = h.from === h.to ? `U${units[h.from].i}` : `U${units[h.from].i}～U${units[h.to].i}`;
     const inOutlook = outlook && h.to >= outlook.from && h.from <= outlook.to;
-    console.log(`（檔名提示：${f}「${h.name}」→ ${where}${h.how === 'fuzzy' ? '（字不完全一樣，取最像的那句）' : ''}`
+    const at = h.order ? `${h.startCharIdx != null ? `${where} 的字 ${h.startCharIdx}–${h.endCharIdx}` : where}，同一段的第 ${h.order[0]}／${h.order[1]} 張` : where;
+    console.log(`（檔名提示：${f}「${h.name}」→ ${at}${h.how === 'fuzzy' ? '（字不完全一樣，取最像的那句）' : ''}`
       + `${inOutlook ? '；⚠️ 落在結尾明日觀察動畫裡，動畫優先、這張不會出現' : ''}）`);
   }
   for (const n of notes) console.log(`（檔名提示：${n}）`);

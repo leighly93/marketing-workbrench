@@ -60,6 +60,41 @@ test('沒講件數也做（一件也算）；中段的「明天」不會被當�
   assert.deepEqual(o.markers, []);
 });
 
+test('「盯緊」「三個訊號」也算（2026-11-17 大盤小報整段沒做動態的原句）', () => {
+  const u = unitsOf(BODY + '恐慌指數升到 49.55，市場還談不上穩定。明天要盯緊的三個訊號：第一，39,858 點能不能守住。'
+    + '第二，44 檔連兩天跌停的股票能不能打開。第三，外資會不會停止賣超。');
+  const o = outlook.findOutlook(u);
+  assert.ok(o, '要認得出結尾的明日觀察');
+  assert.ok(said(u, o).startsWith('明天要盯緊的三個訊號'));
+  assert.deepEqual(o.markers, ['第一', '第二', '第三']);
+  assert.equal(o.count, 3);
+  assert.ok(outlook.findOutlook(unitsOf(BODY + '明天緊盯外資動向。')), '沒講件數的「緊盯」也算');
+  assert.ok(outlook.findOutlook(unitsOf(BODY + '接下來觀察三大指標。第一，匯率。第二，利率。')));
+});
+
+test('每一點都講很長、結尾段超過四成：有件數的觸發句放寬到後半；第三點講完就停，操作建議不算', () => {
+  const tail = '明天要盯緊的三個訊號：第一，39,858點能不能守住。今天盤中跌破、收盤勉強站回。如果明天收盤守不住，再看39,701點前低。'
+    + '兩道關卡都失守，就要提高警覺。第二，44檔連兩天跌停的股票能不能打開。如果跌停家數沒有明顯減少，代表賣壓還沒消化完，不要急著搶反談。'
+    + '第三，外資會不會停止賣超。明天是期貨結算日，還要觀察結算後近9.8萬口空單的變化，不能把結算換倉直接當作轉多。'
+    + '操作上，有持股的人先檢查部位與停損，弱勢股不要盲目攤平，想進場的人，至少等關鍵價位守住，跌停潮緩和，再考慮分批布局。';
+  const u = unitsOf(BODY + BODY + BODY + '恐慌指數升到49.55，市場還談不上穩定。' + tail); // 觸發句約在 59%，跟實際那支（34/60）差不多
+  const o = outlook.findOutlook(u);
+  assert.ok(o, '結尾段很長也要認得出來');
+  assert.ok(o.from / u.length < 0.6, '這個案例的觸發句確實在後 40% 之前');
+  assert.equal(o.count, 3);
+  const s = said(u, o);
+  assert.ok(s.startsWith('明天要盯緊的三個訊號') && s.endsWith('不能把結算換倉直接當作轉多'), s);
+});
+
+test('有講件數的不限位置：在中段也做，講完最後一點就停，後面別的內容不算', () => {
+  const mid = '明天要看三件事。第一，美國CPI公布。第二，台積電法說會。第三，外資期貨空單變化。結算前要特別小心。';
+  const u = unitsOf(BODY + mid + BODY + BODY);
+  const o = outlook.findOutlook(u);
+  assert.ok(o, '中段的「明天要看三件事」也要做');
+  assert.equal(said(u, o), '明天要看三件事|第一|美國CPI公布|第二|台積電法說會|第三|外資期貨空單變化|結算前要特別小心');
+  assert.equal(o.count, 3);
+});
+
 test('「第一季」「三大法人」不是序號／件數；沒有結尾展望就回 null', () => {
   assert.equal(outlook.findOutlook(unitsOf(BODY + '三大法人買超。第一季營收創高。')), null);
   assert.deepEqual(outlook.findMarkers('明天看三件事，第一季營收，第一金走勢').markers, []);
