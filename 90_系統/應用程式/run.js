@@ -779,6 +779,8 @@ function cleanSegmentText(text) {
 // （對嘴動作是正常速度、照較短長度收費），之後不再事後加速（見 stampSpedByMinimax）。其他版型維持原速＋事後 125%。
 const MINIMAX_TTS_SPEED = TEMPLATE === "dapan" ? 1.5 : 1.0;
 
+const { withNetworkRetry } = require("./scripts/net-retry");
+
 async function minimaxTTS(text, voiceId = MINIMAX_VOICE_ID) {
   log(`呼叫 MiniMax T2A（${text.length} 字符、model: ${MINIMAX_MODEL}、voice: ${voiceId}、情緒: ${MINIMAX_EMOTION || "自動"}、語速: ${MINIMAX_TTS_SPEED}）`);
   const url = `https://api.minimax.io/v1/t2a_v2?GroupId=${MINIMAX_GROUP_ID}`;
@@ -809,15 +811,21 @@ async function minimaxTTS(text, voiceId = MINIMAX_VOICE_ID) {
     payload.pronunciation_dict = { tone: MINIMAX_PRONUNCIATION_DICT };
     log(`  發音字典：${MINIMAX_PRONUNCIATION_DICT.join("　")}`);
   }
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${MINIMAX_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
+  // 斷線（fetch failed）自動重試最多 3 次，見 scripts/net-retry.js；MiniMax 有回應的錯誤不重試
+  const { res, data } = await withNetworkRetry(async () => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${MINIMAX_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    return { res, data: await res.json() };
+  }, {
+    retries: 3,
+    onRetry: ({ n, retries, error }) => log(`⚠️ MiniMax 連線中斷（${error}），${3 * n} 秒後重試（第 ${n}／${retries} 次）`),
   });
-  const data = await res.json();
   if (!res.ok || !data.data?.audio) {
     console.error("MiniMax 回應：", JSON.stringify(data, null, 2));
     throw new Error("MiniMax T2A 生成失敗");
