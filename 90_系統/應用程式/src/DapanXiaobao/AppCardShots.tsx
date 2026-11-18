@@ -11,6 +11,7 @@ import {
 import { VIDEO_FPS, secToFrame } from '../timeline';
 import type { ShotBox } from '../ShotFocus';
 import type { DapanShot } from './dapan-timeline';
+import { paceUnits } from './card-pacing';
 
 /**
  * 大盤小報（橫式）APP 截圖段：浮動 UI 卡片（2026-11-12 使用者定案「像 skill 那樣呈現」）。
@@ -531,6 +532,14 @@ const StackView: React.FC<{ cards: Card[]; startSec: number; first: boolean; exi
   );
 };
 
+/** 整張卡（含金框換位的時間）往後挪 d 秒，結束不超過 until */
+const shiftCard = (c: Card, d: number, until: number): Card => (d <= 0 ? c : {
+  ...c,
+  startSec: c.startSec + d,
+  endSec: Math.min(until, c.endSec + d),
+  steps: c.steps.map((st) => ({ ...st, startSec: Math.min(until, st.startSec + d) })),
+});
+
 export const AppCardShots: React.FC<{ shots: DapanShot[] }> = ({ shots }) => {
   const blocks = buildCardBlocks(shots);
   return (
@@ -542,7 +551,12 @@ export const AppCardShots: React.FC<{ shots: DapanShot[] }> = ({ shots }) => {
           <Sequence key={`card-block-${bi}`} from={from} durationInFrames={dur}>
             <AbsoluteFill style={{ width: ZONE_W, height: ZONE_H, overflow: 'hidden' }}>
               <Background dur={dur} />
-              {groupStacks(b.cards).map((g, gi, all) => {
+              {(() => {
+                // 輪播每個畫面至少停 MIN_DWELL_SEC（card-pacing.ts）：太快的往後順延
+                const units = groupStacks(b.cards);
+                const paced = paceUnits(units.map((g) => g[0].startSec), units.map((g) => g[g.length - 1].startSec), b.endSec);
+                return units.map((g, k) => g.map((c) => shiftCard(c, paced[k] - g[0].startSec, b.endSec)));
+              })().map((g, gi, all) => {
                 const enterAt = secToFrame(g[0].startSec) - from;
                 const next = all[gi + 1];
                 const exitAt = next ? secToFrame(next[0].startSec) - from : null;
