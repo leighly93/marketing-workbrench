@@ -13,6 +13,8 @@
  *   - 好幾張圖寫同一段＋結尾編號（2026-11-17「包含創意、欣興、奇鋐1／2／3」）：編號是出場順序，
  *     那段話照順序切給這幾張（splitShared），每張一小段 → 連續短圖會上下疊起來、依序出現。
  *     以前三張都對到同一段，後一張蓋掉前一張，只剩一張。
+ *     圖上認得出股名、而且每個股名都在那段話裡 → 照股名在旁白出現的位置放（講到創意才出創意），編號只是退路；
+ *     （2026-11-18 使用者：照編號排股票跟旁白對不上。「比唸到早一點出現」在 AppCardShots 的疊卡進場做）
  * units 是 auto-shot.js --sentences 的子句：[{ i, sid, text, startCharIdx, endCharIdx }]。
  */
 
@@ -142,7 +144,7 @@ function hintFor(origName, units) {
  * 一整批：names＝{ shot3.png: '外資賣超816億.png' } → { hints: { shot3.png: {from,to,name,how} }, notes: [文字說明] }
  * notes 給 log 用：看起來像提示、卻對不到或對到好幾處的檔名要講出來，剪輯師才知道要改檔名。
  */
-function resolveHints(names, units) {
+function resolveHints(names, units, { labels = {} } = {}) {
   const hints = {};
   const notes = [];
   for (const [file, orig] of Object.entries(names || {})) {
@@ -153,15 +155,17 @@ function resolveHints(names, units) {
     if (h.to - h.from + 1 > MAX_UNITS) { notes.push(`${file}（${h.name}）涵蓋太多句，照舊自動配`); continue; }
     hints[file] = h;
   }
-  return { hints: splitShared(hints, units), notes };
+  return { hints: splitShared(hints, units, labels), notes };
 }
 
 /**
  * 好幾張圖指到同一段話：照出場編號（沒有編號照 shotN 順序）把那段切給它們。
  *   句子夠分 → 一張分幾個子句；不夠分 → 照字數平均切（startCharIdx／endCharIdx）。
  * 切過的提示帶 order（第幾張／共幾張），applyHints 一律照切好的位置放，不沿用 Claude 配的較大範圍。
+ *   labels  { file: ['奇鋐', ...] } 圖上的股名（含別名）。整組每張都在那段話裡找得到、位置各不相同 → 照股名位置切；
+ *           否則照編號平均切。
  */
-function splitShared(hints, units) {
+function splitShared(hints, units, labels = {}) {
   const groups = new Map();
   for (const [file, h] of Object.entries(hints)) {
     const key = `${h.from}-${h.to}`;
@@ -177,6 +181,16 @@ function splitShared(hints, units) {
     const k = files.length;
     const a0 = units[from].startCharIdx;
     const b0 = units[to].endCharIdx;
+    const byName = placeByName(files, labels, units, from, to);
+    if (byName) {
+      // 第一張從這段話開頭就出來；後面每張從唸到股名的地方開始
+      const starts = byName.map((x, j) => (j === 0 ? a0 : x.start));
+      byName.forEach(({ file }, j) => {
+        out[file] = { ...hints[file], order: [j + 1, k], group: `${from}-${to}`, by: 'name',
+          startCharIdx: starts[j], endCharIdx: j + 1 < k ? starts[j + 1] - 1 : b0 };
+      });
+      continue;
+    }
     files.forEach((f, j) => {
       const part = { ...hints[f], order: [j + 1, k], group: `${from}-${to}` };
       if (m >= k) {
@@ -193,4 +207,32 @@ function splitShared(hints, units) {
   return out;
 }
 
-module.exports = { stemOf, normalize, looksLikeHint, locate, hintFor, resolveHints, splitShared, splitSeq, indexUnits, dice };
+/**
+ * 每張圖的股名在 units[from..to] 第一次出現的位置（清洗後字元索引）。有一張找不到、或兩張撞同一處 → null。
+ * 子句的字（原稿）跟字元索引（替換後）長度可能不同，所以位置照子句內的比例換算。
+ */
+function placeByName(files, labels, units, from, to) {
+  const placed = [];
+  for (const f of files) {
+    const names = (labels[f] || []).map(normalize).filter((x) => x.length >= 2);
+    if (!names.length) return null;
+    let best = null;
+    for (let u = from; u <= to && best == null; u++) {
+      const t = normalize(units[u].text);
+      for (const nm of names) {
+        const k = t.indexOf(nm);
+        if (k < 0) continue;
+        const len = units[u].endCharIdx - units[u].startCharIdx + 1;
+        const pos = units[u].startCharIdx + Math.floor((k / Math.max(1, t.length)) * len);
+        if (best == null || pos < best) best = pos;
+      }
+    }
+    if (best == null) return null;
+    placed.push({ file: f, start: best });
+  }
+  placed.sort((a, b) => a.start - b.start);
+  for (let j = 1; j < placed.length; j++) if (placed[j].start <= placed[j - 1].start) return null;
+  return placed;
+}
+
+module.exports = { stemOf, normalize, looksLikeHint, locate, hintFor, resolveHints, splitShared, splitSeq, placeByName, indexUnits, dice };

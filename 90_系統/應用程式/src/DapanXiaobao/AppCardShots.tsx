@@ -53,6 +53,11 @@ const STACK_MIN_W = 560;
 const STACK_GAP = 18;
 /** 一疊最多幾張：4 張時每張只剩 600px 寬，字太小（2026-11-12 實測） */
 const STACK_MAX = 3;
+/**
+ * 疊卡第二張起提早進場（2026-11-18 使用者：「可以比唸到早一點出現」）：淡入要 T_SWAP，
+ * 照唸到的時間才開始淡入，整張出來時股名已經唸完了。提早 T_SWAP → 唸到時剛好完整出現；不早於前一張進場。
+ */
+const STACK_LEAD = T_SWAP;
 
 /** 金框的一個位置：從 startSec 起框 cell（沒有 cell＝這句不框） */
 type Step = { startSec: number; cell?: ShotBox };
@@ -468,6 +473,7 @@ const StackView: React.FC<{ cards: Card[]; startSec: number; first: boolean; exi
   const total = lay.reduce((a, l) => a + l.h, 0) + STACK_GAP * (cards.length - 1);
   const top0 = CARD_TOP + Math.round((CARD_BOTTOM - CARD_TOP - total) / 2);
   const enters = cards.map((c) => secToFrame(c.startSec) - secToFrame(startSec));
+  for (let k = 1; k < enters.length; k++) enters[k] = Math.max(enters[k - 1] + 1, enters[k] - STACK_LEAD);
   let active = 0;
   while (active + 1 < cards.length && f >= enters[active + 1]) active++;
   // 整組的進出場跟單張卡一樣：段落第一組彈進來，其他從右邊滑進來；換下一組時往左滑出

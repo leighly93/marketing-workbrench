@@ -102,3 +102,40 @@ test('同一段話的子句不夠分：照字數平均切；本身就以數字�
   assert.equal(one.seq, undefined);
   assert.deepEqual(pick(one), [1, 1, 'exact']);
 });
+
+test('圖上股名都在那段話裡：照股名在旁白的位置放，不照檔名編號（2026-11-18 編號跟股票對不上）', () => {
+  const U = [
+    { i: 0, sid: 0, text: '其中44檔連續兩天跌停，', startCharIdx: 0, endCharIdx: 10 },
+    { i: 1, sid: 0, text: '包含創意、', startCharIdx: 11, endCharIdx: 15 },
+    { i: 2, sid: 0, text: '欣興、', startCharIdx: 16, endCharIdx: 18 },
+    { i: 3, sid: 0, text: '奇鋐。', startCharIdx: 19, endCharIdx: 21 },
+    { i: 4, sid: 1, text: '更值得警惕的是，', startCharIdx: 22, endCharIdx: 28 },
+    { i: 5, sid: 1, text: '昨天逆勢漲停的資安族群，', startCharIdx: 29, endCharIdx: 39 },
+  ];
+  const names = { 'shot2.jpg': '包含創意、欣興、奇鋐3.jpg', 'shot3.jpg': '包含創意、欣興、奇鋐1.jpg', 'shot4.jpg': '包含創意、欣興、奇鋐2.jpg' };
+  // 編號 1＝奇鋐、2＝欣興、3＝創意，跟旁白順序相反
+  const labels = { 'shot3.jpg': ['奇鋐'], 'shot4.jpg': ['欣興'], 'shot2.jpg': ['創意'] };
+  const { hints: h } = hints.resolveHints(names, U, { labels });
+  assert.deepEqual([h['shot2.jpg'].startCharIdx, h['shot4.jpg'].startCharIdx, h['shot3.jpg'].startCharIdx], [11, 16, 19]);
+  assert.equal(h['shot2.jpg'].by, 'name');
+
+  // 有一張認不出股名 → 退回照編號
+  const fb = hints.resolveHints(names, U, { labels: { 'shot3.jpg': ['奇鋐'], 'shot4.jpg': ['欣興'] } }).hints;
+  assert.deepEqual([fb['shot3.jpg'].from, fb['shot4.jpg'].from, fb['shot2.jpg'].from], [1, 2, 3]);
+
+  // 整疊在最後一張出來後多留一個子句，不蓋到下一張圖
+  const segs = planner.applyHints([], Object.entries(h).map(([file, x]) => ({ file, ...x })), U);
+  const shots = segs.map((s) => ({ src: s.src, startCharIdx: s.startCharIdx, endCharIdx: s.endCharIdx, _claude: { group: s.group } }));
+  const held = planner.holdStacks(planner.extendToSentenceEnd(shots, U, []), U, []);
+  assert.deepEqual(held.map((s) => [s.src, s.startCharIdx, s.endCharIdx]),
+    [['shot2.jpg', 11, 15], ['shot4.jpg', 16, 18], ['shot3.jpg', 19, 28]]);
+  const blocked = planner.holdStacks(shots.concat({ src: 'x.png', startCharIdx: 22, endCharIdx: 39 }), U, []);
+  assert.equal(blocked.find((s) => s.src === 'shot3.jpg').endCharIdx, 21);
+});
+
+test('疊卡第二張起提早一個淡入時間進場（唸到股名時已完整出現）', () => {
+  const fs = require('node:fs');
+  const src = fs.readFileSync(path.join(APP, 'src/DapanXiaobao/AppCardShots.tsx'), 'utf8');
+  assert.match(src, /const STACK_LEAD = T_SWAP;/);
+  assert.match(src, /enters\[k\] = Math\.max\(enters\[k - 1\] \+ 1, enters\[k\] - STACK_LEAD\)/);
+});

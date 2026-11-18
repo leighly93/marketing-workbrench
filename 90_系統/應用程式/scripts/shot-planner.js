@@ -279,7 +279,7 @@ function applyHints(segments, hints, units) {
     if (covers) continue;
     const same = segs.find((s) => s.src === h.file);
     const seg = { src: h.file, startCharIdx: a, endCharIdx: b,
-      title: (h.group && groupTitle[h.group]) || (same && same.title) || String(h.name || '').slice(0, 8).replace(/[、，,。；;：:\s]+$/, ''), why: `檔名指定（${h.name}）`, hinted: true };
+      title: (h.group && groupTitle[h.group]) || (same && same.title) || String(h.name || '').slice(0, 8).replace(/[、，,。；;：:\s]+$/, ''), why: `檔名指定（${h.name}）`, hinted: true, ...(h.group ? { group: h.group } : {}) };
     const { kept } = clipSegments(segs, seg, units);
     segs = kept.concat(seg).sort((x, y) => x.startCharIdx - y.startCharIdx);
   }
@@ -359,5 +359,37 @@ function extendToSentenceEnd(shots, units, motions = []) {
   return sorted;
 }
 
-module.exports = { SYSTEM_PROMPT, ocrSummary, buildPrompt, parseReply, resolveImage, parseMotions, parseFacts, motionWindows, mergeSameImage, extendToSentenceEnd,
+/**
+ * 同一段話分給好幾張的那一疊（2026-11-18 使用者：「閃太快」）：最後一張出來後，整疊至少再留 HOLD_CHARS 個字
+ * （大盤小報 150% 語速約 2 秒），往後面的子句延，但不蓋到下一張圖或動態，最多多佔 HOLD_MAX_UNITS 個子句（再多就講到下一件事了）。
+ *   shots 要帶 _claude.group（claude-shot-plan 從 applyHints 的 group 帶過來）
+ */
+const HOLD_CHARS = 14;
+const HOLD_MAX_UNITS = 1;
+function holdStacks(shots, units, motions = []) {
+  const sorted = [...shots].map((s) => ({ ...s })).sort((a, b) => a.startCharIdx - b.startCharIdx);
+  const groupOf = (s) => s._claude && s._claude.group;
+  for (let k = 0; k < sorted.length; k++) {
+    const s = sorted[k];
+    const g = groupOf(s);
+    if (!g) continue;
+    const next = sorted[k + 1];
+    if (next && groupOf(next) === g) continue; // 不是這疊的最後一張
+    let limit = next ? next.startCharIdx - 1 : Infinity;
+    for (const m of motions) if (m.startCharIdx > s.endCharIdx) limit = Math.min(limit, m.startCharIdx - 1);
+    let end = s.endCharIdx;
+    let added = 0;
+    for (const u of units) {
+      if (end - s.startCharIdx + 1 >= HOLD_CHARS || added >= HOLD_MAX_UNITS) break;
+      if (u.startCharIdx <= end) continue;
+      if (u.endCharIdx > limit) break;
+      end = u.endCharIdx;
+      added++;
+    }
+    s.endCharIdx = end;
+  }
+  return sorted;
+}
+
+module.exports = { SYSTEM_PROMPT, holdStacks, HOLD_CHARS, ocrSummary, buildPrompt, parseReply, resolveImage, parseMotions, parseFacts, motionWindows, mergeSameImage, extendToSentenceEnd,
   outlookMotion, clipSegments, applyHints };

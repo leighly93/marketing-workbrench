@@ -117,7 +117,8 @@ function main() {
     const size = pickImageSize(im, { imgW: real.width, imgH: real.height });
     // 分析檔是別張同名圖留下的（尺寸對不上）→ 圖照送，但 OCR 字不能用
     images.push({ file: im.file, path: file, width: size.width, height: size.height, words: size.stale ? [] : (im.words || []),
-      page: size.stale ? 'unknown' : im.page, stockCode: size.stale ? null : im.stockCode });
+      page: size.stale ? 'unknown' : im.page, stockCode: size.stale ? null : im.stockCode,
+      stockNames: size.stale ? [] : [im.stockName, ...(im.stockNameAlts || [])].filter(Boolean) });
   }
   // 分析檔裡沒有的截圖（事後補上傳、或沿用了不完整的舊分析）也要給 Claude 看：圖照送，只是沒有 OCR 字。
   // 2026-11-13 j2ps：shot12～14.jpg 不在分析檔裡，整理好的營收表一張都沒用到。
@@ -142,12 +143,14 @@ function main() {
   let shotNames = {};
   try { shotNames = JSON.parse(fs.readFileSync(SHOT_NAMES, 'utf-8')) || {}; } catch (_) {}
   const present = Object.fromEntries(Object.entries(shotNames).filter(([f]) => images.some((im) => im.file === f)));
-  const { hints, notes } = require('./shot-name-hints').resolveHints(present, units);
+  // 圖上的股名：同一段話分給好幾張時，照股名在旁白的位置放
+  const labels = Object.fromEntries(images.filter((im) => im.stockNames && im.stockNames.length).map((im) => [im.file, im.stockNames]));
+  const { hints, notes } = require('./shot-name-hints').resolveHints(present, units, { labels });
   for (const im of images) if (hints[im.file]) im.hint = hints[im.file];
   for (const [f, h] of Object.entries(hints)) {
     const where = h.from === h.to ? `U${units[h.from].i}` : `U${units[h.from].i}～U${units[h.to].i}`;
     const inOutlook = outlook && h.to >= outlook.from && h.from <= outlook.to;
-    const at = h.order ? `${h.startCharIdx != null ? `${where} 的字 ${h.startCharIdx}–${h.endCharIdx}` : where}，同一段的第 ${h.order[0]}／${h.order[1]} 張` : where;
+    const at = h.order ? `${h.startCharIdx != null ? `${where} 的字 ${h.startCharIdx}–${h.endCharIdx}` : where}，同一段的第 ${h.order[0]}／${h.order[1]} 張${h.by === 'name' ? '（照圖上股名對位置）' : '（照檔名編號）'}` : where;
     console.log(`（檔名提示：${f}「${h.name}」→ ${at}${h.how === 'fuzzy' ? '（字不完全一樣，取最像的那句）' : ''}`
       + `${inOutlook ? '；⚠️ 落在結尾明日觀察動畫裡，動畫優先、這張不會出現' : ''}）`);
   }
@@ -218,7 +221,7 @@ function main() {
     const base = { src: seg.src, title: seg.title, region, imgW: im.width, imgH: im.height };
     if (r.status !== 'picked') {
       shots.push({ ...base, startCharIdx: seg.startCharIdx, endCharIdx: seg.endCharIdx,
-        _claude: { why: seg.why, cellStatus: r.status, cellWhy: r.error || '' } });
+        _claude: { why: seg.why, cellStatus: r.status, cellWhy: r.error || '', ...(seg.group ? { group: seg.group } : {}) } });
       continue;
     }
     // 連續幾句框同一個地方（或都不框）就併成一筆；第一筆從段落開頭、最後一筆到段落結尾
@@ -234,7 +237,7 @@ function main() {
     for (const g of groups) {
       if (g.cell) boxed++;
       shots.push({ ...base, startCharIdx: g.start, endCharIdx: g.end, ...(g.cell ? { cell: g.cell } : {}),
-        _claude: { why: seg.why, cellSource: g.source, cellWhy: g.why } });
+        _claude: { why: seg.why, cellSource: g.source, cellWhy: g.why, ...(seg.group ? { group: seg.group } : {}) } });
     }
   }
 
@@ -250,7 +253,8 @@ function main() {
   shots.sort((a, b) => a.startCharIdx - b.startCharIdx);
 
   // 一句話裡最後一張圖留到那句講完（shot-planner.js 的 extendToSentenceEnd）
-  const finalShots = require('./shot-planner').extendToSentenceEnd(shots, units, plan.motions || []);
+  // 同一段話分給好幾張的那一疊，最後一張出來後整疊再多留一下（holdStacks）
+  const finalShots = planner.holdStacks(planner.extendToSentenceEnd(shots, units, plan.motions || []), units, plan.motions || []);
   shots.length = 0;
   shots.push(...finalShots);
 
